@@ -71,7 +71,7 @@ def admin_panel():
     
     # Admin password verification
     st.markdown("### 🔑 Admin Password Verification")
-    admin_password = st.text_input("Enter admin password:", type="password", placeholder="Enter password to access downloads")
+    admin_password = st.text_input("Enter admin password:", type="password")
     
     if st.button("🔓 Verify Password"):
         if admin_password == "0108":
@@ -452,7 +452,7 @@ if not st.session_state.logged_in:
         # Admin credentials (less prominent)
         with st.expander("🔑 Admin Access"):
             st.write("**Username:** admin")
-            st.write("**Password:** [Enter password to access]")
+            st.write("**Password:** [Enter numbers]")
             st.info("Enter the correct password to access admin features")
     
     # Show main content area with login message
