@@ -597,161 +597,288 @@ st.markdown("""
 
 # --- Official Movement Matters Content from Image Matters Asia ---
 st.markdown("""
-<div class="motion-card">
-    <h2 style="color: var(--primary-red); text-align: center; margin-bottom: 2rem;">MOVEMENT MATTERS</h2>
-    <p style="font-size: 1.2rem; font-style: italic; text-align: center; margin-bottom: 2rem;">
-        <strong>Body Movement is a psycho-physical process - an outward expression of inner intent.</strong><br>
-        The use of congruent body movement in combination with the verbal message can enhance communication.
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# What people don't consider when presenting
-st.markdown("""
-<div class="motion-card">
-    <h3 style="color: var(--primary-red); margin-bottom: 1rem;">What people don't consider when presenting:</h3>
-    <ul style="margin-left: 1rem;">
-        <li><strong>What others see.</strong></li>
-        <li><strong>One's signature body movement</strong> or repetitive movement which could interfere with the verbal message.</li>
-        <li><strong>Shape:</strong> Using different shapes of movement in the following planes:
-            <ul style="margin-left: 1rem; margin-top: 0.5rem;">
-                <li><strong>Horizontal</strong> = communicating with spreading and enclosing</li>
-                <li><strong>Vertical</strong> = sense of authority through the weight effort giving what is presented "weight", literally….expressing a determination or resolve, an ability to argue for a particular aspects over others.</li>
-                <li><strong>Sagittal Planes</strong> = going forward into the future and going backwards reflecting on the past.</li>
-            </ul>
-        </li>
-        <li><strong>One's overall body attitude or static body posture:</strong>
-            <ul style="margin-left: 1rem; margin-top: 0.5rem;">
-                <li><strong>Pin Body Attitude</strong> - communicates rigidity.</li>
-                <li><strong>Wall Body Attitude</strong> – communicates being one-dimensional and appearing unapproachable and authoritative.</li>
-                <li><strong>Ball Body Attitude</strong> - communicates caving in, and being humble and sometimes weakness.</li>
-                <li><strong>Screw Body Attitude</strong> - communicates approachability, ability to use different dimensions, and ability to do complex tasks.</li>
-            </ul>
-        </li>
-        <li><strong>The use of one's reach and hand gesture</strong>, for example, using near, mid or far reach.</li>
-        <li><strong>Whether one's movement involves whole or just part of body.</strong></li>
-        <li><strong>One's "Phrasing":</strong>
-            <ul style="margin-left: 1rem; margin-top: 0.5rem;">
-                <li><strong>Even Phrasing</strong> – communicates consistency and calmness.</li>
-                <li><strong>Impulsive Phrasing</strong> – communicates abruptness, urgency, chaotic, rushing qualities with no preparation.</li>
-                <li><strong>Impactive Phrasing</strong> – communicates weight and solidity, insistent, clear, declarative.</li>
-                <li><strong>Swing Phrasing</strong> – communicates resiliency, cooperative, easy going, playful.</li>
-                <li><strong>Vibratory Phrasing</strong> – communicates nervousness, hectic, chaotic and out of control qualities.</li>
-            </ul>
-        </li>
-        <li><strong>Space:</strong> whether movement is focused or scattered.</li>
-        <li><strong>Weight:</strong> whether movement is with pressure, force or with sensitivity.</li>
-        <li><strong>Time:</strong> whether movement is with speed, sudden expressing sense of urgency or taking time slowing of the pace.</li>
-        <li><strong>PGMs:</strong> the use of posture and gesture mergers to create genuine and conflict-free expressions.</li>
-        <li><strong>Expanding one's own scope of movement possibilities.</strong></li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
-
-# Movement in Communication
-st.markdown("""
-<div class="motion-card">
-    <h3 style="color: var(--primary-red); margin-bottom: 1rem;">Movement in Communication</h3>
-    <p style="font-style: italic; margin-bottom: 1rem;">Alisa on "Movement in Communication", Heidelberg University, Germany</p>
-</div>
-""", unsafe_allow_html=True)
-
-# What You Will Learn
-st.markdown("""
-<div class="motion-card">
-    <h3 style="color: var(--primary-red); text-align: center; margin-bottom: 2rem;">WHAT YOU WILL LEARN</h3>
-    
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem;">
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Your Stance:</h4>
-            <p>How wide should your legs and feet be when standing?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Your Body Attitude (Body Posture):</h4>
-            <p>Yes, there is such a thing as "Body Attitude"!!! How much do you know about your Body Attitude and how others perceived of you?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Your Head Gesture:</h4>
-            <p>How much should you use your hand gesture to ensure they are in congruent with the whole body movement and message?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Your Reach:</h4>
-            <p>Should you use near reach or gesture all the time or do you realise that you can also use mid and far reach as well?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Your Feet:</h4>
-            <p>Should they be firmly planted or are you planning to move?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Weight Shifting:</h4>
-            <p>How do you know when to weight shift and which direction should you go?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Speed:</h4>
-            <p>How do you know you're not moving too much, too little, or too abruptly?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Walking:</h4>
-            <p>When should you walk and how far should you go? How fast or slow should you walk?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Audience Engagement:</h4>
-            <p>How do you engage with your audience?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Weight Effort:</h4>
-            <p>How about the weight you use in the delivery of your message?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Upper Body:</h4>
-            <p>What about the rotation of your upper body in order not to appear static?</p>
-        </div>
-        
-        <div style="background: var(--light-red); padding: 1rem; border-radius: 8px;">
-            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Eye Contact:</h4>
-            <p>What sort eye contact should you give your audience?</p>
-        </div>
-    </div>
-    
-    <p style="text-align: center; font-size: 1.1rem; font-weight: bold; color: var(--primary-red);">
-        And much more….
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# Testimonial
-st.markdown("""
-<div class="motion-card">
-    <blockquote style="border-left: 4px solid var(--primary-red); padding-left: 1rem; font-style: italic; margin: 1rem 0;">
-        "Understanding that people express feelings through their movements is an essential skill. Alisa has taught me to read people's body language which continues to help me daily in my work in sales. In negotiations I am now able to sense what is going on in the minds of my business partners. But communication always goes two-ways. Alisa is so skilled in her area; she has even profiled my own body movement so I know how I come across towards other people!"
-    </blockquote>
-    <div style="text-align: right; margin-top: 1rem;">
-        <p style="font-weight: bold; margin-bottom: 0;">Bernhard Vreden, M.Sc.</p>
-        <p style="color: var(--text-light); margin-bottom: 0;">Key Account Manager</p>
-        <p style="color: var(--text-light);">Bodo Möller Chemie GmbH</p>
+<div class="motion-card" style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border: none; box-shadow: 0 8px 32px rgba(0,0,0,0.1);">
+    <div style="text-align: center; margin-bottom: 3rem;">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🕴️</div>
+        <h1 style="color: var(--primary-red); font-size: 3.5rem; font-weight: bold; margin-bottom: 1rem; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">MOVEMENT MATTERS</h1>
+        <div style="width: 100px; height: 4px; background: var(--primary-red); margin: 0 auto 2rem auto; border-radius: 2px;"></div>
+        <p style="font-size: 1.4rem; font-style: italic; color: var(--text-dark); line-height: 1.6; max-width: 800px; margin: 0 auto;">
+            <strong>Body Movement is a psycho-physical process - an outward expression of inner intent.</strong><br><br>
+            The use of congruent body movement in combination with the verbal message can enhance communication.
+        </p>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# Contact Information
+# Professional Presentation Section with Image
 st.markdown("""
-<div class="motion-card">
-    <h3 style="color: var(--primary-red); text-align: center; margin-bottom: 1rem;">Contact Us</h3>
-    <div style="text-align: center;">
-        <p><strong>Call Us:</strong></p>
-        <p><strong>(Austria):</strong> +43 664 6680199</p>
-        <p><strong>(Bangkok):</strong> +66 81-357-2315</p>
-        <p style="margin-top: 1rem;"><em>Body Stories GmbH, Vienna, Austria</em></p>
+<div class="motion-card" style="background: white; border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; align-items: center;">
+        <div>
+            <h2 style="color: var(--primary-red); font-size: 2.2rem; margin-bottom: 1.5rem; border-bottom: 3px solid var(--primary-red); padding-bottom: 0.5rem;">
+                What people don't consider when presenting:
+            </h2>
+            <div style="background: var(--light-red); padding: 1.5rem; border-radius: 10px; border-left: 4px solid var(--primary-red);">
+                <ul style="margin: 0; padding-left: 1.5rem; line-height: 1.8;">
+                    <li style="margin-bottom: 0.8rem;"><strong style="color: var(--primary-red);">What others see.</strong></li>
+                    <li style="margin-bottom: 0.8rem;"><strong style="color: var(--primary-red);">One's signature body movement</strong> or repetitive movement which could interfere with the verbal message.</li>
+                    <li style="margin-bottom: 0.8rem;"><strong style="color: var(--primary-red);">Shape:</strong> Using different shapes of movement in the following planes:
+                        <ul style="margin-top: 0.5rem; margin-left: 1rem;">
+                            <li><strong>Horizontal</strong> = communicating with spreading and enclosing</li>
+                            <li><strong>Vertical</strong> = sense of authority through the weight effort</li>
+                            <li><strong>Sagittal Planes</strong> = going forward into the future and going backwards reflecting on the past.</li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div style="text-align: center;">
+            <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 2rem; border-radius: 15px; border: 3px solid var(--primary-red);">
+                <div style="font-size: 6rem; margin-bottom: 1rem;">🎭</div>
+                <h3 style="color: var(--primary-red); margin-bottom: 1rem;">Professional Presentation</h3>
+                <p style="color: var(--text-dark); font-style: italic;">Understanding body language and movement in communication</p>
+            </div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Body Attitudes Section with Visual Grid
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <h2 style="color: var(--primary-red); text-align: center; font-size: 2.2rem; margin-bottom: 2rem;">Body Attitudes & Posture</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📌</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Pin Body Attitude</h4>
+            <p style="color: var(--text-dark); font-size: 0.9rem;">Communicates rigidity and stiffness</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🧱</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Wall Body Attitude</h4>
+            <p style="color: var(--text-dark); font-size: 0.9rem;">One-dimensional and unapproachable</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">⚽</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Ball Body Attitude</h4>
+            <p style="color: var(--text-dark); font-size: 0.9rem;">Caving in, humble and sometimes weak</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🔩</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Screw Body Attitude</h4>
+            <p style="color: var(--text-dark); font-size: 0.9rem;">Approachable and multi-dimensional</p>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Movement Phrasing Section
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <h2 style="color: var(--primary-red); text-align: center; font-size: 2.2rem; margin-bottom: 2rem;">Movement Phrasing</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">🎯 Even Phrasing</h4>
+            <p style="color: var(--text-dark);">Communicates consistency and calmness</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">⚡ Impulsive Phrasing</h4>
+            <p style="color: var(--text-dark);">Communicates abruptness, urgency, chaotic qualities</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">💪 Impactive Phrasing</h4>
+            <p style="color: var(--text-dark);">Communicates weight and solidity, insistent, clear</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">🔄 Swing Phrasing</h4>
+            <p style="color: var(--text-dark);">Communicates resiliency, cooperative, easy going</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">📳 Vibratory Phrasing</h4>
+            <p style="color: var(--text-dark);">Communicates nervousness, hectic, chaotic qualities</p>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Movement in Communication Section
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <div style="font-size: 4rem; margin-bottom: 1rem;">🎓</div>
+        <h2 style="color: var(--primary-red); font-size: 2.2rem; margin-bottom: 1rem;">Movement in Communication</h2>
+        <p style="font-style: italic; font-size: 1.2rem; color: var(--text-dark);">Alisa on "Movement in Communication", Heidelberg University, Germany</p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# What You Will Learn - Enhanced Grid Layout
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <h2 style="color: var(--primary-red); text-align: center; font-size: 2.5rem; margin-bottom: 3rem;">WHAT YOU WILL LEARN</h2>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red); transition: transform 0.3s ease;">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🦵</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Your Stance</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How wide should your legs and feet be when standing?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🧍</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Body Attitude</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How much do you know about your Body Attitude and how others perceive you?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">👋</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Hand Gesture</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How much should you use hand gestures to ensure they are congruent with your message?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🤲</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Your Reach</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">Should you use near reach or realize you can also use mid and far reach?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🦶</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Your Feet</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">Should they be firmly planted or are you planning to move?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">⚖️</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Weight Shifting</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How do you know when to weight shift and which direction should you go?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">⚡</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Speed</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How do you know you're not moving too much, too little, or too abruptly?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🚶</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Walking</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">When should you walk and how far should you go? How fast or slow?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">👥</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Audience Engagement</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How do you engage with your audience effectively?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">💪</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Weight Effort</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">How about the weight you use in the delivery of your message?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">🔄</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Upper Body</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">What about the rotation of your upper body to not appear static?</p>
+        </div>
+        
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
+            <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+                <div style="font-size: 2.5rem; margin-right: 1rem;">👁️</div>
+                <h4 style="color: var(--primary-red); margin: 0;">Eye Contact</h4>
+            </div>
+            <p style="color: var(--text-dark); margin: 0;">What sort of eye contact should you give your audience?</p>
+        </div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 2rem;">
+        <div style="background: var(--primary-red); color: white; padding: 1rem 2rem; border-radius: 25px; display: inline-block; font-size: 1.2rem; font-weight: bold;">
+            And much more….
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Professional Testimonial Section
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">💬</div>
+        <h2 style="color: var(--primary-red); font-size: 2.2rem; margin-bottom: 1rem;">What Our Clients Say</h2>
+    </div>
+    
+    <div style="background: white; padding: 2.5rem; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); border-left: 6px solid var(--primary-red);">
+        <div style="display: flex; align-items: center; margin-bottom: 1.5rem;">
+            <div style="font-size: 2rem; margin-right: 1rem;">💼</div>
+            <div>
+                <h4 style="color: var(--primary-red); margin: 0; font-size: 1.3rem;">Bernhard Vreden, M.Sc.</h4>
+                <p style="color: var(--text-light); margin: 0; font-size: 0.9rem;">Key Account Manager, Bodo Möller Chemie GmbH</p>
+            </div>
+        </div>
+        
+        <blockquote style="border-left: 4px solid var(--primary-red); padding-left: 1.5rem; font-style: italic; margin: 1.5rem 0; font-size: 1.1rem; line-height: 1.6; color: var(--text-dark);">
+            "Understanding that people express feelings through their movements is an essential skill. Alisa has taught me to read people's body language which continues to help me daily in my work in sales. In negotiations I am now able to sense what is going on in the minds of my business partners. But communication always goes two-ways. Alisa is so skilled in her area; she has even profiled my own body movement so I know how I come across towards other people!"
+        </blockquote>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# Contact Information Section with Professional Design
+st.markdown("""
+<div class="motion-card" style="background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">📞</div>
+        <h2 style="color: var(--primary-red); font-size: 2.2rem; margin-bottom: 1rem;">Contact Us</h2>
+        <p style="color: var(--text-dark); font-size: 1.1rem;">Ready to transform your communication through movement?</p>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 2rem; margin-bottom: 2rem;">
+        <div style="background: white; padding: 2rem; border-radius: 15px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">🇦🇹</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Austria</h4>
+            <p style="color: var(--text-dark); font-size: 1.2rem; font-weight: bold; margin: 0;">+43 664 6680199</p>
+        </div>
+        
+        <div style="background: white; padding: 2rem; border-radius: 15px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">🇹🇭</div>
+            <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Bangkok</h4>
+            <p style="color: var(--text-dark); font-size: 1.2rem; font-weight: bold; margin: 0;">+66 81-357-2315</p>
+        </div>
+    </div>
+    
+    <div style="text-align: center; background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+        <p style="color: var(--text-light); margin: 0; font-style: italic;">Body Stories GmbH, Vienna, Austria</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
