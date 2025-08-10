@@ -84,7 +84,7 @@ def admin_panel():
     
     # Show uploaded videos only if login is successful
     if st.session_state.admin_password_verified:
-        st.markdown("### 📁 Uploaded Videos")
+        st.markdown("### 📁 User Uploaded Videos")
         
         # Check for uploaded videos in user_uploads directory
         upload_dir = Path("user_uploads")
@@ -95,51 +95,26 @@ def admin_panel():
                 if file.suffix.lower() in ['.mp4', '.mov', '.avi', '.mpeg4']:
                     video_files.append(file)
         
-        # Check for existing videos in root directory
-        root_videos = []
-        for video_name in ["Movement matters.mp4", "The key to effective public speaking  your body movement.mp4"]:
-            video_path = Path(video_name)
-            if video_path.exists():
-                root_videos.append(video_path)
-        
-        if video_files or root_videos:
-            st.success(f"Found {len(video_files)} uploaded videos and {len(root_videos)} system videos")
+        if video_files:
+            st.success(f"Found {len(video_files)} user uploaded videos")
             
-            # Display uploaded videos
-            if video_files:
-                st.markdown("#### 📤 User Uploaded Videos:")
-                for i, video_file in enumerate(video_files):
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
-                    with col2:
-                        st.video(str(video_file))
-                    with col3:
-                        st.download_button(
-                            f"📥 Download {video_file.name}",
-                            data=open(video_file, "rb"),
-                            file_name=video_file.name,
-                            key=f"download_uploaded_{i}"
-                        )
-            
-            # Display system videos
-            if root_videos:
-                st.markdown("#### 🖥️ System Videos:")
-                for i, video_file in enumerate(root_videos):
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    with col1:
-                        st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
-                    with col2:
-                        st.video(str(video_file))
-                    with col3:
-                        st.download_button(
-                            f"📥 Download {video_file.name}",
-                            data=open(video_file, "rb"),
-                            file_name=video_file.name,
-                            key=f"download_system_{i}"
-                        )
+            # Display uploaded videos only
+            st.markdown("#### 📤 User Uploaded Videos:")
+            for i, video_file in enumerate(video_files):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
+                with col2:
+                    st.video(str(video_file))
+                with col3:
+                    st.download_button(
+                        f"📥 Download {video_file.name}",
+                        data=open(video_file, "rb"),
+                        file_name=video_file.name,
+                        key=f"download_uploaded_{i}"
+                    )
         else:
-            st.info("No videos found in the system.")
+            st.info("No user uploaded videos found in the system.")
         
         # Show user submissions
         st.markdown("### 👥 User Submissions")
@@ -162,7 +137,7 @@ def admin_panel():
                 file_name="user_submissions.xlsx"
             )
     else:
-        st.info("🔒 Please login with admin credentials to access download options.")
+        st.info("🔒 Please login with admin credentials to access user uploads.")
 
 def logout_button():
     """Logout button in sidebar"""
