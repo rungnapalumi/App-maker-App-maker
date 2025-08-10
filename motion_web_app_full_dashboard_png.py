@@ -3,9 +3,11 @@ import cv2
 try:
     import mediapipe as mp
     MEDIAPIPE_AVAILABLE = True
+    mp_pose = mp.solutions.pose
+    mp_drawing = mp.solutions.drawing_utils
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
-    st.warning("⚠️ MediaPipe is not available. Some motion detection features may be limited.")
+    st.warning("⚠️ MediaPipe is not available. Using OpenCV-based motion detection instead.")
 import numpy as np
 import pandas as pd
 import tempfile
@@ -130,16 +132,63 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.5
 FONT_THICKNESS = 1
 
-mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
-
 def angle_3pts(a, b, c):
     ba = a - b
     bc = c - b
     cos_angle = np.dot(ba, bc) / (np.linalg.norm(ba)*np.linalg.norm(bc) + 1e-6)
     return np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
 
+def detect_motion_opencv(frame, prev_frame=None):
+    """Fallback motion detection using OpenCV when MediaPipe is not available"""
+    if prev_frame is None:
+        return []
+    
+    # Convert frames to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+    
+    # Calculate frame difference
+    frame_diff = cv2.absdiff(gray, prev_gray)
+    
+    # Apply threshold to get motion regions
+    _, thresh = cv2.threshold(frame_diff, 25, 255, cv2.THRESH_BINARY)
+    
+    # Find contours of motion
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    motions = []
+    
+    # Analyze motion based on contour properties
+    total_motion_area = sum(cv2.contourArea(c) for c in contours)
+    
+    if total_motion_area > 1000:  # Significant motion detected
+        # Get bounding boxes of motion regions
+        motion_regions = []
+        for contour in contours:
+            if cv2.contourArea(contour) > 100:  # Filter small noise
+                x, y, w, h = cv2.boundingRect(contour)
+                motion_regions.append((x, y, w, h))
+        
+        if motion_regions:
+            # Analyze motion patterns
+            avg_x = np.mean([x for x, y, w, h in motion_regions])
+            avg_y = np.mean([y for x, y, w, h in motion_regions])
+            
+            # Simple motion classification
+            if total_motion_area > 5000:
+                motions.append("Significant Motion")
+            elif total_motion_area > 2000:
+                motions.append("Moderate Motion")
+            else:
+                motions.append("Light Motion")
+    
+    return motions
+
 def detect_motion_v27(landmarks, prev_landmarks=None):
+    """Advanced motion detection using MediaPipe pose landmarks"""
+    if not MEDIAPIPE_AVAILABLE:
+        return []
+    
     motions = []
     get = lambda name: np.array([
         landmarks[name.value].x,
@@ -175,82 +224,12 @@ def detect_motion_v27(landmarks, prev_landmarks=None):
     left_elbow_angle = angle_3pts(ls, le, lw)
     right_elbow_angle = angle_3pts(rs, re, rw)
 
-    # ---- Motion Rules Based on motion_definitions.py ----
-    
-    # 1. ADVANCING: "Forward", "Step or lean forward; torso, pelvis", "Straight, linear", "Moderate to fast"
-    # "Torso tilts forward, weight on front foot"
-    dz_hip, dz_ankle, dz_shoulder = delta_hip[2], delta_ankle[2], delta_shoulder[2]
-    dz_forward = dz_hip < -0.0015 or dz_ankle < -0.0015 or dz_shoulder < -0.0015
-    if dz_forward:
-        motions.append("Advancing")
-
-    # 2. RETREATING: "Backward", "Step or lean backward; torso, pelvis", "Straight, linear", "Moderate to slow"
-    # "Torso leans back, arms withdraw"
-    dz_backward = dz_hip > 0.0015 or dz_ankle > 0.0015 or dz_shoulder > 0.0015
-    if dz_backward:
-        motions.append("Retreating")
-
-    # 3. ENCLOSING: "Inward toward midline", "Arms fold inward; shoulders, hands", "Curved inward", "Smooth and continuous"
-    # "Shoulders close, hands overlap or contain"
+    # Basic motion detection when MediaPipe is available
     if hand_distance < 0.4*shoulder_width:
         motions.append("Enclosing")
-
-    # 4. SPREADING: "Outward from center", "Arms extend outward; chest opens", "Curved or straight outward", "Quick-expanding"
-    # "Chest lifts, arms and fingers splay"
-    if hand_distance > 1.2*shoulder_width:
+    elif hand_distance > 1.2*shoulder_width:
         motions.append("Spreading")
-
-    # 5. DIRECTING: "Straight toward target", "Pointing/reaching with one joint chain", "Linear and focused", "Sustained or quick"
-    # "Eyes and head align with hand/target"
-    left_arm_extended = (left_elbow_angle > 150 and lw[2] < ls[2] - 0.1)
-    right_arm_extended = (right_elbow_angle > 150 and rw[2] < rs[2] - 0.1)
-    if (left_arm_extended and not right_arm_extended) or (right_arm_extended and not left_arm_extended):
-        pointing_magnitude = np.linalg.norm(delta_lw[:2] if left_arm_extended else delta_rw[:2])
-        if pointing_magnitude > 0.01 and pointing_magnitude < 0.05:
-            motions.append("Directing")
-
-    # 6. GLIDING: "Smooth directional path, often forward or sideward", "Arms and hands lead; torso steady", "Linear, smooth", "Sustained"
-    # "No abrupt stops, continuous light contact"
-    left_arm_movement = np.linalg.norm(delta_lw[:2])
-    right_arm_movement = np.linalg.norm(delta_rw[:2])
-    if (left_arm_movement > 0.005 and left_arm_movement < 0.03) or (right_arm_movement > 0.005 and right_arm_movement < 0.03):
-        if not any(motion in motions for motion in ["Punching", "Pressing", "Dabbing"]):
-            if (abs(delta_lw[0]) > 0.003 or abs(delta_rw[0]) > 0.003) or (delta_lw[2] < -0.003 or delta_rw[2] < -0.003):
-                motions.append("Gliding")
-
-    # 7. PUNCHING: "Forward or downward in a forceful line", "Whole arm or body used in a direct forceful push", "Straight, heavy trajectory", "Sudden"
-    # "Strong muscle engagement, full stop at end"
-    if ((right_elbow_angle > 140 or left_elbow_angle > 140) and
-        ((delta_rw[2] < -0.005 or delta_lw[2] < -0.005) or
-         (abs(delta_rw[0]) > 0.2*shoulder_width or abs(delta_lw[0]) > 0.2*shoulder_width))):
-        motions.append("Punching")
-
-    # 8. DABBING: "Short, precise directional path", "Hand and fingers dart with control; wrist involved", "Small, straight path", "Sudden"
-    # "Quick precision, like tapping or striking lightly"
-    left_dab_magnitude = np.linalg.norm(delta_lw[:2])
-    right_dab_magnitude = np.linalg.norm(delta_rw[:2])
-    if (left_dab_magnitude > 0.01 and left_dab_magnitude < 0.04) or (right_dab_magnitude > 0.01 and right_dab_magnitude < 0.04):
-        if not any(motion in motions for motion in ["Gliding", "Pressing", "Punching"]):
-            if (abs(delta_lw[0]) > 0.005 or abs(delta_lw[1]) > 0.005) or (abs(delta_rw[0]) > 0.005 or abs(delta_rw[1]) > 0.005):
-                motions.append("Dabbing")
-
-    # 9. SLASHING: "Diagonal or horizontal with sweeping motion", "Shoulder and arm swing across midline", "Sweeping, wide arc", "Sudden"
-    # "Forceful sweeping motion with rotation"
-    left_slash_magnitude = np.linalg.norm(delta_lw[:2])
-    right_slash_magnitude = np.linalg.norm(delta_rw[:2])
-    if (left_slash_magnitude > 0.05 and left_slash_magnitude < 0.15) or (right_slash_magnitude > 0.05 and right_slash_magnitude < 0.15):
-        if (abs(delta_lw[0]) > 0.03) or (abs(delta_rw[0]) > 0.03):
-            if not any(motion in motions for motion in ["Punching"]):
-                shoulder_movement = np.linalg.norm(delta_shoulder[:2])
-                if shoulder_movement > 0.002:
-                    motions.append("Slashing")
-
-    # 10. PRESSING: "Downward or forward in a steady path", "Hands or arms push with tension; torso stabilizes", "Linear, controlled", "Sustained"
-    # "Visible muscle engagement; movement ends in stillness or contact"
-    if ((rw[1] > rh[1]+0.02 or lw[1] > lh[1]+0.02) or
-        (delta_rw[1] > 0.005 or delta_lw[1] > 0.005)):
-        motions.append("Pressing")
-
+    
     return motions
 
 # ==== Streamlit Web App ====
