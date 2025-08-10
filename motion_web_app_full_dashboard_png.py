@@ -20,6 +20,147 @@ import ssl
 import mimetypes
 from email.message import EmailMessage
 
+# Initialize session state for login
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
+if 'username' not in st.session_state:
+    st.session_state.username = ""
+
+def check_login(username, password):
+    """Check if user credentials are valid"""
+    # Admin credentials
+    if username.lower() == "admin" and password == "0108":
+        return True, True  # logged_in, is_admin
+    # Regular user (any username with any password for demo)
+    elif username and password:
+        return True, False  # logged_in, not admin
+    return False, False
+
+def login_page():
+    """Display login page"""
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem;">
+        <h1>🕴️ Movement Matters</h1>
+        <h3>Login Required</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.form("login_form"):
+        username = st.text_input("Username", placeholder="Enter username")
+        password = st.text_input("Password", type="password", placeholder="Enter password")
+        submit_button = st.form_submit_button("Login")
+        
+        if submit_button:
+            logged_in, is_admin = check_login(username, password)
+            if logged_in:
+                st.session_state.logged_in = True
+                st.session_state.is_admin = is_admin
+                st.session_state.username = username
+                st.success(f"Welcome, {username}!")
+                st.rerun()
+            else:
+                st.error("Invalid credentials. Please try again.")
+    
+    st.markdown("""
+    <div style="text-align: center; margin-top: 2rem;">
+        <p><strong>Admin Access:</strong> Use username "admin" and password "0108"</p>
+        <p><strong>Regular User:</strong> Any username and password combination</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def admin_panel():
+    """Admin panel for managing uploaded videos"""
+    st.markdown("## 🔐 Admin Panel")
+    
+    # Show uploaded videos
+    st.markdown("### 📁 Uploaded Videos")
+    
+    # Check for uploaded videos in user_uploads directory
+    upload_dir = Path("user_uploads")
+    video_files = []
+    
+    if upload_dir.exists():
+        for file in upload_dir.glob("*"):
+            if file.suffix.lower() in ['.mp4', '.mov', '.avi', '.mpeg4']:
+                video_files.append(file)
+    
+    # Check for existing videos in root directory
+    root_videos = []
+    for video_name in ["vdo present.mp4", "present.mp4", "present.MP4"]:
+        video_path = Path(video_name)
+        if video_path.exists():
+            root_videos.append(video_path)
+    
+    if video_files or root_videos:
+        st.success(f"Found {len(video_files)} uploaded videos and {len(root_videos)} system videos")
+        
+        # Display uploaded videos
+        if video_files:
+            st.markdown("#### 📤 User Uploaded Videos:")
+            for i, video_file in enumerate(video_files):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
+                with col2:
+                    st.video(str(video_file))
+                with col3:
+                    st.download_button(
+                        f"📥 Download {video_file.name}",
+                        data=open(video_file, "rb"),
+                        file_name=video_file.name,
+                        key=f"download_uploaded_{i}"
+                    )
+        
+        # Display system videos
+        if root_videos:
+            st.markdown("#### 🖥️ System Videos:")
+            for i, video_file in enumerate(root_videos):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
+                with col2:
+                    st.video(str(video_file))
+                with col3:
+                    st.download_button(
+                        f"📥 Download {video_file.name}",
+                        data=open(video_file, "rb"),
+                        file_name=video_file.name,
+                        key=f"download_system_{i}"
+                    )
+    else:
+        st.info("No videos found in the system.")
+    
+    # Show user submissions
+    st.markdown("### 👥 User Submissions")
+    csv_path = Path("user_submissions.csv")
+    xlsx_path = Path("user_submissions.xlsx")
+    
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        st.dataframe(df)
+        st.download_button(
+            "📥 Download User Submissions CSV",
+            data=df.to_csv(index=False),
+            file_name="user_submissions.csv"
+        )
+    
+    if xlsx_path.exists():
+        st.download_button(
+            "📥 Download User Submissions Excel",
+            data=open(xlsx_path, "rb"),
+            file_name="user_submissions.xlsx"
+        )
+
+def logout_button():
+    """Logout button in sidebar"""
+    if st.sidebar.button("🚪 Logout"):
+        st.session_state.logged_in = False
+        st.session_state.is_admin = False
+        st.session_state.username = ""
+        st.rerun()
+
 # Ensure upload directory exists for slip images
 UPLOAD_DIR = Path("user_uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -146,66 +287,82 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for Movement Matters gray theme
-st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(90deg, #3a3a3a 0%, #2f2f2f 100%);
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        color: #f2f2f2;
-        text-align: center;
-    }
-    .lma-title {
-        font-size: 3rem;
-        font-weight: bold;
-        margin-bottom: 0.5rem;
-        color: #e6e6e6;
-    }
-    .lma-subtitle {
-        font-size: 1.1rem;
-        color: #bdbdbd;
-        font-style: italic;
-    }
-    .motion-card {
-        background: #f5f5f5;
-        border-left: 4px solid #7a7a7a;
-        padding: 1rem;
-        margin: 1rem 0;
-        border-radius: 5px;
-    }
-    .metric-box {
-        background: #fafafa;
-        border: 2px solid #b3b3b3;
-        border-radius: 8px;
-        padding: 1rem;
-        text-align: center;
-        margin: 0.5rem;
-    }
-    .stButton > button {
-        background: linear-gradient(45deg, #6e6e6e, #555555);
-        color: white;
-        border: none;
-        border-radius: 25px;
-        padding: 0.75rem 2rem;
-        font-weight: bold;
-        transition: all 0.3s ease;
-    }
-    .stButton > button:hover {
-        background: linear-gradient(45deg, #5a5a5a, #444444);
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-    }
-</style>
-""", unsafe_allow_html=True)
+# Check login status
+if not st.session_state.logged_in:
+    login_page()
+else:
+    # User is logged in - show main app
+    # Add logout button to sidebar
+    st.sidebar.markdown(f"### 👋 Welcome, {st.session_state.username}!")
+    if st.session_state.is_admin:
+        st.sidebar.markdown("🔐 **Admin Access**")
+    logout_button()
+    
+    # Show admin panel if admin user
+    if st.session_state.is_admin:
+        admin_panel()
+        st.markdown("---")
+    
+    # Custom CSS for Movement Matters gray theme
+    st.markdown("""
+    <style>
+        .main-header {
+            background: linear-gradient(90deg, #3a3a3a 0%, #2f2f2f 100%);
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            color: #f2f2f2;
+            text-align: center;
+        }
+        .lma-title {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: #e6e6e6;
+        }
+        .lma-subtitle {
+            font-size: 1.1rem;
+            color: #bdbdbd;
+            font-style: italic;
+        }
+        .motion-card {
+            background: #f5f5f5;
+            border-left: 4px solid #7a7a7a;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 5px;
+        }
+        .metric-box {
+            background: #fafafa;
+            border: 2px solid #b3b3b3;
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            margin: 0.5rem;
+        }
+        .stButton > button {
+            background: linear-gradient(45deg, #6e6e6e, #555555);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            padding: 0.75rem 2rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        .stButton > button:hover {
+            background: linear-gradient(45deg, #5a5a5a, #444444);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
-# Movement Matters Header
-st.markdown("""
-<div class="main-header">
-    <div class="lma-title">🕴️ Movement Matters</div>
-</div>
-""", unsafe_allow_html=True)
+    # Movement Matters Header
+    st.markdown("""
+    <div class="main-header">
+        <div class="lma-title">🕴️ Movement Matters</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Media section: show bundled video and image if available
 video_candidates = [
