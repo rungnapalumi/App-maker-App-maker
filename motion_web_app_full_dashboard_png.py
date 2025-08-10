@@ -1,6 +1,11 @@
 import streamlit as st
 import cv2
-import mediapipe as mp
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+    st.warning("⚠️ MediaPipe is not available. Some motion detection features may be limited.")
 import numpy as np
 import pandas as pd
 import tempfile

@@ -6,4 +6,4 @@ opencv-python-headless
 matplotlib
 openpyxl
 imageio-ffmpeg
-mediapipe>=0.10.0
+mediapipe==0.10.9
