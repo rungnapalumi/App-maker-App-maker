@@ -367,7 +367,7 @@ else:
 # Media section: show Movement Matters videos
 st.markdown("### 🎥 Movement Matters Videos")
 
-# Check for the new videos
+# Check for the new videos - Updated for deployment fix
 video1_path = Path("Movement matters.mp4")
 video2_path = Path("The key to effective public speaking  your body movement.mp4")
 
@@ -375,6 +375,23 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 import os
 video1_url = os.getenv("VIDEO1_URL", "")
 video2_url = os.getenv("VIDEO2_URL", "")
+
+# Convert Google Drive URLs to proper format
+def fix_google_drive_url(url):
+    if not url:
+        return url
+    # Convert /view to /preview for better embedding
+    if '/view' in url:
+        url = url.replace('/view', '/preview')
+    # Remove any extra parameters
+    if '?usp=sharing' in url:
+        url = url.replace('?usp=sharing', '')
+    if '?usp=share_link' in url:
+        url = url.replace('?usp=share_link', '')
+    return url
+
+video1_url = fix_google_drive_url(video1_url)
+video2_url = fix_google_drive_url(video2_url)
 
 # Determine which videos to show
 videos_to_show = []
@@ -421,6 +438,13 @@ else:
         st.write("⚠️ Video 1 not found locally or in environment variables")
     if not video2_path.exists() and not video2_url:
         st.write("⚠️ Video 2 not found locally or in environment variables")
+    
+    # Debug information
+    st.write("🔍 **Debug Info:**")
+    st.write(f"Video 1 URL: {video1_url}")
+    st.write(f"Video 2 URL: {video2_url}")
+    st.write(f"Video 1 exists locally: {video1_path.exists()}")
+    st.write(f"Video 2 exists locally: {video2_path.exists()}")
 
 st.markdown("### 📊 **Movement Analysis Dashboard**")
 st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
