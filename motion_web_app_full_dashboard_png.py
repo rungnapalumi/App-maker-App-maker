@@ -101,7 +101,7 @@ def admin_panel():
             # Display uploaded videos only
             st.markdown("#### 📤 User Uploaded Videos:")
             for i, video_file in enumerate(video_files):
-                col1, col2, col3 = st.columns([3, 1, 1])
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
                 with col1:
                     st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
                 with col2:
@@ -113,6 +113,15 @@ def admin_panel():
                         file_name=video_file.name,
                         key=f"download_uploaded_{i}"
                     )
+                with col4:
+                    if st.button(f"🗑️ Delete", key=f"delete_video_{i}"):
+                        try:
+                            # Delete the video file
+                            os.remove(video_file)
+                            st.success(f"✅ Deleted: {video_file.name}")
+                            st.rerun()  # Refresh the page to update the list
+                        except Exception as delete_error:
+                            st.error(f"❌ Error deleting {video_file.name}: {str(delete_error)}")
         else:
             st.info("No user uploaded videos found in the system.")
         
@@ -122,20 +131,44 @@ def admin_panel():
         xlsx_path = Path("user_submissions.xlsx")
         
         if csv_path.exists():
-            df = pd.read_csv(csv_path)
-            st.dataframe(df)
-            st.download_button(
-                "📥 Download User Submissions CSV",
-                data=df.to_csv(index=False),
-                file_name="user_submissions.csv"
-            )
+            try:
+                # Try to read CSV with error handling
+                df = pd.read_csv(csv_path, on_bad_lines='skip')
+                st.dataframe(df)
+                st.download_button(
+                    "📥 Download User Submissions CSV",
+                    data=df.to_csv(index=False),
+                    file_name="user_submissions.csv"
+                )
+            except Exception as csv_error:
+                st.error(f"❌ Error reading CSV file: {str(csv_error)}")
+                st.info("💡 The CSV file has corrupted data. Creating a new clean file...")
+                
+                # Try to fix the CSV file by recreating it
+                try:
+                    # Backup the corrupted file
+                    backup_path = Path("user_submissions_backup.csv")
+                    if csv_path.exists():
+                        csv_path.rename(backup_path)
+                    
+                    # Create a new clean CSV file
+                    clean_df = pd.DataFrame(columns=["timestamp", "name", "email", "slip_path"])
+                    clean_df.to_csv(csv_path, index=False)
+                    
+                    st.success("✅ Created new clean CSV file")
+                    st.info("📁 Old corrupted file saved as 'user_submissions_backup.csv'")
+                except Exception as fix_error:
+                    st.error(f"❌ Could not fix CSV file: {str(fix_error)}")
         
         if xlsx_path.exists():
-            st.download_button(
-                "📥 Download User Submissions Excel",
-                data=open(xlsx_path, "rb"),
-                file_name="user_submissions.xlsx"
-            )
+            try:
+                st.download_button(
+                    "📥 Download User Submissions Excel",
+                    data=open(xlsx_path, "rb"),
+                    file_name="user_submissions.xlsx"
+                )
+            except Exception as xlsx_error:
+                st.error(f"❌ Error reading Excel file: {str(xlsx_error)}")
     else:
         st.info("🔒 Please login with admin credentials to access user uploads.")
 
@@ -291,32 +324,32 @@ st.markdown("""
     /* Header styling */
     .main-header {
         background: linear-gradient(135deg, var(--primary-red) 0%, var(--dark-red) 100%);
-        padding: 2rem;
+        padding: 1rem;
         border-radius: 15px;
-        margin-bottom: 2rem;
+        margin-bottom: 1rem;
         color: white;
         text-align: center;
         box-shadow: 0 4px 20px rgba(211, 47, 47, 0.3);
     }
     
     .brand-title {
-        font-size: 3.5rem;
+        font-size: 1.75rem;
         font-weight: bold;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.25rem;
         color: white;
         text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
     }
     
     .brand-subtitle {
-        font-size: 1.3rem;
+        font-size: 0.65rem;
         color: #ffcdd2;
         font-style: italic;
-        margin-bottom: 1rem;
+        margin-bottom: 0.5rem;
     }
     
     .brand-logo {
-        font-size: 4rem;
-        margin-bottom: 1rem;
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
     }
     
     /* Sidebar styling */
@@ -424,12 +457,6 @@ if not st.session_state.logged_in:
                     st.rerun()
                 else:
                     st.error("Invalid credentials.")
-        
-        # Admin credentials (simple display)
-        st.markdown("### 🔑 Admin Access")
-        st.write("**Username:** admin")
-        st.write("**Password:** [Enter password]")
-        st.info("Use admin credentials to access downloads")
     
     # Show main content area with login message
     st.markdown("""
@@ -672,19 +699,91 @@ if uploaded_file is not None:
             # Reset file pointer
             uploaded_file.seek(0)
             
-            # Create temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tfile:
-                tfile.write(uploaded_file.read())
-                video_path = tfile.name
-
-            # Display success message
-            st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({file_size_mb:.1f}MB)")
+            # Create permanent file in user_uploads directory
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = re.sub(r"[^a-zA-Z0-9._-]", "_", uploaded_file.name)
+            saved_filename = f"{timestamp_str}_{safe_filename}"
+            saved_path = UPLOAD_DIR / saved_filename
             
-            # Display video
-            try:
-                st.video(video_path)
-            except Exception as e:
-                st.warning("⚠️ Video preview not available, but file was uploaded successfully.")
+            # Check if a video with the same original name already exists
+            existing_videos = list(UPLOAD_DIR.glob(f"*_{safe_filename}"))
+            if existing_videos:
+                st.warning(f"⚠️ Video '{uploaded_file.name}' already exists in the system.")
+                st.info("📁 Only one copy of each video is kept to save space.")
+                
+                # Show existing video
+                existing_video = existing_videos[0]
+                st.success(f"✅ Existing video: {existing_video.name}")
+                try:
+                    st.video(str(existing_video))
+                except Exception as e:
+                    st.warning("⚠️ Video preview not available.")
+            else:
+                # Save the video file permanently only if it doesn't exist
+                with open(saved_path, "wb") as f:
+                    f.write(uploaded_file.read())
+
+                # Display success message
+                st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({file_size_mb:.1f}MB)")
+                
+                # Display video
+                try:
+                    st.video(str(saved_path))
+                except Exception as e:
+                    st.warning("⚠️ Video preview not available, but file was uploaded successfully.")
+                
+                # Log video upload to Excel file only for new uploads
+                try:
+                    xlsx_path = Path("user_submissions.xlsx")
+                    video_log_row = pd.DataFrame([
+                        {
+                            "timestamp": datetime.now().isoformat(timespec="seconds"),
+                            "name": st.session_state.username if st.session_state.username else "Anonymous",
+                            "email": "Video Upload",
+                            "video_filename": saved_filename,
+                            "original_filename": uploaded_file.name,
+                            "file_size_mb": round(file_size_mb, 2),
+                            "upload_type": "video"
+                        }
+                    ])
+                    
+                    if xlsx_path.exists():
+                        try:
+                            existing_df = pd.read_excel(xlsx_path)
+                            updated_df = pd.concat([existing_df, video_log_row], ignore_index=True)
+                        except Exception:
+                            updated_df = video_log_row
+                    else:
+                        updated_df = video_log_row
+                    updated_df.to_excel(xlsx_path, index=False)
+                    
+                    st.info(f"📝 Video logged: {saved_filename}")
+                except Exception as log_error:
+                    st.warning("⚠️ Could not log video to Excel file")
+                
+                # Also update CSV file with consistent structure
+                try:
+                    csv_path = Path("user_submissions.csv")
+                    csv_log_row = pd.DataFrame([
+                        {
+                            "timestamp": datetime.now().isoformat(timespec="seconds"),
+                            "name": st.session_state.username if st.session_state.username else "Anonymous",
+                            "email": "Video Upload",
+                            "slip_path": f"Video: {saved_filename}"
+                        }
+                    ])
+                    
+                    if csv_path.exists():
+                        try:
+                            existing_csv_df = pd.read_csv(csv_path)
+                            updated_csv_df = pd.concat([existing_csv_df, csv_log_row], ignore_index=True)
+                        except Exception:
+                            updated_csv_df = csv_log_row
+                    else:
+                        updated_csv_df = csv_log_row
+                    updated_csv_df.to_csv(csv_path, index=False)
+                except Exception as csv_log_error:
+                    pass  # Silently fail for CSV to avoid breaking the app
             
             # Video analysis section
             st.markdown("---")
@@ -711,20 +810,7 @@ if uploaded_file is not None:
                     except Exception as analysis_error:
                         st.error(f"❌ Analysis failed: {str(analysis_error)}")
                         st.info("🔄 Please try again or contact support.")
-            
-            # Clean up temporary file
-            try:
-                os.unlink(video_path)
-            except:
-                pass
                     
     except Exception as upload_error:
         st.error(f"❌ Error uploading video: {str(upload_error)}")
         st.info("💡 Please check your file format and try again.")
-        
-        # Clean up any temporary files
-        try:
-            if 'video_path' in locals():
-                os.unlink(video_path)
-        except:
-            pass
