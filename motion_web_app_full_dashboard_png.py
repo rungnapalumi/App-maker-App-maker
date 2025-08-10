@@ -412,68 +412,63 @@ if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        if videos_to_show[0][1].startswith('http'):
-            try:
-                st.video(videos_to_show[0][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                    <h4>🎯 Movement Matters</h4>
-                    <p>Understanding body language and motion analysis</p>
-                    <p><strong>Video available for download</strong></p>
-                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-                </div>
-                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
-        else:
-            st.video(videos_to_show[0][1])
+        # Always show info card for first video
+        st.markdown("""
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <h4>🎯 Movement Matters</h4>
+            <p>Understanding body language and motion analysis</p>
+            <p><strong>Video available for download</strong></p>
+            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+        </div>
+        """.format(videos_to_show[0][1] if videos_to_show[0][1].startswith('http') else "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview"), unsafe_allow_html=True)
         st.caption(videos_to_show[0][2])
     
     with col2:
-        if videos_to_show[1][1].startswith('http'):
-            try:
-                st.video(videos_to_show[1][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                    <h4>🎤 The Key to Effective Public Speaking</h4>
-                    <p>Your body movement matters</p>
-                    <p><strong>Video available for download</strong></p>
-                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-                </div>
-                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
-        else:
-            st.video(videos_to_show[1][1])
+        # Always show info card for second video
+        st.markdown("""
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <h4>🎤 The Key to Effective Public Speaking</h4>
+            <p>Your body movement matters</p>
+            <p><strong>Video available for download</strong></p>
+            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+        </div>
+        """.format(videos_to_show[1][1] if videos_to_show[1][1].startswith('http') else "https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview"), unsafe_allow_html=True)
         st.caption(videos_to_show[1][2])
         
 elif len(videos_to_show) == 1:
     st.markdown("#### Available Videos:")
-    if videos_to_show[0][1].startswith('http'):
-        try:
-            st.video(videos_to_show[0][1])
-        except:
-            st.markdown("""
-            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                <h4>{}</h4>
-                <p><strong>Video available for download</strong></p>
-                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-            </div>
-            """.format(videos_to_show[0][2], videos_to_show[0][1]), unsafe_allow_html=True)
-    else:
-        st.video(videos_to_show[0][1])
+    # Always show info card for single video
+    st.markdown("""
+    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+        <h4>{}</h4>
+        <p><strong>Video available for download</strong></p>
+        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+    </div>
+    """.format(videos_to_show[0][2], videos_to_show[0][1] if videos_to_show[0][1].startswith('http') else "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview"), unsafe_allow_html=True)
     st.caption(videos_to_show[0][2])
 else:
-    st.info("🎥 Movement Matters videos will be displayed here when available.")
-    if not video1_path.exists() and not video1_url:
-        st.write("⚠️ Video 1 not found locally or in environment variables")
-    if not video2_path.exists() and not video2_url:
-        st.write("⚠️ Video 2 not found locally or in environment variables")
+    # Show both videos as info cards even if not found
+    col1, col2 = st.columns(2)
     
-    # Debug information
-    st.write("🔍 **Debug Info:**")
-    st.write(f"Video 1 URL: {video1_url}")
-    st.write(f"Video 2 URL: {video2_url}")
-    st.write(f"Video 1 exists locally: {video1_path.exists()}")
-    st.write(f"Video 2 exists locally: {video2_path.exists()}")
+    with col1:
+        st.markdown("""
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <h4>🎯 Movement Matters</h4>
+            <p>Understanding body language and motion analysis</p>
+            <p><strong>Video available for download</strong></p>
+            <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <h4>🎤 The Key to Effective Public Speaking</h4>
+            <p>Your body movement matters</p>
+            <p><strong>Video available for download</strong></p>
+            <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("### 📊 **Movement Analysis Dashboard**")
 st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
