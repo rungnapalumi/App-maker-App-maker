@@ -371,27 +371,56 @@ st.markdown("### 🎥 Movement Matters Videos")
 video1_path = Path("Movement matters.mp4")
 video2_path = Path("The key to effective public speaking  your body movement.mp4")
 
-if video1_path.exists() and video2_path.exists():
+# Check for environment variable URLs (for Render deployment)
+import os
+video1_url = os.getenv("VIDEO1_URL", "")
+video2_url = os.getenv("VIDEO2_URL", "")
+
+# Determine which videos to show
+videos_to_show = []
+
+# Check local files first
+if video1_path.exists():
+    videos_to_show.append(("Movement matters.mp4", str(video1_path), "🎯 **Movement Matters** - Understanding body language and motion analysis"))
+elif video1_url:
+    videos_to_show.append(("Movement matters.mp4", video1_url, "🎯 **Movement Matters** - Understanding body language and motion analysis"))
+
+if video2_path.exists():
+    videos_to_show.append(("The key to effective public speaking your body movement.mp4", str(video2_path), "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
+elif video2_url:
+    videos_to_show.append(("The key to effective public speaking your body movement.mp4", video2_url, "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
+
+# Display videos
+if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.video(str(video1_path))
-        st.caption("🎯 **Movement Matters** - Understanding body language and motion analysis")
+        if videos_to_show[0][1].startswith('http'):
+            st.video(videos_to_show[0][1])
+        else:
+            st.video(videos_to_show[0][1])
+        st.caption(videos_to_show[0][2])
     
     with col2:
-        st.video(str(video2_path))
-        st.caption("🎤 **The Key to Effective Public Speaking** - Your body movement matters")
+        if videos_to_show[1][1].startswith('http'):
+            st.video(videos_to_show[1][1])
+        else:
+            st.video(videos_to_show[1][1])
+        st.caption(videos_to_show[1][2])
         
-elif video1_path.exists() or video2_path.exists():
+elif len(videos_to_show) == 1:
     st.markdown("#### Available Videos:")
-    if video1_path.exists():
-        st.video(str(video1_path))
-        st.caption("🎯 **Movement Matters** - Understanding body language and motion analysis")
-    if video2_path.exists():
-        st.video(str(video2_path))
-        st.caption("🎤 **The Key to Effective Public Speaking** - Your body movement matters")
+    if videos_to_show[0][1].startswith('http'):
+        st.video(videos_to_show[0][1])
+    else:
+        st.video(videos_to_show[0][1])
+    st.caption(videos_to_show[0][2])
 else:
     st.info("🎥 Movement Matters videos will be displayed here when available.")
+    if not video1_path.exists() and not video1_url:
+        st.write("⚠️ Video 1 not found locally or in environment variables")
+    if not video2_path.exists() and not video2_url:
+        st.write("⚠️ Video 2 not found locally or in environment variables")
 
 st.markdown("### 📊 **Movement Analysis Dashboard**")
 st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
