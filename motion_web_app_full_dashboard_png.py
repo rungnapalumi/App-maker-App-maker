@@ -423,216 +423,264 @@ with st.sidebar:
             "user": masked_user,
         })
 
-uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi"])
+uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi"], help="Upload a video file for motion analysis")
 
 if uploaded_file is not None:
-    tfile = tempfile.NamedTemporaryFile(delete=False)
-    tfile.write(uploaded_file.read())
-    video_path = tfile.name
+    try:
+        # Check file size (200MB limit)
+        file_size = len(uploaded_file.getvalue())
+        if file_size > 200 * 1024 * 1024:  # 200MB
+            st.error("File too large! Please upload a file smaller than 200MB.")
+        else:
+            # Reset file pointer
+            uploaded_file.seek(0)
+            
+            tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+            tfile.write(uploaded_file.read())
+            tfile.close()
+            video_path = tfile.name
 
-    st.video(video_path)
-    if st.button("🕴️ **Start Movement Matters Analysis**"):
-        st.markdown("## 🔬 **Movement Matters Analysis in Progress**")
-        st.markdown("""
-        <div class="motion-card">
-            <h4>🔄 Processing Video with Movement Matters Analysis</h4>
-            <p>Analyzing movement patterns, spatial relationships, and temporal dynamics...</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+            st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({file_size // (1024*1024)}MB)")
+            st.video(video_path)
+            
+            if st.button("🕴️ **Start Movement Matters Analysis**"):
+                st.markdown("## 🔬 **Movement Matters Analysis in Progress**")
+                st.markdown("""
+                <div class="motion-card">
+                    <h4>🔄 Processing Video with Movement Matters Analysis</h4>
+                    <p>Analyzing movement patterns, spatial relationships, and temporal dynamics...</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-        output_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
-        output_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
-        output_segment_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
-        output_summary_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
+                output_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4').name
+                output_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
+                output_segment_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
+                output_summary_csv = tempfile.NamedTemporaryFile(delete=False, suffix='.csv').name
 
-        cap = cv2.VideoCapture(video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+                cap = cv2.VideoCapture(video_path)
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
 
-        pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+                # Initialize pose detection based on availability
+                if MEDIAPIPE_AVAILABLE:
+                    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+                else:
+                    pose = None
+                    st.info("Using OpenCV-based motion detection (MediaPipe not available)")
 
-        results_data, motion_segments = [], []
-        motion_summary, ongoing = {}, {}
-        frame_idx, last_logged_sec = 0, -1
-        prev_landmarks = None
-        history = deque(maxlen=3)
+                results_data, motion_segments = [], []
+                motion_summary, ongoing = {}, {}
+                frame_idx, last_logged_sec = 0, -1
+                prev_landmarks = None
+                prev_frame = None
+                history = deque(maxlen=3)
 
-        fade_text, fade_counter = [], 0
-        last_overlay_update_sec = -1
+                fade_text, fade_counter = [], 0
+                last_overlay_update_sec = -1
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret: break
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret: break
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(frame_rgb)
+                    motions = []
+                    
+                    if MEDIAPIPE_AVAILABLE and pose is not None:
+                        # Use MediaPipe pose detection
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        results = pose.process(frame_rgb)
 
-            motions = []
-            if results.pose_landmarks:
-                motions = detect_motion_v27(results.pose_landmarks.landmark, prev_landmarks)
-                prev_landmarks = results.pose_landmarks.landmark
+                        if results.pose_landmarks:
+                            motions = detect_motion_v27(results.pose_landmarks.landmark, prev_landmarks)
+                            prev_landmarks = results.pose_landmarks.landmark
 
-                history.append(motions)
-                smooth_motions = list({m for hist in history for m in hist})
+                            # Skeleton overlay red line + white dot
+                            mp_drawing.draw_landmarks(
+                                frame,
+                                results.pose_landmarks,
+                                mp_pose.POSE_CONNECTIONS,
+                                landmark_drawing_spec=mp_drawing.DrawingSpec(color=(255,255,255), thickness=1, circle_radius=1),
+                                connection_drawing_spec=mp_drawing.DrawingSpec(color=(0,0,255), thickness=2)
+                            )
+                    else:
+                        # Use OpenCV fallback motion detection
+                        motions = detect_motion_opencv(frame, prev_frame)
+                        prev_frame = frame.copy()
 
-                timestamp_sec = frame_idx / fps
-                timestamp_text = f"{int(timestamp_sec//60)}:{int(timestamp_sec%60):02d}"
+                    if motions:
+                        history.append(motions)
+                        smooth_motions = list({m for hist in history for m in hist})
 
-                # Overlay text updates only once per second
-                if int(timestamp_sec) != last_overlay_update_sec and smooth_motions:
-                    fade_text = smooth_motions[:3]  # max 3 lines
-                    fade_counter = int(fps*2)  # 2 sec fade
-                    last_overlay_update_sec = int(timestamp_sec)
+                        timestamp_sec = frame_idx / fps
+                        timestamp_text = f"{int(timestamp_sec//60)}:{int(timestamp_sec%60):02d}"
 
-                if fade_counter > 0:
-                    y_offset = int(height*0.1)
-                    for motion in fade_text:
-                        cv2.putText(frame, motion, (52, y_offset+2), FONT, FONT_SCALE, (0,0,0), FONT_THICKNESS+1, cv2.LINE_AA)
-                        cv2.putText(frame, motion, (50, y_offset), FONT, FONT_SCALE, (255,255,255), FONT_THICKNESS, cv2.LINE_AA)
-                        y_offset += 40
-                    fade_counter -= 1
+                        # Overlay text updates only once per second
+                        if int(timestamp_sec) != last_overlay_update_sec and smooth_motions:
+                            fade_text = smooth_motions[:3]  # max 3 lines
+                            fade_counter = int(fps*2)  # 2 sec fade
+                            last_overlay_update_sec = int(timestamp_sec)
 
-                # Skeleton overlay red line + white dot
-                mp_drawing.draw_landmarks(
-                    frame,
-                    results.pose_landmarks,
-                    mp_pose.POSE_CONNECTIONS,
-                    landmark_drawing_spec=mp_drawing.DrawingSpec(color=(255,255,255), thickness=1, circle_radius=1),
-                    connection_drawing_spec=mp_drawing.DrawingSpec(color=(0,0,255), thickness=2)
-                )
+                        if fade_counter > 0:
+                            y_offset = int(height*0.1)
+                            for motion in fade_text:
+                                cv2.putText(frame, motion, (52, y_offset+2), FONT, FONT_SCALE, (0,0,0), FONT_THICKNESS+1, cv2.LINE_AA)
+                                cv2.putText(frame, motion, (50, y_offset), FONT, FONT_SCALE, (255,255,255), FONT_THICKNESS, cv2.LINE_AA)
+                                y_offset += 40
+                            fade_counter -= 1
 
-                # 1-sec motion log
-                if smooth_motions and int(timestamp_sec) != last_logged_sec:
-                    results_data.append([timestamp_text, ", ".join(smooth_motions)])
-                    last_logged_sec = int(timestamp_sec)
+                        # 1-sec motion log
+                        if smooth_motions and int(timestamp_sec) != last_logged_sec:
+                            results_data.append([timestamp_text, ", ".join(smooth_motions)])
+                            last_logged_sec = int(timestamp_sec)
 
-                # Segment tracking (≥0.3s)
-                current_motions = set(smooth_motions)
-                for motion in list(ongoing.keys()):
-                    if motion not in current_motions:
-                        start_time = ongoing[motion]
-                        end_time = timestamp_sec
-                        duration = end_time - start_time
-                        if duration >= 0.3:
-                            motion_segments.append([motion, start_time, end_time, duration])
-                            motion_summary[motion] = motion_summary.get(motion, 0) + duration
-                        del ongoing[motion]
-                for motion in current_motions:
-                    if motion not in ongoing:
-                        ongoing[motion] = timestamp_sec
+                        # Segment tracking (≥0.3s)
+                        current_motions = set(smooth_motions)
+                        for motion in list(ongoing.keys()):
+                            if motion not in current_motions:
+                                start_time = ongoing[motion]
+                                end_time = timestamp_sec
+                                duration = end_time - start_time
+                                if duration >= 0.3:
+                                    motion_segments.append([motion, start_time, end_time, duration])
+                                    motion_summary[motion] = motion_summary.get(motion, 0) + duration
+                                del ongoing[motion]
+                        for motion in current_motions:
+                            if motion not in ongoing:
+                                ongoing[motion] = timestamp_sec
 
-            out.write(frame)
-            frame_idx += 1
+                    out.write(frame)
+                    frame_idx += 1
 
-        # Close remaining segments
-        total_sec = frame_idx/fps
-        for motion,start_time in ongoing.items():
-            duration = total_sec - start_time
-            if duration >= 0.3:
-                motion_segments.append([motion, start_time, total_sec, duration])
-                motion_summary[motion] = motion_summary.get(motion, 0) + duration
+                # Close remaining segments
+                total_sec = frame_idx/fps
+                for motion,start_time in ongoing.items():
+                    duration = total_sec - start_time
+                    if duration >= 0.3:
+                        motion_segments.append([motion, start_time, total_sec, duration])
+                        motion_summary[motion] = motion_summary.get(motion, 0) + duration
 
-        cap.release(); out.release(); pose.close()
+                cap.release(); out.release()
+                if MEDIAPIPE_AVAILABLE and pose is not None:
+                    pose.close()
 
-        # Save CSVs with integer values
-        df_log = pd.DataFrame(results_data, columns=["timestamp","motions"])
-        
-        # Convert duration values to integers (seconds)
-        motion_segments_int = []
-        for segment in motion_segments:
-            motion_segments_int.append([
-                segment[0],  # motion name
-                int(segment[1]),  # start_sec as integer
-                int(segment[2]),  # end_sec as integer
-                int(segment[3])   # duration_sec as integer
-            ])
-        
-        # Convert summary values to integers
-        motion_summary_int = {}
-        for motion, duration in motion_summary.items():
-            motion_summary_int[motion] = int(duration)
-        
-        df_segments = pd.DataFrame(motion_segments_int, columns=["motion","start_sec","end_sec","duration_sec"])
-        df_summary = pd.DataFrame(list(motion_summary_int.items()), columns=["motion","total_duration_sec"])
+                # Save CSVs with integer values
+                df_log = pd.DataFrame(results_data, columns=["timestamp","motions"])
+                
+                # Convert duration values to integers (seconds)
+                motion_segments_int = []
+                for segment in motion_segments:
+                    motion_segments_int.append([
+                        segment[0],  # motion name
+                        int(segment[1]),  # start_sec as integer
+                        int(segment[2]),  # end_sec as integer
+                        int(segment[3])   # duration_sec as integer
+                    ])
+                
+                # Convert summary values to integers
+                motion_summary_int = {}
+                for motion, duration in motion_summary.items():
+                    motion_summary_int[motion] = int(duration)
+                
+                df_segments = pd.DataFrame(motion_segments_int, columns=["motion","start_sec","end_sec","duration_sec"])
+                df_summary = pd.DataFrame(list(motion_summary_int.items()), columns=["motion","total_duration_sec"])
 
-        with open(output_csv,"w") as f: df_log.to_csv(f,index=False)
-        with open(output_segment_csv,"w") as f: df_segments.to_csv(f,index=False)
-        with open(output_summary_csv,"w") as f: df_summary.to_csv(f,index=False)
+                with open(output_csv,"w") as f: df_log.to_csv(f,index=False)
+                with open(output_segment_csv,"w") as f: df_segments.to_csv(f,index=False)
+                with open(output_summary_csv,"w") as f: df_summary.to_csv(f,index=False)
 
-        # Movement Matters Styled Results Display
-        st.markdown("## 🎯 **Analysis Complete**")
-        st.markdown("""
-        <div class="motion-card">
-            <h4>✅ Motion Analysis Successfully Completed</h4>
-            <p>Your video has been processed using Movement Matters principles. All motion data has been analyzed and exported.</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display summary metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown(f"""
-            <div class="metric-box">
-                <h3>📊 Total Motions</h3>
-                <h2>{len(motion_summary_int)}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            total_frames = int(frame_idx)
-            st.markdown(f"""
-            <div class="metric-box">
-                <h3>🎬 Frames Analyzed</h3>
-                <h2>{total_frames:,}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            total_duration = int(frame_idx/fps)
-            st.markdown(f"""
-            <div class="metric-box">
-                <h3>⏱️ Video Duration</h3>
-                <h2>{total_duration}s</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.video(output_video)
-        
-        # Movement Matters Styled download buttons
-        st.markdown("## 📥 **Download Analysis Reports**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.download_button(
-                "📋 Download Motion Log CSV", 
-                data=open(output_csv,"rb"), 
-                file_name="movement_matters_motion_log.csv",
-                help="Detailed timestamp-based motion records"
-            )
-            st.download_button(
-                "📊 Download Motion Segments CSV", 
-                data=open(output_segment_csv,"rb"), 
-                file_name="movement_matters_motion_segments.csv",
-                help="Motion segments with start/end times and durations"
-            )
-        
-        with col2:
-            st.download_button(
-                "📈 Download Motion Summary CSV", 
-                data=open(output_summary_csv,"rb"), 
-                file_name="movement_matters_motion_summary.csv",
-                help="Summary statistics for each motion type"
-            )
-            st.download_button(
-                "🎬 Download Analysis Video", 
-                data=open(output_video,"rb"), 
-                file_name="movement_matters_motion_analysis.mp4",
-                help="Processed video with skeleton overlay and motion labels"
-            )
+                # Movement Matters Styled Results Display
+                st.markdown("## 🎯 **Analysis Complete**")
+                st.markdown("""
+                <div class="motion-card">
+                    <h4>✅ Motion Analysis Successfully Completed</h4>
+                    <p>Your video has been processed using Movement Matters principles. All motion data has been analyzed and exported.</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(f"""
+                    <div class="metric-box">
+                        <h3>📊 Total Motions</h3>
+                        <h2>{len(motion_summary_int)}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    total_frames = int(frame_idx)
+                    st.markdown(f"""
+                    <div class="metric-box">
+                        <h3>🎬 Frames Analyzed</h3>
+                        <h2>{total_frames:,}</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col3:
+                    total_duration = int(frame_idx/fps)
+                    st.markdown(f"""
+                    <div class="metric-box">
+                        <h3>⏱️ Video Duration</h3>
+                        <h2>{total_duration}s</h2>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.video(output_video)
+                
+                # Movement Matters Styled download buttons
+                st.markdown("## 📥 **Download Analysis Reports**")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.download_button(
+                        "📋 Download Motion Log CSV", 
+                        data=open(output_csv,"rb"), 
+                        file_name="movement_matters_motion_log.csv",
+                        help="Detailed timestamp-based motion records"
+                    )
+                    st.download_button(
+                        "📊 Download Motion Segments CSV", 
+                        data=open(output_segment_csv,"rb"), 
+                        file_name="movement_matters_motion_segments.csv",
+                        help="Motion segments with start/end times and durations"
+                    )
+                
+                with col2:
+                    st.download_button(
+                        "📈 Download Motion Summary CSV", 
+                        data=open(output_summary_csv,"rb"), 
+                        file_name="movement_matters_motion_summary.csv",
+                        help="Summary statistics for each motion type"
+                    )
+                    st.download_button(
+                        "🎬 Download Analysis Video", 
+                        data=open(output_video,"rb"), 
+                        file_name="movement_matters_motion_analysis.mp4",
+                        help="Processed video with skeleton overlay and motion labels"
+                    )
+                
+                # Cleanup temporary files
+                try:
+                    os.unlink(video_path)
+                    os.unlink(output_csv)
+                    os.unlink(output_segment_csv)
+                    os.unlink(output_summary_csv)
+                    os.unlink(output_video)
+                except:
+                    pass
+                    
+    except Exception as e:
+        st.error(f"❌ Error processing video: {str(e)}")
+        st.info("Please try uploading a different video file or check the file format.")
+        # Cleanup on error
+        try:
+            if 'video_path' in locals():
+                os.unlink(video_path)
+        except:
+            pass
