@@ -71,8 +71,8 @@ def admin_panel():
     
     # Simple admin login form
     st.markdown("### 🔑 Admin Login")
-    admin_username = st.text_input("")
-    admin_password = st.text_input("", type="password")
+    admin_username = st.text_input("Username", placeholder="Enter username")
+    admin_password = st.text_input("Password", type="password", placeholder="Enter password")
     
     if st.button("🔓 Login"):
         if admin_username == "admin" and admin_password == "0108":
@@ -454,7 +454,7 @@ if not st.session_state.logged_in:
         st.markdown("### 🔑 Admin Access")
         st.write("**Username:** admin")
         st.write("**Password:** [Enter password]")
-        st.info("Login to access admin features")
+        st.info("Use admin credentials to access downloads")
     
     # Show main content area with login message
     st.markdown("""
