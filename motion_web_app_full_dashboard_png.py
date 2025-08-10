@@ -272,13 +272,144 @@ def detect_motion_v27(landmarks, prev_landmarks=None):
     return motions
 
 # ==== Streamlit Web App ====
-# LMA Theme Configuration
+# Image Matters Asia Theme Configuration
 st.set_page_config(
-    page_title="Movement Matters",
+    page_title="Movement Matters by Image Matters Asia",
     page_icon="🕴️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Custom CSS for Image Matters Asia theme
+st.markdown("""
+<style>
+    /* Main theme colors - Image Matters Asia */
+    :root {
+        --primary-red: #d32f2f;
+        --dark-red: #b71c1c;
+        --light-red: #ffcdd2;
+        --accent-blue: #1976d2;
+        --accent-purple: #7b1fa2;
+        --text-dark: #212121;
+        --text-light: #757575;
+        --background-light: #fafafa;
+    }
+    
+    /* Header styling */
+    .main-header {
+        background: linear-gradient(135deg, var(--primary-red) 0%, var(--dark-red) 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        color: white;
+        text-align: center;
+        box-shadow: 0 4px 20px rgba(211, 47, 47, 0.3);
+    }
+    
+    .brand-title {
+        font-size: 3.5rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+        color: white;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .brand-subtitle {
+        font-size: 1.3rem;
+        color: #ffcdd2;
+        font-style: italic;
+        margin-bottom: 1rem;
+    }
+    
+    .brand-logo {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg {
+        background: linear-gradient(180deg, #f5f5f5 0%, #eeeeee 100%);
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        background: linear-gradient(45deg, var(--primary-red), var(--dark-red));
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.75rem 2rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 10px rgba(211, 47, 47, 0.3);
+    }
+    
+    .stButton > button:hover {
+        background: linear-gradient(45deg, var(--dark-red), var(--primary-red));
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(211, 47, 47, 0.4);
+    }
+    
+    /* Card styling */
+    .motion-card {
+        background: white;
+        border-left: 4px solid var(--primary-red);
+        padding: 1.5rem;
+        margin: 1rem 0;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .motion-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    
+    /* Video placeholder styling */
+    .video-placeholder {
+        background: linear-gradient(135deg, #f5f5f5 0%, #eeeeee 100%);
+        border: 2px dashed var(--primary-red);
+        border-radius: 15px;
+        padding: 2rem;
+        text-align: center;
+        margin: 1rem 0;
+    }
+    
+    /* Section headers */
+    .section-header {
+        color: var(--primary-red);
+        font-size: 1.8rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
+        border-bottom: 3px solid var(--primary-red);
+        padding-bottom: 0.5rem;
+    }
+    
+    /* Login form styling */
+    .login-form {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border: 2px solid var(--light-red);
+    }
+    
+    /* Success/Error messages */
+    .stSuccess {
+        background: #e8f5e8;
+        border-left: 4px solid #4caf50;
+        padding: 1rem;
+        border-radius: 5px;
+    }
+    
+    .stError {
+        background: #ffebee;
+        border-left: 4px solid var(--primary-red);
+        padding: 1rem;
+        border-radius: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Check login status
 if not st.session_state.logged_in:
@@ -309,9 +440,11 @@ if not st.session_state.logged_in:
     
     # Show main content area with login message
     st.markdown("""
-    <div style="text-align: center; padding: 2rem;">
-        <h1>🕴️ Movement Matters</h1>
-        <h3>Please login to access the application</h3>
+    <div class="main-header">
+        <div class="brand-logo">🕴️</div>
+        <div class="brand-title">Movement Matters</div>
+        <div class="brand-subtitle">by Image Matters Asia</div>
+        <p style="font-size: 1.1rem; margin-top: 1rem;">Please login to access the application</p>
     </div>
     """, unsafe_allow_html=True)
 else:
@@ -327,69 +460,20 @@ else:
         admin_panel()
         st.markdown("---")
     
-    # Custom CSS for Movement Matters gray theme
-    st.markdown("""
-    <style>
-        .main-header {
-            background: linear-gradient(90deg, #3a3a3a 0%, #2f2f2f 100%);
-            padding: 2rem;
-            border-radius: 10px;
-            margin-bottom: 2rem;
-            color: #f2f2f2;
-            text-align: center;
-        }
-        .lma-title {
-            font-size: 3rem;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-            color: #e6e6e6;
-        }
-        .lma-subtitle {
-            font-size: 1.1rem;
-            color: #bdbdbd;
-            font-style: italic;
-        }
-        .motion-card {
-            background: #f5f5f5;
-            border-left: 4px solid #7a7a7a;
-            padding: 1rem;
-            margin: 1rem 0;
-            border-radius: 5px;
-        }
-        .metric-box {
-            background: #fafafa;
-            border: 2px solid #b3b3b3;
-            border-radius: 8px;
-            padding: 1rem;
-            text-align: center;
-            margin: 0.5rem;
-        }
-        .stButton > button {
-            background: linear-gradient(45deg, #6e6e6e, #555555);
-            color: white;
-            border: none;
-            border-radius: 25px;
-            padding: 0.75rem 2rem;
-            font-weight: bold;
-            transition: all 0.3s ease;
-        }
-        .stButton > button:hover {
-            background: linear-gradient(45deg, #5a5a5a, #444444);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
     # Movement Matters Header
     st.markdown("""
     <div class="main-header">
-        <div class="lma-title">🕴️ Movement Matters</div>
+        <div class="brand-title">🕴️ Movement Matters</div>
+        <div class="brand-subtitle">by Image Matters Asia</div>
     </div>
     """, unsafe_allow_html=True)
 
 # Media section: show Movement Matters videos
-st.markdown("### 🎥 Movement Matters Videos")
+st.markdown("""
+<div class="section-header">
+    🎥 Movement Matters Videos
+</div>
+""", unsafe_allow_html=True)
 
 # Check for the new videos - Updated for deployment fix
 video1_path = Path("Movement matters.mp4")
@@ -445,7 +529,7 @@ if len(videos_to_show) >= 2:
             st.video(videos_to_show[0][1])
         else:
             st.markdown("""
-            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <div class="video-placeholder">
                 <h4>🎯 Movement Matters</h4>
                 <p>Video will be embedded here</p>
                 <p><em>Upload to YouTube for embedded playback</em></p>
@@ -459,7 +543,7 @@ if len(videos_to_show) >= 2:
             st.video(videos_to_show[1][1])
         else:
             st.markdown("""
-            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+            <div class="video-placeholder">
                 <h4>🎤 The Key to Effective Public Speaking</h4>
                 <p>Video will be embedded here</p>
                 <p><em>Upload to YouTube for embedded playback</em></p>
@@ -502,8 +586,14 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-st.markdown("### 📊 **Movement Analysis Dashboard**")
-st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
+st.markdown("""
+<div class="section-header">
+    📊 Movement Analysis Dashboard
+</div>
+<p style="color: var(--text-light); font-style: italic; margin-bottom: 1rem;">
+    Upload video for comprehensive motion analysis using Movement Matters principles
+</p>
+""", unsafe_allow_html=True)
 
 # --- Sidebar: User Information Form (only when logged in) ---
 if st.session_state.logged_in:
