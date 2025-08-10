@@ -27,6 +27,8 @@ if 'is_admin' not in st.session_state:
     st.session_state.is_admin = False
 if 'username' not in st.session_state:
     st.session_state.username = ""
+if 'admin_password_verified' not in st.session_state:
+    st.session_state.admin_password_verified = False
 
 def check_login(username, password):
     """Check if user credentials are valid"""
@@ -67,84 +69,99 @@ def admin_panel():
     """Admin panel for managing uploaded videos"""
     st.markdown("## 🔐 Admin Panel")
     
-    # Show uploaded videos
-    st.markdown("### 📁 Uploaded Videos")
+    # Admin password verification
+    st.markdown("### 🔑 Admin Password Verification")
+    admin_password = st.text_input("Enter admin password:", type="password", placeholder="Enter password to access downloads")
     
-    # Check for uploaded videos in user_uploads directory
-    upload_dir = Path("user_uploads")
-    video_files = []
+    if st.button("🔓 Verify Password"):
+        if admin_password == "0108":
+            st.session_state.admin_password_verified = True
+            st.success("✅ Password verified! Download options are now available.")
+        else:
+            st.session_state.admin_password_verified = False
+            st.error("❌ Incorrect password. Please try again.")
     
-    if upload_dir.exists():
-        for file in upload_dir.glob("*"):
-            if file.suffix.lower() in ['.mp4', '.mov', '.avi', '.mpeg4']:
-                video_files.append(file)
-    
-    # Check for existing videos in root directory
-    root_videos = []
-    for video_name in ["Movement matters.mp4", "The key to effective public speaking  your body movement.mp4"]:
-        video_path = Path(video_name)
-        if video_path.exists():
-            root_videos.append(video_path)
-    
-    if video_files or root_videos:
-        st.success(f"Found {len(video_files)} uploaded videos and {len(root_videos)} system videos")
+    # Show uploaded videos only if password is verified
+    if st.session_state.admin_password_verified:
+        st.markdown("### 📁 Uploaded Videos")
         
-        # Display uploaded videos
-        if video_files:
-            st.markdown("#### 📤 User Uploaded Videos:")
-            for i, video_file in enumerate(video_files):
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
-                with col2:
-                    st.video(str(video_file))
-                with col3:
-                    st.download_button(
-                        f"📥 Download {video_file.name}",
-                        data=open(video_file, "rb"),
-                        file_name=video_file.name,
-                        key=f"download_uploaded_{i}"
-                    )
+        # Check for uploaded videos in user_uploads directory
+        upload_dir = Path("user_uploads")
+        video_files = []
         
-        # Display system videos
-        if root_videos:
-            st.markdown("#### 🖥️ System Videos:")
-            for i, video_file in enumerate(root_videos):
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
-                with col2:
-                    st.video(str(video_file))
-                with col3:
-                    st.download_button(
-                        f"📥 Download {video_file.name}",
-                        data=open(video_file, "rb"),
-                        file_name=video_file.name,
-                        key=f"download_system_{i}"
-                    )
+        if upload_dir.exists():
+            for file in upload_dir.glob("*"):
+                if file.suffix.lower() in ['.mp4', '.mov', '.avi', '.mpeg4']:
+                    video_files.append(file)
+        
+        # Check for existing videos in root directory
+        root_videos = []
+        for video_name in ["Movement matters.mp4", "The key to effective public speaking  your body movement.mp4"]:
+            video_path = Path(video_name)
+            if video_path.exists():
+                root_videos.append(video_path)
+        
+        if video_files or root_videos:
+            st.success(f"Found {len(video_files)} uploaded videos and {len(root_videos)} system videos")
+            
+            # Display uploaded videos
+            if video_files:
+                st.markdown("#### 📤 User Uploaded Videos:")
+                for i, video_file in enumerate(video_files):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
+                    with col2:
+                        st.video(str(video_file))
+                    with col3:
+                        st.download_button(
+                            f"📥 Download {video_file.name}",
+                            data=open(video_file, "rb"),
+                            file_name=video_file.name,
+                            key=f"download_uploaded_{i}"
+                        )
+            
+            # Display system videos
+            if root_videos:
+                st.markdown("#### 🖥️ System Videos:")
+                for i, video_file in enumerate(root_videos):
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    with col1:
+                        st.write(f"**{video_file.name}** ({video_file.stat().st_size // (1024*1024)}MB)")
+                    with col2:
+                        st.video(str(video_file))
+                    with col3:
+                        st.download_button(
+                            f"📥 Download {video_file.name}",
+                            data=open(video_file, "rb"),
+                            file_name=video_file.name,
+                            key=f"download_system_{i}"
+                        )
+        else:
+            st.info("No videos found in the system.")
+        
+        # Show user submissions
+        st.markdown("### 👥 User Submissions")
+        csv_path = Path("user_submissions.csv")
+        xlsx_path = Path("user_submissions.xlsx")
+        
+        if csv_path.exists():
+            df = pd.read_csv(csv_path)
+            st.dataframe(df)
+            st.download_button(
+                "📥 Download User Submissions CSV",
+                data=df.to_csv(index=False),
+                file_name="user_submissions.csv"
+            )
+        
+        if xlsx_path.exists():
+            st.download_button(
+                "📥 Download User Submissions Excel",
+                data=open(xlsx_path, "rb"),
+                file_name="user_submissions.xlsx"
+            )
     else:
-        st.info("No videos found in the system.")
-    
-    # Show user submissions
-    st.markdown("### 👥 User Submissions")
-    csv_path = Path("user_submissions.csv")
-    xlsx_path = Path("user_submissions.xlsx")
-    
-    if csv_path.exists():
-        df = pd.read_csv(csv_path)
-        st.dataframe(df)
-        st.download_button(
-            "📥 Download User Submissions CSV",
-            data=df.to_csv(index=False),
-            file_name="user_submissions.csv"
-        )
-    
-    if xlsx_path.exists():
-        st.download_button(
-            "📥 Download User Submissions Excel",
-            data=open(xlsx_path, "rb"),
-            file_name="user_submissions.xlsx"
-        )
+        st.info("🔒 Please enter the admin password to access download options.")
 
 def logout_button():
     """Logout button in sidebar"""
@@ -435,8 +452,8 @@ if not st.session_state.logged_in:
         # Admin credentials (less prominent)
         with st.expander("🔑 Admin Access"):
             st.write("**Username:** admin")
-            st.write("**Password:** [Hidden for security]")
-            st.info("Click to copy credentials")
+            st.write("**Password:** [Enter password to access]")
+            st.info("Enter the correct password to access admin features")
     
     # Show main content area with login message
     st.markdown("""
@@ -713,7 +730,7 @@ if uploaded_file is not None:
                             st.metric("Balance Score", "92%", "↑ 15%")
                         
                         st.success("✅ Analysis completed successfully!")
-                        st.info("📊 Detailed analysis report coming soon...")
+                        st.info("📧 Detailed analysis results will be sent to your email address.")
                         
                     except Exception as analysis_error:
                         st.error(f"❌ Analysis failed: {str(analysis_error)}")
