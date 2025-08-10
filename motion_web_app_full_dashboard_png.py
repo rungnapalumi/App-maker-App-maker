@@ -300,6 +300,12 @@ if not st.session_state.logged_in:
                     st.rerun()
                 else:
                     st.error("Invalid credentials.")
+        
+        # Admin credentials (less prominent)
+        with st.expander("🔑 Admin Access"):
+            st.write("**Username:** admin")
+            st.write("**Password:** [Hidden for security]")
+            st.info("Click to copy credentials")
     
     # Show main content area with login message
     st.markdown("""
