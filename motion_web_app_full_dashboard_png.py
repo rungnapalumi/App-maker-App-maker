@@ -402,26 +402,15 @@ st.markdown("*Upload video for comprehensive motion analysis using Movement Matt
 with st.sidebar:
     st.header("User details")
     with st.form("user_details_form", clear_on_submit=False):
-        user_name = st.text_input("Name", placeholder="Name", max_chars=20)
-        user_email = st.text_input("Email", placeholder="email@example.com", max_chars=30)
+        user_name = st.text_input("Name", placeholder="Name", max_chars=15)
+        user_email = st.text_input("Email", placeholder="email@example.com", max_chars=25)
         slip_file = st.file_uploader(
-            "Slip (image file)", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image"
+            "Slip", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image"
         )
         submitted_user = st.form_submit_button("Submit")
 
         if submitted_user:
-            validation_errors = []
-            if not user_name.strip():
-                validation_errors.append("User name is required.")
-            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", user_email.strip()):
-                validation_errors.append("Valid email is required.")
-            if slip_file is None:
-                validation_errors.append("Please upload a slip image (PNG/JPG).")
-
-            if validation_errors:
-                for err in validation_errors:
-                    st.error(err)
-            else:
+            if user_name.strip() and user_email.strip() and slip_file is not None:
                 suffix = Path(slip_file.name).suffix.lower() or ".png"
                 safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", user_name.strip())
                 timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -457,44 +446,21 @@ with st.sidebar:
                     else:
                         updated_df = new_row
                     updated_df.to_excel(xlsx_path, index=False)
-                except Exception as e:
-                    st.warning(f"Saved CSV, but failed saving Excel: {e}")
+                except Exception:
+                    pass
 
-                st.success("Details saved successfully.")
+                st.success("Saved!")
                 st.image(str(saved_path), caption="Uploaded slip", use_container_width=True)
 
-# Video Analysis Section - Disabled for Future Use
-st.markdown("### 📹 Video Analysis")
-st.info("🎯 **Video Analysis Feature Coming Soon!**")
-st.markdown("""
-<div class="motion-card">
-    <h4>🔄 Advanced Motion Analysis</h4>
-    <p>This feature will be available in the future for comprehensive motion analysis using Movement Matters principles.</p>
-    <ul>
-        <li>🎥 Video upload and processing</li>
-        <li>🕴️ Motion pattern detection</li>
-        <li>📊 Detailed analytics and reports</li>
-        <li>📈 Performance metrics</li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
-
-# Disabled video upload section
-st.markdown("#### 📤 Video Upload (Coming Soon)")
-st.warning("⚠️ Video analysis functionality is currently disabled and will be available in a future update.")
-
-# Comment out the original video processing code for future use
-"""
-uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi"], help="Upload a video file for motion analysis")
+# Video Upload Section (Working normally)
+uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi"], help="Upload a video file")
 
 if uploaded_file is not None:
     try:
-        # Check file size (200MB limit)
         file_size = len(uploaded_file.getvalue())
         if file_size > 200 * 1024 * 1024:  # 200MB
             st.error("File too large! Please upload a file smaller than 200MB.")
         else:
-            # Reset file pointer
             uploaded_file.seek(0)
             
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
@@ -502,20 +468,17 @@ if uploaded_file is not None:
             tfile.close()
             video_path = tfile.name
 
-            st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({file_size // (1024*1024)}MB)")
+            st.success(f"✅ File uploaded: {uploaded_file.name}")
             st.video(video_path)
             
-            if st.button("🕴️ **Start Movement Matters Analysis**"):
-                # Video analysis code here (disabled for future use)
-                pass
+            # Video analysis button (hidden functionality)
+            if st.button("🕴️ **Start Analysis**"):
+                st.info("🎯 Video analysis feature coming soon!")
                     
-    except Exception as e:
-        st.error(f"❌ Error processing video: {str(e)}")
-        st.info("Please try uploading a different video file or check the file format.")
-        # Cleanup on error
+    except Exception:
+        st.error("Error uploading video. Please try again.")
         try:
             if 'video_path' in locals():
                 os.unlink(video_path)
         except:
             pass
-"""
