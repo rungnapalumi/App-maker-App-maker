@@ -655,8 +655,8 @@ if st.session_state.logged_in:
                 write_header = not csv_path.exists()
                 with open(csv_path, "a", encoding="utf-8") as f:
                     if write_header:
-                        f.write("timestamp,name,email,slip_path\n")
-                    f.write(f"{datetime.now().isoformat(timespec='seconds')},{user_name},{user_email},{saved_path.as_posix()}\n")
+                        f.write("timestamp,name,email,slip_path,original_filename,saved_filename,file_size_mb,upload_type\n")
+                    f.write(f"{datetime.now().isoformat(timespec='seconds')},{user_name},{user_email},{saved_path.as_posix()},{slip_file.name},{saved_filename},{len(slip_file.getvalue()) / (1024*1024):.2f},image\n")
 
                 # Also write/append to Excel file
                 try:
@@ -667,6 +667,10 @@ if st.session_state.logged_in:
                             "name": user_name,
                             "email": user_email,
                             "slip_path": saved_path.as_posix(),
+                            "original_filename": slip_file.name,
+                            "saved_filename": saved_filename,
+                            "file_size_mb": round(len(slip_file.getvalue()) / (1024*1024), 2),
+                            "upload_type": "image"
                         }
                     ])
                     if xlsx_path.exists():
@@ -740,10 +744,12 @@ if uploaded_file is not None:
                             "timestamp": datetime.now().isoformat(timespec="seconds"),
                             "name": st.session_state.username if st.session_state.username else "Anonymous",
                             "email": "Video Upload",
-                            "video_filename": saved_filename,
+                            "slip_path": f"Video: {saved_filename}",
                             "original_filename": uploaded_file.name,
+                            "saved_filename": saved_filename,
                             "file_size_mb": round(file_size_mb, 2),
-                            "upload_type": "video"
+                            "upload_type": "video",
+                            "file_path": str(saved_path)
                         }
                     ])
                     
@@ -757,7 +763,7 @@ if uploaded_file is not None:
                         updated_df = video_log_row
                     updated_df.to_excel(xlsx_path, index=False)
                     
-                    st.info(f"📝 Video logged: {saved_filename}")
+                    st.info(f"📝 Video logged: {uploaded_file.name} -> {saved_filename}")
                 except Exception as log_error:
                     st.warning("⚠️ Could not log video to Excel file")
                 
@@ -769,13 +775,17 @@ if uploaded_file is not None:
                             "timestamp": datetime.now().isoformat(timespec="seconds"),
                             "name": st.session_state.username if st.session_state.username else "Anonymous",
                             "email": "Video Upload",
-                            "slip_path": f"Video: {saved_filename}"
+                            "slip_path": f"Video: {uploaded_file.name} -> {saved_filename}",
+                            "original_filename": uploaded_file.name,
+                            "saved_filename": saved_filename,
+                            "file_size_mb": round(file_size_mb, 2),
+                            "upload_type": "video"
                         }
                     ])
                     
                     if csv_path.exists():
                         try:
-                            existing_csv_df = pd.read_csv(csv_path)
+                            existing_csv_df = pd.read_csv(csv_path, on_bad_lines='skip')
                             updated_csv_df = pd.concat([existing_csv_df, csv_log_row], ignore_index=True)
                         except Exception:
                             updated_csv_df = csv_log_row
