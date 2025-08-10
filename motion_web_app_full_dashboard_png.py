@@ -413,14 +413,34 @@ if len(videos_to_show) >= 2:
     
     with col1:
         if videos_to_show[0][1].startswith('http'):
-            st.video(videos_to_show[0][1])
+            try:
+                st.video(videos_to_show[0][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>🎯 Movement Matters</h4>
+                    <p>Understanding body language and motion analysis</p>
+                    <p><strong>Video available for download</strong></p>
+                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[0][1])
         st.caption(videos_to_show[0][2])
     
     with col2:
         if videos_to_show[1][1].startswith('http'):
-            st.video(videos_to_show[1][1])
+            try:
+                st.video(videos_to_show[1][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>🎤 The Key to Effective Public Speaking</h4>
+                    <p>Your body movement matters</p>
+                    <p><strong>Video available for download</strong></p>
+                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
@@ -428,7 +448,16 @@ if len(videos_to_show) >= 2:
 elif len(videos_to_show) == 1:
     st.markdown("#### Available Videos:")
     if videos_to_show[0][1].startswith('http'):
-        st.video(videos_to_show[0][1])
+        try:
+            st.video(videos_to_show[0][1])
+        except:
+            st.markdown("""
+            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                <h4>{}</h4>
+                <p><strong>Video available for download</strong></p>
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+            </div>
+            """.format(videos_to_show[0][2], videos_to_show[0][1]), unsafe_allow_html=True)
     else:
         st.video(videos_to_show[0][1])
     st.caption(videos_to_show[0][2])
