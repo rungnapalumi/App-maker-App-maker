@@ -645,31 +645,31 @@ st.markdown("""
 
 # Body Attitudes Section with Visual Grid
 st.markdown("""
-<div class="motion-card" style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+<div class="motion-card" style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 2rem;">
     <h2 style="color: var(--primary-red); text-align: center; font-size: 2.2rem; margin-bottom: 2rem;">Body Attitudes & Posture</h2>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem;">
         <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
             <div style="font-size: 3rem; margin-bottom: 1rem;">📌</div>
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Pin Body Attitude</h4>
-            <p style="color: var(--text-dark); font-size: 0.9rem;">Communicates rigidity and stiffness</p>
+            <p style="color: var(--text-dark); font-size: 0.9rem; margin: 0;">Communicates rigidity and stiffness</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
             <div style="font-size: 3rem; margin-bottom: 1rem;">🧱</div>
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Wall Body Attitude</h4>
-            <p style="color: var(--text-dark); font-size: 0.9rem;">One-dimensional and unapproachable</p>
+            <p style="color: var(--text-dark); font-size: 0.9rem; margin: 0;">One-dimensional and unapproachable</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
             <div style="font-size: 3rem; margin-bottom: 1rem;">⚽</div>
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Ball Body Attitude</h4>
-            <p style="color: var(--text-dark); font-size: 0.9rem;">Caving in, humble and sometimes weak</p>
+            <p style="color: var(--text-dark); font-size: 0.9rem; margin: 0;">Caving in, humble and sometimes weak</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-top: 4px solid var(--primary-red);">
             <div style="font-size: 3rem; margin-bottom: 1rem;">🔩</div>
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">Screw Body Attitude</h4>
-            <p style="color: var(--text-dark); font-size: 0.9rem;">Approachable and multi-dimensional</p>
+            <p style="color: var(--text-dark); font-size: 0.9rem; margin: 0;">Approachable and multi-dimensional</p>
         </div>
     </div>
 </div>
@@ -677,32 +677,32 @@ st.markdown("""
 
 # Movement Phrasing Section
 st.markdown("""
-<div class="motion-card" style="background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+<div class="motion-card" style="background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 2rem;">
     <h2 style="color: var(--primary-red); text-align: center; font-size: 2.2rem; margin-bottom: 2rem;">Movement Phrasing</h2>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
         <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">🎯 Even Phrasing</h4>
-            <p style="color: var(--text-dark);">Communicates consistency and calmness</p>
+            <p style="color: var(--text-dark); margin: 0;">Communicates consistency and calmness</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">⚡ Impulsive Phrasing</h4>
-            <p style="color: var(--text-dark);">Communicates abruptness, urgency, chaotic qualities</p>
+            <p style="color: var(--text-dark); margin: 0;">Communicates abruptness, urgency, chaotic qualities</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">💪 Impactive Phrasing</h4>
-            <p style="color: var(--text-dark);">Communicates weight and solidity, insistent, clear</p>
+            <p style="color: var(--text-dark); margin: 0;">Communicates weight and solidity, insistent, clear</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">🔄 Swing Phrasing</h4>
-            <p style="color: var(--text-dark);">Communicates resiliency, cooperative, easy going</p>
+            <p style="color: var(--text-dark); margin: 0;">Communicates resiliency, cooperative, easy going</p>
         </div>
         
         <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h4 style="color: var(--primary-red); margin-bottom: 0.5rem;">📳 Vibratory Phrasing</h4>
-            <p style="color: var(--text-dark);">Communicates nervousness, hectic, chaotic qualities</p>
+            <p style="color: var(--text-dark); margin: 0;">Communicates nervousness, hectic, chaotic qualities</p>
         </div>
     </div>
 </div>
@@ -721,11 +721,11 @@ st.markdown("""
 
 # What You Will Learn - Enhanced Grid Layout
 st.markdown("""
-<div class="motion-card" style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08);">
+<div class="motion-card" style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border: none; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 2rem;">
     <h2 style="color: var(--primary-red); text-align: center; font-size: 2.5rem; margin-bottom: 3rem;">WHAT YOU WILL LEARN</h2>
     
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
-        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red); transition: transform 0.3s ease;">
+        <div style="background: white; padding: 1.5rem; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border-left: 5px solid var(--primary-red);">
             <div style="display: flex; align-items: center; margin-bottom: 1rem;">
                 <div style="font-size: 2.5rem; margin-right: 1rem;">🦵</div>
                 <h4 style="color: var(--primary-red); margin: 0;">Your Stance</h4>
