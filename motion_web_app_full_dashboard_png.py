@@ -435,7 +435,7 @@ if not st.session_state.logged_in:
         st.markdown("### 🔐 Login")
         with st.form("sidebar_login_form"):
             username = st.text_input("Username", placeholder="Enter username")
-            password = st.text_input("Password", type="password", placeholder="Enter password")
+            password = st.text_input("Password", type="password")
             submit_button = st.form_submit_button("Login")
             
             if submit_button:
