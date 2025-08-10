@@ -481,8 +481,8 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "")
-video2_url = os.getenv("VIDEO2_URL", "")
+video1_url = os.getenv("VIDEO1_URL", "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview")
+video2_url = os.getenv("VIDEO2_URL", "https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview")
 
 # Convert Google Drive URLs to proper format
 def fix_google_drive_url(url):
@@ -524,46 +524,58 @@ if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Only embed YouTube videos
-        if videos_to_show[0][1].startswith('http') and is_youtube_url(videos_to_show[0][1]):
-            st.video(videos_to_show[0][1])
+        # Try to embed Google Drive preview links
+        if videos_to_show[0][1].startswith('http'):
+            try:
+                st.video(videos_to_show[0][1])
+            except:
+                st.markdown("""
+                <div class="video-placeholder">
+                    <h4>🎯 Movement Matters</h4>
+                    <p>Video embedding failed</p>
+                    <a href="{}" target="_blank" style="background: var(--primary-red); color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div class="video-placeholder">
-                <h4>🎯 Movement Matters</h4>
-                <p>Video will be embedded here</p>
-                <p><em>Upload to YouTube for embedded playback</em></p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.video(videos_to_show[0][1])
         st.caption(videos_to_show[0][2])
     
     with col2:
-        # Only embed YouTube videos
-        if videos_to_show[1][1].startswith('http') and is_youtube_url(videos_to_show[1][1]):
-            st.video(videos_to_show[1][1])
+        # Try to embed Google Drive preview links
+        if videos_to_show[1][1].startswith('http'):
+            try:
+                st.video(videos_to_show[1][1])
+            except:
+                st.markdown("""
+                <div class="video-placeholder">
+                    <h4>🎤 The Key to Effective Public Speaking</h4>
+                    <p>Video embedding failed</p>
+                    <a href="{}" target="_blank" style="background: var(--primary-red); color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div class="video-placeholder">
-                <h4>🎤 The Key to Effective Public Speaking</h4>
-                <p>Video will be embedded here</p>
-                <p><em>Upload to YouTube for embedded playback</em></p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
         
 elif len(videos_to_show) == 1:
     st.markdown("#### Available Videos:")
-    # Always show info card for single video
-    st.markdown("""
-    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-        <h4>{}</h4>
-        <p><strong>Video available for download</strong></p>
-        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-    </div>
-    """.format(videos_to_show[0][2], videos_to_show[0][1] if videos_to_show[0][1].startswith('http') else "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview"), unsafe_allow_html=True)
+    # Try to embed the single video
+    if videos_to_show[0][1].startswith('http'):
+        try:
+            st.video(videos_to_show[0][1])
+        except:
+            st.markdown("""
+            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                <h4>{}</h4>
+                <p><strong>Video embedding failed</strong></p>
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+            </div>
+            """.format(videos_to_show[0][2], videos_to_show[0][1]), unsafe_allow_html=True)
+    else:
+        st.video(videos_to_show[0][1])
     st.caption(videos_to_show[0][2])
 else:
-    # Show both videos as info cards even if not found
+    # Show both videos as embedded with Google Drive preview links
     col1, col2 = st.columns(2)
     
     with col1:
