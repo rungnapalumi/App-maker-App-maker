@@ -3,9 +3,14 @@ services:
     name: App-maker-App-maker
     env: python
     region: oregon
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: streamlit run motion_web_app_full_dashboard_png.py --server.port $PORT --server.address 0.0.0.0
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
         value: 3.10
+    buildFilter:
+      paths:
+        - requirements.txt
+        - motion_web_app_full_dashboard_png.py
+        - .render.yaml
