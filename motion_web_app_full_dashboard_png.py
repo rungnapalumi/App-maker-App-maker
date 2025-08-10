@@ -390,6 +390,10 @@ def fix_google_drive_url(url):
         url = url.replace('?usp=share_link', '')
     return url
 
+# Check if URL is YouTube
+def is_youtube_url(url):
+    return 'youtube.com' in url or 'youtu.be' in url
+
 video1_url = fix_google_drive_url(video1_url)
 video2_url = fix_google_drive_url(video2_url)
 
@@ -412,27 +416,39 @@ if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Always show info card for first video
-        st.markdown("""
-        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-            <h4>🎯 Movement Matters</h4>
-            <p>Understanding body language and motion analysis</p>
-            <p><strong>Video available for download</strong></p>
-            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-        </div>
-        """.format(videos_to_show[0][1] if videos_to_show[0][1].startswith('http') else "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview"), unsafe_allow_html=True)
+        # Try to embed video, fall back to info card if it fails
+        if videos_to_show[0][1].startswith('http'):
+            try:
+                st.video(videos_to_show[0][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>🎯 Movement Matters</h4>
+                    <p>Understanding body language and motion analysis</p>
+                    <p><strong>Video available for download</strong></p>
+                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
+        else:
+            st.video(videos_to_show[0][1])
         st.caption(videos_to_show[0][2])
     
     with col2:
-        # Always show info card for second video
-        st.markdown("""
-        <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-            <h4>🎤 The Key to Effective Public Speaking</h4>
-            <p>Your body movement matters</p>
-            <p><strong>Video available for download</strong></p>
-            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-        </div>
-        """.format(videos_to_show[1][1] if videos_to_show[1][1].startswith('http') else "https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview"), unsafe_allow_html=True)
+        # Try to embed video, fall back to info card if it fails
+        if videos_to_show[1][1].startswith('http'):
+            try:
+                st.video(videos_to_show[1][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>🎤 The Key to Effective Public Speaking</h4>
+                    <p>Your body movement matters</p>
+                    <p><strong>Video available for download</strong></p>
+                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                </div>
+                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
+        else:
+            st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
         
 elif len(videos_to_show) == 1:
