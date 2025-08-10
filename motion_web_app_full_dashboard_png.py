@@ -69,19 +69,20 @@ def admin_panel():
     """Admin panel for managing uploaded videos"""
     st.markdown("## 🔐 Admin Panel")
     
-    # Admin password verification
-    st.markdown("### 🔑 Admin Password Verification")
-    admin_password = st.text_input("Enter admin password:", type="password")
+    # Simple admin login form
+    st.markdown("### 🔑 Admin Login")
+    admin_username = st.text_input("Username:")
+    admin_password = st.text_input("Password:", type="password")
     
-    if st.button("🔓 Verify Password"):
-        if admin_password == "0108":
+    if st.button("🔓 Login"):
+        if admin_username == "admin" and admin_password == "0108":
             st.session_state.admin_password_verified = True
-            st.success("✅ Password verified! Download options are now available.")
+            st.success("✅ Login successful! Download options are now available.")
         else:
             st.session_state.admin_password_verified = False
-            st.error("❌ Incorrect password. Please try again.")
+            st.error("❌ Invalid credentials. Please try again.")
     
-    # Show uploaded videos only if password is verified
+    # Show uploaded videos only if login is successful
     if st.session_state.admin_password_verified:
         st.markdown("### 📁 Uploaded Videos")
         
@@ -161,7 +162,7 @@ def admin_panel():
                 file_name="user_submissions.xlsx"
             )
     else:
-        st.info("🔒 Please enter the admin password to access download options.")
+        st.info("🔒 Please login with admin credentials to access download options.")
 
 def logout_button():
     """Logout button in sidebar"""
@@ -449,11 +450,11 @@ if not st.session_state.logged_in:
                 else:
                     st.error("Invalid credentials.")
         
-        # Admin credentials (less prominent)
-        with st.expander("🔑 Admin Access"):
-            st.write("**Username:** admin")
-            st.write("**Password:** [Enter numbers]")
-            st.info("Enter the correct password to access admin features")
+        # Admin credentials (simple display)
+        st.markdown("### 🔑 Admin Access")
+        st.write("**Username:** admin")
+        st.write("**Password:** 0108")
+        st.info("Login to access admin features")
     
     # Show main content area with login message
     st.markdown("""
