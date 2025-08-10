@@ -7,7 +7,6 @@ try:
     mp_drawing = mp.solutions.drawing_utils
 except ImportError:
     MEDIAPIPE_AVAILABLE = False
-    st.warning("⚠️ MediaPipe is not available. Using OpenCV-based motion detection instead.")
 import numpy as np
 import pandas as pd
 import tempfile
@@ -33,100 +32,6 @@ if _csv_path.exists() and not _xlsx_path.exists():
         pd.read_csv(_csv_path).to_excel(_xlsx_path, index=False)
     except Exception:
         pass
-
-
-def _resolve_smtp_settings() -> dict:
-    """Return SMTP settings from st.secrets or environment variables.
-    Keys: host, port, user, password, from_addr, to_addr, use_ssl
-    """
-    smtp_secrets = {}
-    try:
-        smtp_secrets = st.secrets.get("smtp", {})  # type: ignore[attr-defined]
-    except Exception:
-        smtp_secrets = {}
-
-    host = smtp_secrets.get("host") or os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    port = int(smtp_secrets.get("port") or os.environ.get("SMTP_PORT", "587"))
-    user = smtp_secrets.get("user") or os.environ.get("SMTP_USER")
-    password = smtp_secrets.get("pass") or os.environ.get("SMTP_PASS")
-    from_addr = smtp_secrets.get("from") or os.environ.get("EMAIL_FROM", user or "")
-    to_addr = smtp_secrets.get("to") or os.environ.get("EMAIL_TO", "petchpat@gmail.com")
-    use_ssl = smtp_secrets.get("ssl")
-    if use_ssl is None:
-        use_ssl_env = (os.environ.get("SMTP_SSL", "false") or "").strip().lower()
-        use_ssl = use_ssl_env in ("1", "true", "yes") or port == 465
-
-    return {
-        "host": host,
-        "port": port,
-        "user": user,
-        "password": password,
-        "from_addr": from_addr,
-        "to_addr": to_addr,
-        "use_ssl": use_ssl,
-    }
-
-
-def send_submission_email(user_name: str, user_email: str, slip_path: Path) -> tuple[bool, str]:
-    """Send an email with the user's details and attach the slip image.
-
-    Reads SMTP settings via _resolve_smtp_settings().
-    """
-    cfg = _resolve_smtp_settings()
-    host = cfg["host"]
-    port = cfg["port"]
-    smtp_user = cfg["user"]
-    smtp_pass = cfg["password"]
-    from_addr = cfg["from_addr"]
-    to_addr = cfg["to_addr"]
-    use_ssl = cfg["use_ssl"]
-
-    if not smtp_user or not smtp_pass or not from_addr:
-        return False, "Missing SMTP credentials (user/pass/from). Configure st.secrets['smtp'] or env vars."
-
-    try:
-        msg = EmailMessage()
-        msg_subject_placeholder = "Movement Matters"  # no-op for context
-        msg["Subject"] = f"{msg_subject_placeholder} submission from {user_name}"
-        msg["From"] = from_addr
-        msg["To"] = to_addr
-        msg.set_content(
-            f"New submission received.\n\n"
-            f"Name: {user_name}\n"
-            f"Email: {user_email}\n"
-            f"Slip path: {slip_path.as_posix()}\n"
-            f"Submitted at: {datetime.now().isoformat(timespec='seconds')}\n"
-        )
-
-        # Attach slip if accessible
-        try:
-            with open(slip_path, "rb") as f:
-                data = f.read()
-            ctype, _ = mimetypes.guess_type(str(slip_path))
-            if not ctype:
-                ctype = "application/octet-stream"
-            maintype, subtype = ctype.split("/", 1)
-            msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=slip_path.name)
-        except Exception:
-            pass
-
-        context = ssl.create_default_context()
-        if use_ssl:
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=20) as server:
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=20) as server:
-                server.ehlo()
-                try:
-                    server.starttls(context=context)
-                except Exception:
-                    pass
-                server.login(smtp_user, smtp_pass)
-                server.send_message(msg)
-        return True, "Email sent"
-    except Exception as e:
-        return False, str(e)
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.5
@@ -400,28 +305,6 @@ with st.sidebar:
 
                 st.success("Details saved successfully.")
                 st.image(str(saved_path), caption="Uploaded slip", use_container_width=True)
-
-                # Attempt to send email notification with attachment
-                ok, info = send_submission_email(user_name=user_name, user_email=user_email, slip_path=saved_path)
-                if ok:
-                    st.info("Notification email sent to recipient.")
-                else:
-                    st.warning(f"Email not sent: {info}")
-
-    # SMTP debug panel (no sensitive info)
-    with st.expander("Email settings (debug)"):
-        cfg = _resolve_smtp_settings()
-        masked_user = (cfg["user"] or "").strip()
-        if masked_user:
-            masked_user = masked_user[:2] + "***" + masked_user[-2:]
-        st.write({
-            "host": cfg["host"],
-            "port": cfg["port"],
-            "ssl": cfg["use_ssl"],
-            "from": cfg["from_addr"],
-            "to": cfg["to_addr"],
-            "user": masked_user,
-        })
 
 uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi"], help="Upload a video file for motion analysis")
 
