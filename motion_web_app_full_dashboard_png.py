@@ -41,7 +41,7 @@ def check_login(username, password):
 def login_page():
     """Display login page"""
     st.markdown("""
-    <div style="text-align: center; padding: 2rem;">
+    <div style="text-align: center; padding: 1rem;">
         <h1>🕴️ Movement Matters</h1>
         <h3>Login Required</h3>
     </div>
@@ -62,13 +62,6 @@ def login_page():
                 st.rerun()
             else:
                 st.error("Invalid credentials. Please try again.")
-    
-    st.markdown("""
-    <div style="text-align: center; margin-top: 2rem;">
-        <p><strong>Admin Access:</strong> Use username "admin" and password "0108"</p>
-        <p><strong>Regular User:</strong> Any username and password combination</p>
-    </div>
-    """, unsafe_allow_html=True)
 
 def admin_panel():
     """Admin panel for managing uploaded videos"""
@@ -289,7 +282,32 @@ st.set_page_config(
 
 # Check login status
 if not st.session_state.logged_in:
-    login_page()
+    # Show login form in sidebar
+    with st.sidebar:
+        st.markdown("### 🔐 Login")
+        with st.form("sidebar_login_form"):
+            username = st.text_input("Username", placeholder="Enter username")
+            password = st.text_input("Password", type="password", placeholder="Enter password")
+            submit_button = st.form_submit_button("Login")
+            
+            if submit_button:
+                logged_in, is_admin = check_login(username, password)
+                if logged_in:
+                    st.session_state.logged_in = True
+                    st.session_state.is_admin = is_admin
+                    st.session_state.username = username
+                    st.success(f"Welcome, {username}!")
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials.")
+    
+    # Show main content area with login message
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem;">
+        <h1>🕴️ Movement Matters</h1>
+        <h3>Please login to access the application</h3>
+    </div>
+    """, unsafe_allow_html=True)
 else:
     # User is logged in - show main app
     # Add logout button to sidebar
@@ -416,39 +434,31 @@ if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Try to embed video, fall back to info card if it fails
-        if videos_to_show[0][1].startswith('http'):
-            try:
-                st.video(videos_to_show[0][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                    <h4>🎯 Movement Matters</h4>
-                    <p>Understanding body language and motion analysis</p>
-                    <p><strong>Video available for download</strong></p>
-                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-                </div>
-                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
-        else:
+        # Only embed YouTube videos
+        if videos_to_show[0][1].startswith('http') and is_youtube_url(videos_to_show[0][1]):
             st.video(videos_to_show[0][1])
+        else:
+            st.markdown("""
+            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                <h4>🎯 Movement Matters</h4>
+                <p>Video will be embedded here</p>
+                <p><em>Upload to YouTube for embedded playback</em></p>
+            </div>
+            """, unsafe_allow_html=True)
         st.caption(videos_to_show[0][2])
     
     with col2:
-        # Try to embed video, fall back to info card if it fails
-        if videos_to_show[1][1].startswith('http'):
-            try:
-                st.video(videos_to_show[1][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                    <h4>🎤 The Key to Effective Public Speaking</h4>
-                    <p>Your body movement matters</p>
-                    <p><strong>Video available for download</strong></p>
-                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
-                </div>
-                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
-        else:
+        # Only embed YouTube videos
+        if videos_to_show[1][1].startswith('http') and is_youtube_url(videos_to_show[1][1]):
             st.video(videos_to_show[1][1])
+        else:
+            st.markdown("""
+            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                <h4>🎤 The Key to Effective Public Speaking</h4>
+                <p>Video will be embedded here</p>
+                <p><em>Upload to YouTube for embedded playback</em></p>
+            </div>
+            """, unsafe_allow_html=True)
         st.caption(videos_to_show[1][2])
         
 elif len(videos_to_show) == 1:
@@ -489,16 +499,17 @@ else:
 st.markdown("### 📊 **Movement Analysis Dashboard**")
 st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
 
-# --- Sidebar: User Information Form ---
-with st.sidebar:
-    st.header("User details")
-    with st.form("user_details_form", clear_on_submit=False):
-        user_name = st.text_input("Name", placeholder="Name", max_chars=15)
-        user_email = st.text_input("Email", placeholder="email@example.com", max_chars=25)
-        slip_file = st.file_uploader(
-            "Slip", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image"
-        )
-        submitted_user = st.form_submit_button("Submit")
+# --- Sidebar: User Information Form (only when logged in) ---
+if st.session_state.logged_in:
+    with st.sidebar:
+        st.header("User details")
+        with st.form("user_details_form", clear_on_submit=False):
+            user_name = st.text_input("Name", placeholder="Name", max_chars=15)
+            user_email = st.text_input("Email", placeholder="email@example.com", max_chars=25)
+            slip_file = st.file_uploader(
+                "Slip", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image"
+            )
+            submitted_user = st.form_submit_button("Submit")
 
         if submitted_user:
             if user_name.strip() and user_email.strip() and slip_file is not None:
