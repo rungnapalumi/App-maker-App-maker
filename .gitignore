@@ -1,0 +1,37 @@
+# Large video files
+*.mp4
+*.mov
+*.avi
+*.mpeg4
+
+# Image files
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit cache
+.streamlit/
+
+# User uploads
+user_uploads/
+
+# Data files (keep CSV and Excel for now)
+# *.csv
+# *.xlsx 

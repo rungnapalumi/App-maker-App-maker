@@ -88,7 +88,7 @@ def admin_panel():
     
     # Check for existing videos in root directory
     root_videos = []
-    for video_name in ["vdo present.mp4", "present.mp4", "present.MP4"]:
+    for video_name in ["Movement matters.mp4", "The key to effective public speaking  your body movement.mp4"]:
         video_path = Path(video_name)
         if video_path.exists():
             root_videos.append(video_path)
@@ -364,36 +364,34 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
-# Media section: show bundled video and image if available
-video_candidates = [
-    "vdo present.mp4",
-    "present.mp4",
-    "present.MP4",
-]
-media_video = None
-for candidate in video_candidates:
-    candidate_path = Path(candidate)
-    if candidate_path.exists():
-        media_video = candidate_path
-        break
-media_image = Path("picture.jpg")
-if (media_video is not None and media_video.exists()) or media_image.exists():
-    st.markdown("### 🎥 Media")
-    col_v, col_i = st.columns(2)
-    with col_v:
-        if media_video is not None and media_video.exists():
-            st.video(str(media_video))
-            st.caption(f"Video: {media_video.name}")
-        else:
-            st.info("Add file 'vdo present.mp4' or 'present.mp4' to show a video here.")
-    with col_i:
-        if media_image.exists():
-            st.image(str(media_image), caption="picture.jpg", use_container_width=True)
-        else:
-            st.info("Add file 'picture.jpg' to show an image here.")
+# Media section: show Movement Matters videos
+st.markdown("### 🎥 Movement Matters Videos")
+
+# Check for the new videos
+video1_path = Path("Movement matters.mp4")
+video2_path = Path("The key to effective public speaking  your body movement.mp4")
+
+if video1_path.exists() and video2_path.exists():
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.video(str(video1_path))
+        st.caption("🎯 **Movement Matters** - Understanding body language and motion analysis")
+    
+    with col2:
+        st.video(str(video2_path))
+        st.caption("🎤 **The Key to Effective Public Speaking** - Your body movement matters")
+        
+elif video1_path.exists() or video2_path.exists():
+    st.markdown("#### Available Videos:")
+    if video1_path.exists():
+        st.video(str(video1_path))
+        st.caption("🎯 **Movement Matters** - Understanding body language and motion analysis")
+    if video2_path.exists():
+        st.video(str(video2_path))
+        st.caption("🎤 **The Key to Effective Public Speaking** - Your body movement matters")
 else:
-    st.markdown("### 🎥 Media")
-    st.info("Place 'vdo present.mp4' (or 'present.mp4') and 'picture.jpg' in the app folder to display them here.")
+    st.info("🎥 Movement Matters videos will be displayed here when available.")
 
 st.markdown("### 📊 **Movement Analysis Dashboard**")
 st.markdown("*Upload video for comprehensive motion analysis using Movement Matters principles*")
