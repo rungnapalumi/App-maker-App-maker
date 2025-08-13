@@ -771,7 +771,7 @@ if st.session_state.logged_in:
             user_name = st.text_input("Name", placeholder="Name", max_chars=15)
             user_email = st.text_input("Email", placeholder="email@example.com", max_chars=25)
             slip_file = st.file_uploader(
-                "Slip", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image"
+                "Slip", type=["png", "jpg", "jpeg"], accept_multiple_files=False, key="slip_image", help="Upload slip image (Max 10MB)"
             )
             submitted_user = st.form_submit_button("Submit")
 
@@ -823,7 +823,7 @@ if st.session_state.logged_in:
                 st.image(str(saved_path), caption="Uploaded slip", use_container_width=True)
 
 # Video Upload Section (Working normally)
-uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi","mpeg4"], help="Upload a video file for analysis")
+uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi","mpeg4"], help="Upload a video file for analysis (Max 500MB)")
 
 if uploaded_file is not None:
     try:
