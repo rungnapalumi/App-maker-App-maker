@@ -10,9 +10,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.10
       - key: VIDEO1_URL
-        value: "https://drive.google.com/uc?export=download&id=1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU"
+        value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
       - key: VIDEO2_URL
-        value: "https://drive.google.com/uc?export=download&id=1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5"
+        value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     buildFilter:
       paths:
         - requirements.txt

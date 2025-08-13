@@ -497,8 +497,8 @@ st.markdown("""
 
 # Add note about video preview on Render
 st.info("""
-📹 **Video Preview Note**: Due to platform limitations, video previews may not work on this deployment. 
-Please use the download links or view videos directly on Google Drive for the best experience.
+📹 **Video Preview Note**: Videos are now embedded from YouTube for better compatibility across all platforms. 
+If embedded preview doesn't work, you can watch directly on YouTube using the provided links.
 """)
 
 # Check for the new videos - Updated for deployment fix
@@ -507,33 +507,33 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://drive.google.com/uc?export=download&id=1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU")
-video2_url = os.getenv("VIDEO2_URL", "https://drive.google.com/uc?export=download&id=1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5")
+video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+video2_url = os.getenv("VIDEO2_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
 # Alternative direct video URLs for better compatibility
-video1_direct = "https://drive.google.com/uc?export=download&id=1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU"
-video2_direct = "https://drive.google.com/uc?export=download&id=1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5"
+video1_direct = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+video2_direct = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-# Convert Google Drive URLs to proper format
-def fix_google_drive_url(url):
+# Convert YouTube URLs to proper format for embedding
+def fix_youtube_url(url):
     if not url:
         return url
-    # Convert /view to /preview for better embedding
-    if '/view' in url:
-        url = url.replace('/view', '/preview')
-    # Remove any extra parameters
-    if '?usp=sharing' in url:
-        url = url.replace('?usp=sharing', '')
-    if '?usp=share_link' in url:
-        url = url.replace('?usp=share_link', '')
+    # Convert youtube.com/watch?v= to youtube.com/embed/ for better embedding
+    if 'youtube.com/watch?v=' in url:
+        video_id = url.split('watch?v=')[1].split('&')[0]
+        return f"https://www.youtube.com/embed/{video_id}"
+    # Handle youtu.be links
+    elif 'youtu.be/' in url:
+        video_id = url.split('youtu.be/')[1].split('?')[0]
+        return f"https://www.youtube.com/embed/{video_id}"
     return url
 
 # Check if URL is YouTube
 def is_youtube_url(url):
     return 'youtube.com' in url or 'youtu.be' in url
 
-video1_url = fix_google_drive_url(video1_url)
-video2_url = fix_google_drive_url(video2_url)
+video1_url = fix_youtube_url(video1_url)
+video2_url = fix_youtube_url(video2_url)
 
 # Determine which videos to show
 videos_to_show = []
@@ -567,43 +567,71 @@ if len(videos_to_show) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Try to embed Google Drive preview links
+        # Try to embed YouTube videos
         if videos_to_show[0][1].startswith('http'):
-            try:
-                st.video(videos_to_show[0][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                    <h4>🎯 Movement Matters</h4>
-                    <p>Understanding body language and motion analysis</p>
-                    <p><strong>Video preview not available on this platform</strong></p>
-                    <div style="margin: 15px 0;">
-                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                        <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
-                    </div>
+            if is_youtube_url(videos_to_show[0][1]):
+                # Use YouTube embed for better compatibility
+                video_id = videos_to_show[0][1].split('embed/')[1] if 'embed/' in videos_to_show[0][1] else videos_to_show[0][1].split('watch?v=')[1].split('&')[0]
+                st.markdown(f"""
+                <div style="text-align: center; margin: 20px 0;">
+                    <iframe width="100%" height="315" 
+                            src="https://www.youtube.com/embed/{video_id}" 
+                            frameborder="0" 
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                            allowfullscreen>
+                    </iframe>
                 </div>
-                """.format(video1_direct), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                try:
+                    st.video(videos_to_show[0][1])
+                except:
+                    st.markdown("""
+                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                        <h4>🎯 Movement Matters</h4>
+                        <p>Understanding body language and motion analysis</p>
+                        <p><strong>Video preview not available on this platform</strong></p>
+                        <div style="margin: 15px 0;">
+                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                            <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                        </div>
+                    </div>
+                    """.format(video1_direct, video1_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[0][1])
         st.caption(videos_to_show[0][2])
     
     with col2:
-        # Try to embed Google Drive preview links
+        # Try to embed YouTube videos
         if videos_to_show[1][1].startswith('http'):
-            try:
-                st.video(videos_to_show[1][1])
-            except:
-                st.markdown("""
-                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                    <h4>🎤 The Key to Effective Public Speaking</h4>
-                    <p>Your body movement matters</p>
-                    <p><strong>Video preview not available on this platform</strong></p>
-                    <div style="margin: 15px 0;">
-                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                        <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
-                    </div>
+            if is_youtube_url(videos_to_show[1][1]):
+                # Use YouTube embed for better compatibility
+                video_id = videos_to_show[1][1].split('embed/')[1] if 'embed/' in videos_to_show[1][1] else videos_to_show[1][1].split('watch?v=')[1].split('&')[0]
+                st.markdown(f"""
+                <div style="text-align: center; margin: 20px 0;">
+                    <iframe width="100%" height="315" 
+                            src="https://www.youtube.com/embed/{video_id}" 
+                            frameborder="0" 
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                            allowfullscreen>
+                    </iframe>
                 </div>
-                """.format(video2_direct), unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                try:
+                    st.video(videos_to_show[1][1])
+                except:
+                    st.markdown("""
+                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                        <h4>🎤 The Key to Effective Public Speaking</h4>
+                        <p>Your body movement matters</p>
+                        <p><strong>Video preview not available on this platform</strong></p>
+                        <div style="margin: 15px 0;">
+                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                            <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                        </div>
+                    </div>
+                    """.format(video2_direct, video2_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
@@ -612,19 +640,33 @@ elif len(videos_to_show) == 1:
     st.markdown("#### Available Videos:")
     # Try to embed the single video
     if videos_to_show[0][1].startswith('http'):
-        try:
-            st.video(videos_to_show[0][1])
-        except:
-            st.markdown("""
-            <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
-                <h4>{}</h4>
-                <p><strong>Video preview not available on this platform</strong></p>
-                <div style="margin: 15px 0;">
-                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                    <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
-                </div>
+        if is_youtube_url(videos_to_show[0][1]):
+            # Use YouTube embed for better compatibility
+            video_id = videos_to_show[0][1].split('embed/')[1] if 'embed/' in videos_to_show[0][1] else videos_to_show[0][1].split('watch?v=')[1].split('&')[0]
+            st.markdown(f"""
+            <div style="text-align: center; margin: 20px 0;">
+                <iframe width="100%" height="315" 
+                        src="https://www.youtube.com/embed/{video_id}" 
+                        frameborder="0" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        allowfullscreen>
+                </iframe>
             </div>
-            """.format(videos_to_show[0][2], video1_direct), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        else:
+            try:
+                st.video(videos_to_show[0][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>{}</h4>
+                    <p><strong>Video preview not available on this platform</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                        <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                    </div>
+                </div>
+                """.format(videos_to_show[0][2], video1_direct, video1_direct), unsafe_allow_html=True)
     else:
         st.video(videos_to_show[0][1])
     st.caption(videos_to_show[0][2])
@@ -637,26 +679,26 @@ else:
         <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
             <h4>🎯 Movement Matters</h4>
             <p>Understanding body language and motion analysis</p>
-            <p><strong>Video available for download</strong></p>
+            <p><strong>Video available on YouTube</strong></p>
             <div style="margin: 15px 0;">
-                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📺 Watch on YouTube</a>
+                <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 Open in New Tab</a>
             </div>
         </div>
-        """.format(video1_direct), unsafe_allow_html=True)
+        """.format(video1_direct, video1_direct), unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
         <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
             <h4>🎤 The Key to Effective Public Speaking</h4>
             <p>Your body movement matters</p>
-            <p><strong>Video available for download</strong></p>
+            <p><strong>Video available on YouTube</strong></p>
             <div style="margin: 15px 0;">
-                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📺 Watch on YouTube</a>
+                <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 Open in New Tab</a>
             </div>
         </div>
-        """.format(video2_direct), unsafe_allow_html=True)
+        """.format(video2_direct, video2_direct), unsafe_allow_html=True)
 
 st.markdown("""
 <div class="section-header">
