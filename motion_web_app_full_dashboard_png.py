@@ -495,11 +495,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Add note about video preview on Render
-st.info("""
-📹 **Video Preview Note**: Videos are now embedded from YouTube for better compatibility across all platforms. 
-If embedded preview doesn't work, you can watch directly on YouTube using the provided links.
-""")
+
 
 # Check for the new videos - Updated for deployment fix
 video1_path = Path("Movement matters.mp4")
