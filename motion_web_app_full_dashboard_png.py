@@ -528,6 +528,27 @@ def fix_youtube_url(url):
         return f"https://www.youtube.com/embed/{video_id}"
     return url
 
+# Extract YouTube video ID safely
+def extract_youtube_video_id(url):
+    """Safely extract YouTube video ID from various URL formats"""
+    if not url:
+        return None
+    
+    try:
+        # Handle embed URLs
+        if 'youtube.com/embed/' in url:
+            return url.split('embed/')[1].split('?')[0]
+        # Handle watch URLs
+        elif 'youtube.com/watch?v=' in url:
+            return url.split('watch?v=')[1].split('&')[0]
+        # Handle youtu.be URLs
+        elif 'youtu.be/' in url:
+            return url.split('youtu.be/')[1].split('?')[0]
+        else:
+            return None
+    except (IndexError, AttributeError):
+        return None
+
 # Check if URL is YouTube
 def is_youtube_url(url):
     return 'youtube.com' in url or 'youtu.be' in url
@@ -563,7 +584,7 @@ elif video2_url:
     st.sidebar.info("🌐 Video 2: Using REMOTE URL")
 
 # Display videos
-if len(videos_to_show) >= 2:
+if len(videos_to_show) >= 2 and len(videos_to_show[0]) >= 2 and len(videos_to_show[1]) >= 2:
     col1, col2 = st.columns(2)
     
     with col1:
@@ -571,17 +592,30 @@ if len(videos_to_show) >= 2:
         if videos_to_show[0][1].startswith('http'):
             if is_youtube_url(videos_to_show[0][1]):
                 # Use YouTube embed for better compatibility
-                video_id = videos_to_show[0][1].split('embed/')[1] if 'embed/' in videos_to_show[0][1] else videos_to_show[0][1].split('watch?v=')[1].split('&')[0]
-                st.markdown(f"""
-                <div style="text-align: center; margin: 20px 0;">
-                    <iframe width="100%" height="315" 
-                            src="https://www.youtube.com/embed/{video_id}" 
-                            frameborder="0" 
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                            allowfullscreen>
-                    </iframe>
-                </div>
-                """, unsafe_allow_html=True)
+                video_id = extract_youtube_video_id(videos_to_show[0][1])
+                if video_id:
+                    st.markdown(f"""
+                    <div style="text-align: center; margin: 20px 0;">
+                        <iframe width="100%" height="315" 
+                                src="https://www.youtube.com/embed/{video_id}" 
+                                frameborder="0" 
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                allowfullscreen>
+                        </iframe>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # Fallback if video ID extraction fails
+                    st.markdown("""
+                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                        <h4>🎯 Movement Matters</h4>
+                        <p>Understanding body language and motion analysis</p>
+                        <p><strong>Video ID extraction failed</strong></p>
+                        <div style="margin: 15px 0;">
+                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                        </div>
+                    </div>
+                    """.format(video1_direct), unsafe_allow_html=True)
             else:
                 try:
                     st.video(videos_to_show[0][1])
@@ -606,17 +640,30 @@ if len(videos_to_show) >= 2:
         if videos_to_show[1][1].startswith('http'):
             if is_youtube_url(videos_to_show[1][1]):
                 # Use YouTube embed for better compatibility
-                video_id = videos_to_show[1][1].split('embed/')[1] if 'embed/' in videos_to_show[1][1] else videos_to_show[1][1].split('watch?v=')[1].split('&')[0]
-                st.markdown(f"""
-                <div style="text-align: center; margin: 20px 0;">
-                    <iframe width="100%" height="315" 
-                            src="https://www.youtube.com/embed/{video_id}" 
-                            frameborder="0" 
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                            allowfullscreen>
-                    </iframe>
-                </div>
-                """, unsafe_allow_html=True)
+                video_id = extract_youtube_video_id(videos_to_show[1][1])
+                if video_id:
+                    st.markdown(f"""
+                    <div style="text-align: center; margin: 20px 0;">
+                        <iframe width="100%" height="315" 
+                                src="https://www.youtube.com/embed/{video_id}" 
+                                frameborder="0" 
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                allowfullscreen>
+                        </iframe>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    # Fallback if video ID extraction fails
+                    st.markdown("""
+                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                        <h4>🎤 The Key to Effective Public Speaking</h4>
+                        <p>Your body movement matters</p>
+                        <p><strong>Video ID extraction failed</strong></p>
+                        <div style="margin: 15px 0;">
+                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                        </div>
+                    </div>
+                    """.format(video2_direct), unsafe_allow_html=True)
             else:
                 try:
                     st.video(videos_to_show[1][1])
@@ -636,23 +683,35 @@ if len(videos_to_show) >= 2:
             st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
         
-elif len(videos_to_show) == 1:
+elif len(videos_to_show) == 1 and len(videos_to_show[0]) >= 2:
     st.markdown("#### Available Videos:")
     # Try to embed the single video
     if videos_to_show[0][1].startswith('http'):
         if is_youtube_url(videos_to_show[0][1]):
             # Use YouTube embed for better compatibility
-            video_id = videos_to_show[0][1].split('embed/')[1] if 'embed/' in videos_to_show[0][1] else videos_to_show[0][1].split('watch?v=')[1].split('&')[0]
-            st.markdown(f"""
-            <div style="text-align: center; margin: 20px 0;">
-                <iframe width="100%" height="315" 
-                        src="https://www.youtube.com/embed/{video_id}" 
-                        frameborder="0" 
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                        allowfullscreen>
-                </iframe>
-            </div>
-            """, unsafe_allow_html=True)
+            video_id = extract_youtube_video_id(videos_to_show[0][1])
+            if video_id:
+                st.markdown(f"""
+                <div style="text-align: center; margin: 20px 0;">
+                    <iframe width="100%" height="315" 
+                            src="https://www.youtube.com/embed/{video_id}" 
+                            frameborder="0" 
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                            allowfullscreen>
+                    </iframe>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # Fallback if video ID extraction fails
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
+                    <h4>{}</h4>
+                    <p><strong>Video ID extraction failed</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
+                    </div>
+                </div>
+                """.format(videos_to_show[0][2], video1_direct), unsafe_allow_html=True)
         else:
             try:
                 st.video(videos_to_show[0][1])
@@ -671,7 +730,10 @@ elif len(videos_to_show) == 1:
         st.video(videos_to_show[0][1])
     st.caption(videos_to_show[0][2])
 else:
-    # Show both videos as embedded with Google Drive preview links
+    # Show fallback when no videos are available or properly configured
+    st.warning("⚠️ No videos are currently available. Please check the video configuration.")
+    
+    # Show both videos as embedded with YouTube preview links
     col1, col2 = st.columns(2)
     
     with col1:
