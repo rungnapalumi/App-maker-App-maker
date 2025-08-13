@@ -507,12 +507,12 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-video2_url = os.getenv("VIDEO2_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/shorts/c8wc8pEr-f0")
+video2_url = os.getenv("VIDEO2_URL", "https://www.youtube.com/shorts/c8wc8pEr-f0")
 
 # Alternative direct video URLs for better compatibility
-video1_direct = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-video2_direct = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+video1_direct = "https://www.youtube.com/shorts/c8wc8pEr-f0"
+video2_direct = "https://www.youtube.com/shorts/c8wc8pEr-f0"
 
 # Convert YouTube URLs to proper format for embedding
 def fix_youtube_url(url):
@@ -525,6 +525,10 @@ def fix_youtube_url(url):
     # Handle youtu.be links
     elif 'youtu.be/' in url:
         video_id = url.split('youtu.be/')[1].split('?')[0]
+        return f"https://www.youtube.com/embed/{video_id}"
+    # Handle YouTube Shorts links
+    elif 'youtube.com/shorts/' in url:
+        video_id = url.split('shorts/')[1].split('?')[0]
         return f"https://www.youtube.com/embed/{video_id}"
     return url
 
@@ -544,6 +548,9 @@ def extract_youtube_video_id(url):
         # Handle youtu.be URLs
         elif 'youtu.be/' in url:
             return url.split('youtu.be/')[1].split('?')[0]
+        # Handle YouTube Shorts URLs
+        elif 'youtube.com/shorts/' in url:
+            return url.split('shorts/')[1].split('?')[0]
         else:
             return None
     except (IndexError, AttributeError):

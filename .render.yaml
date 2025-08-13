@@ -10,9 +10,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.10
       - key: VIDEO1_URL
-        value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        value: "https://www.youtube.com/shorts/c8wc8pEr-f0"
       - key: VIDEO2_URL
-        value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        value: "https://www.youtube.com/shorts/c8wc8pEr-f0"
     buildFilter:
       paths:
         - requirements.txt

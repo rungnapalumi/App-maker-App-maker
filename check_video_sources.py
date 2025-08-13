@@ -26,8 +26,8 @@ def check_video_sources():
         print(f"   Size: {video2_path.stat().st_size / (1024*1024):.1f} MB")
     
     print("\n🌐 Environment Variables:")
-    video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    video2_url = os.getenv("VIDEO2_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/shorts/c8wc8pEr-f0")
+    video2_url = os.getenv("VIDEO2_URL", "https://www.youtube.com/shorts/c8wc8pEr-f0")
     
     print(f"   VIDEO1_URL: {video1_url}")
     print(f"   VIDEO2_URL: {video2_url}")
