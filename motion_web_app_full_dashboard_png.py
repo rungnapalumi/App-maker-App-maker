@@ -538,16 +538,29 @@ video2_url = fix_google_drive_url(video2_url)
 # Determine which videos to show
 videos_to_show = []
 
+# Debug: Show video source information
+st.sidebar.markdown("### 🔍 Video Source Debug Info")
+st.sidebar.write(f"**Video 1 Local Path:** {video1_path}")
+st.sidebar.write(f"**Video 1 Local Exists:** {video1_path.exists()}")
+st.sidebar.write(f"**Video 1 URL:** {video1_url}")
+st.sidebar.write(f"**Video 2 Local Path:** {video2_path}")
+st.sidebar.write(f"**Video 2 Local Exists:** {video2_path.exists()}")
+st.sidebar.write(f"**Video 2 URL:** {video2_url}")
+
 # Check local files first
 if video1_path.exists():
     videos_to_show.append(("Movement matters.mp4", str(video1_path), "🎯 **Movement Matters** - Understanding body language and motion analysis"))
+    st.sidebar.success("✅ Video 1: Using LOCAL file")
 elif video1_url:
     videos_to_show.append(("Movement matters.mp4", video1_url, "🎯 **Movement Matters** - Understanding body language and motion analysis"))
+    st.sidebar.info("🌐 Video 1: Using REMOTE URL")
 
 if video2_path.exists():
     videos_to_show.append(("The key to effective public speaking your body movement.mp4", str(video2_path), "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
+    st.sidebar.success("✅ Video 2: Using LOCAL file")
 elif video2_url:
     videos_to_show.append(("The key to effective public speaking your body movement.mp4", video2_url, "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
+    st.sidebar.info("🌐 Video 2: Using REMOTE URL")
 
 # Display videos
 if len(videos_to_show) >= 2:
