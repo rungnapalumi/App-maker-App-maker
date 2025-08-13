@@ -495,14 +495,24 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# Add note about video preview on Render
+st.info("""
+📹 **Video Preview Note**: Due to platform limitations, video previews may not work on this deployment. 
+Please use the download links or view videos directly on Google Drive for the best experience.
+""")
+
 # Check for the new videos - Updated for deployment fix
 video1_path = Path("Movement matters.mp4")
 video2_path = Path("The key to effective public speaking  your body movement.mp4")
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview")
-video2_url = os.getenv("VIDEO2_URL", "https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview")
+video1_url = os.getenv("VIDEO1_URL", "https://drive.google.com/uc?export=download&id=1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU")
+video2_url = os.getenv("VIDEO2_URL", "https://drive.google.com/uc?export=download&id=1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5")
+
+# Alternative direct video URLs for better compatibility
+video1_direct = "https://drive.google.com/uc?export=download&id=1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU"
+video2_direct = "https://drive.google.com/uc?export=download&id=1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5"
 
 # Convert Google Drive URLs to proper format
 def fix_google_drive_url(url):
@@ -550,12 +560,16 @@ if len(videos_to_show) >= 2:
                 st.video(videos_to_show[0][1])
             except:
                 st.markdown("""
-                <div class="video-placeholder">
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
                     <h4>🎯 Movement Matters</h4>
-                    <p>Video embedding failed</p>
-                    <a href="{}" target="_blank" style="background: var(--primary-red); color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                    <p>Understanding body language and motion analysis</p>
+                    <p><strong>Video preview not available on this platform</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                        <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+                    </div>
                 </div>
-                """.format(videos_to_show[0][1]), unsafe_allow_html=True)
+                """.format(video1_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[0][1])
         st.caption(videos_to_show[0][2])
@@ -567,12 +581,16 @@ if len(videos_to_show) >= 2:
                 st.video(videos_to_show[1][1])
             except:
                 st.markdown("""
-                <div class="video-placeholder">
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
                     <h4>🎤 The Key to Effective Public Speaking</h4>
-                    <p>Video embedding failed</p>
-                    <a href="{}" target="_blank" style="background: var(--primary-red); color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                    <p>Your body movement matters</p>
+                    <p><strong>Video preview not available on this platform</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                        <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+                    </div>
                 </div>
-                """.format(videos_to_show[1][1]), unsafe_allow_html=True)
+                """.format(video2_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[1][1])
         st.caption(videos_to_show[1][2])
@@ -587,10 +605,13 @@ elif len(videos_to_show) == 1:
             st.markdown("""
             <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center;">
                 <h4>{}</h4>
-                <p><strong>Video embedding failed</strong></p>
-                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+                <p><strong>Video preview not available on this platform</strong></p>
+                <div style="margin: 15px 0;">
+                    <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                    <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+                </div>
             </div>
-            """.format(videos_to_show[0][2], videos_to_show[0][1]), unsafe_allow_html=True)
+            """.format(videos_to_show[0][2], video1_direct), unsafe_allow_html=True)
     else:
         st.video(videos_to_show[0][1])
     st.caption(videos_to_show[0][2])
@@ -604,9 +625,12 @@ else:
             <h4>🎯 Movement Matters</h4>
             <p>Understanding body language and motion analysis</p>
             <p><strong>Video available for download</strong></p>
-            <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/preview" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+            <div style="margin: 15px 0;">
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                <a href="https://drive.google.com/file/d/1VM6S8CETZn5K_FBGpSQYJlzN8_N23xjU/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """.format(video1_direct), unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
@@ -614,9 +638,12 @@ else:
             <h4>🎤 The Key to Effective Public Speaking</h4>
             <p>Your body movement matters</p>
             <p><strong>Video available for download</strong></p>
-            <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/preview" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 Download Video</a>
+            <div style="margin: 15px 0;">
+                <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                <a href="https://drive.google.com/file/d/1a_Kr9H6VuKXKAAsWoXjxz8JmY2brYqm5/view" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on Google Drive</a>
+            </div>
         </div>
-        """, unsafe_allow_html=True)
+        """.format(video2_direct), unsafe_allow_html=True)
 
 st.markdown("""
 <div class="section-header">
