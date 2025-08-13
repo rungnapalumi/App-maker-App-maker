@@ -4,14 +4,20 @@
 *.avi
 *.mpeg4
 
-# Image files
-*.jpg
-*.jpeg
-*.png
-*.gif
+# User uploads
+user_uploads/
 
-# Log files
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Logs
 *.log
+.streamlit_*.log
 
 # Temporary files
 *.tmp
@@ -21,17 +27,19 @@
 .DS_Store
 Thumbs.db
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Streamlit cache
-.streamlit/
+# Environment files
+.env
+.venv/
+env/
+venv/
 
-# User uploads
-user_uploads/
-
-# Data files (keep CSV and Excel for now)
-# *.csv
-# *.xlsx 
+# Data files
+*.csv
+*.xlsx
+*.xls 

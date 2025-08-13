@@ -18,3 +18,11 @@ services:
         - requirements.txt
         - motion_web_app_full_dashboard_png.py
         - .render.yaml
+        - .streamlit/
+      ignorePaths:
+        - user_uploads/
+        - __pycache__/
+        - *.log
+        - *.mp4
+        - *.mov
+        - *.avi
