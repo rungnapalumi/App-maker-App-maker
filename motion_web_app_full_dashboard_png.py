@@ -831,8 +831,8 @@ if uploaded_file is not None:
         file_size = len(uploaded_file.getvalue())
         file_size_mb = file_size / (1024 * 1024)
         
-        if file_size > 200 * 1024 * 1024:  # 200MB limit
-            st.error(f"❌ File too large! Your file is {file_size_mb:.1f}MB. Please upload a file smaller than 200MB.")
+        if file_size > 500 * 1024 * 1024:  # 500MB limit
+            st.error(f"❌ File too large! Your file is {file_size_mb:.1f}MB. Please upload a file smaller than 500MB.")
         else:
             # Reset file pointer
             uploaded_file.seek(0)
