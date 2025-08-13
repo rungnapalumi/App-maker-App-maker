@@ -823,12 +823,6 @@ if st.session_state.logged_in:
                 st.image(str(saved_path), caption="Uploaded slip", use_container_width=True)
 
 # Video Upload Section (Working normally)
-st.markdown("""
-<div style="background: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
-    <strong>📹 Video Upload (Max 500MB)</strong><br>
-    Supported formats: MP4, MOV, AVI, MPEG4
-</div>
-""", unsafe_allow_html=True)
 uploaded_file = st.file_uploader("Upload video", type=["mp4","mov","avi","mpeg4"], help="Upload a video file for analysis (Max 500MB)")
 
 if uploaded_file is not None:
