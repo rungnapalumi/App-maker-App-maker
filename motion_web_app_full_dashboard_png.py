@@ -19,7 +19,6 @@ import smtplib
 import ssl
 import mimetypes
 from email.message import EmailMessage
-import base64
 
 # Initialize session state for login
 if 'logged_in' not in st.session_state:
@@ -753,56 +752,7 @@ else:
         </div>
         """.format(video2_direct, video2_direct), unsafe_allow_html=True)
 
-# Display the Movement Matters Report Sample
-st.markdown("""
-<div class="section-header">
-    📋 Movement Matters Report Sample
-</div>
-<p style="color: var(--text-light); font-style: italic; margin-bottom: 1rem;">
-    View an example of the comprehensive motion analysis report you can expect
-</p>
-""", unsafe_allow_html=True)
 
-# Check if the PDF file exists and display it as embedded content
-pdf_path = Path(__file__).parent.parent / "Movement Matters Report Sample 2.pdf"
-if not pdf_path.exists():
-    # Try current directory as fallback
-    pdf_path = Path("Movement Matters Report Sample 2.pdf")
-if pdf_path.exists():
-    # Display the PDF as embedded content
-    with open(pdf_path, "rb") as pdf_file:
-        pdf_bytes = pdf_file.read()
-    
-    # Display PDF as embedded content
-    pdf_base64 = base64.b64encode(pdf_bytes).decode()
-    st.markdown(f"""
-    <div style="text-align: center; margin: 20px 0;">
-        <embed src="data:application/pdf;base64,{pdf_base64}" 
-               type="application/pdf" 
-               width="100%" 
-               height="600px" 
-               style="border: 2px solid #ddd; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Also display a preview/description
-    st.markdown("""
-    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #007bff; margin: 20px 0;">
-        <h4>📊 Sample Report Features:</h4>
-        <ul style="margin: 10px 0; padding-left: 20px;">
-            <li><strong>Comprehensive Motion Analysis:</strong> Detailed breakdown of body movements and gestures</li>
-            <li><strong>Timeline Visualization:</strong> Key moments and movement patterns over time</li>
-            <li><strong>Performance Metrics:</strong> Quantified analysis of movement effectiveness</li>
-            <li><strong>Recommendations:</strong> Actionable insights for improvement</li>
-            <li><strong>Professional Format:</strong> Ready-to-use report for presentations and training</li>
-        </ul>
-        <p style="margin: 10px 0 0 0; font-style: italic; color: #666;">
-            This sample demonstrates the quality and depth of analysis you'll receive when you upload your video for processing.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.warning("⚠️ Sample report file not found. Please ensure 'Movement Matters Report Sample 2.pdf' is available in the project directory.")
 
 st.markdown("""
 <div class="section-header">
