@@ -766,30 +766,30 @@ st.markdown("""
 col1, col2 = st.columns(2)
 
 with col1:
-    # Check if report sample one.jpg exists
-    if Path("../report sample one.jpg").exists():
-        st.image("../report sample one.jpg", caption="Report Sample 1", use_container_width=True)
-    elif Path("report sample one.jpg").exists():
-        st.image("report sample one.jpg", caption="Report Sample 1", use_container_width=True)
+    # Check if report sample one.png exists
+    if Path("Report sample one.png").exists():
+        st.image("Report sample one.png", caption="Report Sample 1", use_container_width=True)
+    elif Path("../Report sample one.png").exists():
+        st.image("../Report sample one.png", caption="Report Sample 1", use_container_width=True)
     else:
         st.markdown("""
         <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
             <h4>📄 Report Sample 1</h4>
-            <p style="color: #666; font-style: italic;">Add 'report sample one.jpg' to display the first report sample</p>
+            <p style="color: #666; font-style: italic;">Add 'Report sample one.png' to display the first report sample</p>
         </div>
         """, unsafe_allow_html=True)
 
 with col2:
-    # Check if report sample 2.jpg exists
-    if Path("../report sample 2.jpg").exists():
-        st.image("../report sample 2.jpg", caption="Report Sample 2", use_container_width=True)
-    elif Path("report sample 2.jpg").exists():
-        st.image("report sample 2.jpg", caption="Report Sample 2", use_container_width=True)
+    # Check if report sample two.png exists
+    if Path("Report sample two.png").exists():
+        st.image("Report sample two.png", caption="Report Sample 2", use_container_width=True)
+    elif Path("../Report sample two.png").exists():
+        st.image("../Report sample two.png", caption="Report Sample 2", use_container_width=True)
     else:
         st.markdown("""
         <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
             <h4>📄 Report Sample 2</h4>
-            <p style="color: #666; font-style: italic;">Add 'report sample 2.jpg' to display the second report sample</p>
+            <p style="color: #666; font-style: italic;">Add 'Report sample two.png' to display the second report sample</p>
         </div>
         """, unsafe_allow_html=True)
 
