@@ -762,36 +762,24 @@ st.markdown("""
 </p>
 """, unsafe_allow_html=True)
 
-# Display report sample images in columns
+# Display report sample images in columns with equal and symmetric layout
 col1, col2 = st.columns(2)
 
 with col1:
-    # Check if report sample one.png exists
-    if Path("Report sample one.png").exists():
-        st.image("Report sample one.png", caption="Report Sample 1", use_container_width=True)
-    elif Path("../Report sample one.png").exists():
-        st.image("../Report sample one.png", caption="Report Sample 1", use_container_width=True)
-    else:
-        st.markdown("""
-        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-            <h4>📄 Report Sample 1</h4>
-            <p style="color: #666; font-style: italic;">Add 'Report sample one.png' to display the first report sample</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+    <div style="text-align: center; margin: 10px 0;">
+        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 1</h4>
+    </div>
+    """, unsafe_allow_html=True)
+    st.image("Report sample one.png", caption="Movement Matters Report Sample 1", use_container_width=True)
 
 with col2:
-    # Check if report sample two.png exists
-    if Path("Report sample two.png").exists():
-        st.image("Report sample two.png", caption="Report Sample 2", use_container_width=True)
-    elif Path("../Report sample two.png").exists():
-        st.image("../Report sample two.png", caption="Report Sample 2", use_container_width=True)
-    else:
-        st.markdown("""
-        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-            <h4>📄 Report Sample 2</h4>
-            <p style="color: #666; font-style: italic;">Add 'Report sample two.png' to display the second report sample</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+    <div style="text-align: center; margin: 10px 0;">
+        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 2</h4>
+    </div>
+    """, unsafe_allow_html=True)
+    st.image("Report sample two.png", caption="Movement Matters Report Sample 2", use_container_width=True)
 
 st.markdown("""
 <div class="section-header">
