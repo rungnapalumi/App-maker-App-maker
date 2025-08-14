@@ -771,36 +771,7 @@ with col1:
         <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 1</h4>
     </div>
     """, unsafe_allow_html=True)
-    try:
-        # Try multiple possible file paths
-        image_paths = [
-            "Report sample one.png",
-            "./Report sample one.png",
-            Path("Report sample one.png"),
-            Path("./Report sample one.png")
-        ]
-        
-        image_displayed = False
-        for img_path in image_paths:
-            if Path(img_path).exists():
-                st.image(str(img_path), caption="Movement Matters Report Sample 1", use_container_width=True)
-                image_displayed = True
-                break
-        
-        if not image_displayed:
-            st.markdown("""
-            <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-                <h4>📄 Report Sample 1</h4>
-                <p style="color: #666; font-style: italic;">Report sample image not found</p>
-            </div>
-            """, unsafe_allow_html=True)
-    except Exception as e:
-        st.markdown("""
-        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-            <h4>📄 Report Sample 1</h4>
-            <p style="color: #666; font-style: italic;">Unable to display report sample image</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.image("Report sample one.png", caption="Movement Matters Report Sample 1", use_container_width=True)
 
 with col2:
     st.markdown("""
@@ -808,36 +779,7 @@ with col2:
         <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 2</h4>
     </div>
     """, unsafe_allow_html=True)
-    try:
-        # Try multiple possible file paths
-        image_paths = [
-            "Report sample two.png",
-            "./Report sample two.png",
-            Path("Report sample two.png"),
-            Path("./Report sample two.png")
-        ]
-        
-        image_displayed = False
-        for img_path in image_paths:
-            if Path(img_path).exists():
-                st.image(str(img_path), caption="Movement Matters Report Sample 2", use_container_width=True)
-                image_displayed = True
-                break
-        
-        if not image_displayed:
-            st.markdown("""
-            <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-                <h4>📄 Report Sample 2</h4>
-                <p style="color: #666; font-style: italic;">Report sample image not found</p>
-            </div>
-            """, unsafe_allow_html=True)
-    except Exception as e:
-        st.markdown("""
-        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
-            <h4>📄 Report Sample 2</h4>
-            <p style="color: #666; font-style: italic;">Unable to display report sample image</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.image("Report sample two.png", caption="Movement Matters Report Sample 2", use_container_width=True)
 
 st.markdown("""
 <div class="section-header">
