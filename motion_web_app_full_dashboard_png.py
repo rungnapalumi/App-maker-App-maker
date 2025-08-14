@@ -752,7 +752,46 @@ else:
         </div>
         """.format(video2_direct, video2_direct), unsafe_allow_html=True)
 
+# Display Report Sample Images
+st.markdown("""
+<div class="section-header">
+    📋 Report Samples
+</div>
+<p style="color: var(--text-light); font-style: italic; margin-bottom: 1rem;">
+    Examples of motion analysis reports
+</p>
+""", unsafe_allow_html=True)
 
+# Display report sample images in columns
+col1, col2 = st.columns(2)
+
+with col1:
+    # Check if report sample one.jpg exists
+    if Path("../report sample one.jpg").exists():
+        st.image("../report sample one.jpg", caption="Report Sample 1", use_container_width=True)
+    elif Path("report sample one.jpg").exists():
+        st.image("report sample one.jpg", caption="Report Sample 1", use_container_width=True)
+    else:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
+            <h4>📄 Report Sample 1</h4>
+            <p style="color: #666; font-style: italic;">Add 'report sample one.jpg' to display the first report sample</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+with col2:
+    # Check if report sample 2.jpg exists
+    if Path("../report sample 2.jpg").exists():
+        st.image("../report sample 2.jpg", caption="Report Sample 2", use_container_width=True)
+    elif Path("report sample 2.jpg").exists():
+        st.image("report sample 2.jpg", caption="Report Sample 2", use_container_width=True)
+    else:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 40px; border-radius: 10px; border: 2px dashed #ccc; text-align: center; margin: 20px 0;">
+            <h4>📄 Report Sample 2</h4>
+            <p style="color: #666; font-style: italic;">Add 'report sample 2.jpg' to display the second report sample</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="section-header">
