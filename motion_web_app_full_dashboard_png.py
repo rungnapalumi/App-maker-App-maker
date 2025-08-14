@@ -763,7 +763,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Check if the PDF file exists and display it
-pdf_path = Path("../Movement Matters Report Sample 2.pdf")
+pdf_path = Path(__file__).parent.parent / "Movement Matters Report Sample 2.pdf"
+if not pdf_path.exists():
+    # Try current directory as fallback
+    pdf_path = Path("Movement Matters Report Sample 2.pdf")
 if pdf_path.exists():
     with open(pdf_path, "rb") as pdf_file:
         pdf_bytes = pdf_file.read()
