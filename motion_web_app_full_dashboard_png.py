@@ -752,7 +752,61 @@ else:
         </div>
         """.format(video2_direct, video2_direct), unsafe_allow_html=True)
 
+# Display Report Examples
+st.markdown("""
+<div class="section-header">
+    📋 Report Examples
+</div>
+<p style="color: var(--text-light); font-style: italic; margin-bottom: 1rem;">
+    See examples of the comprehensive motion analysis reports you can expect
+</p>
+""", unsafe_allow_html=True)
 
+# Display report examples in columns
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("""
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #007bff; margin: 20px 0;">
+        <h4>📊 Presenter Analysis Report</h4>
+        <p style="margin: 10px 0; font-size: 14px;">
+            <strong>Analysis Objective:</strong> Movement Type: Instructing or Giving Instructions<br>
+            <strong>Score:</strong> 10/10<br>
+            <strong>Key Features:</strong>
+        </p>
+        <ul style="margin: 10px 0; padding-left: 20px; font-size: 14px;">
+            <li>Information Sharing: Score 7 (moderate)</li>
+            <li>Convincing: Score 8 (high)</li>
+            <li>Instructing: Score 10 (high)</li>
+        </ul>
+        <p style="margin: 10px 0 0 0; font-style: italic; color: #666; font-size: 12px;">
+            Detailed breakdown of movement categories with scores, scales, and positive indicators
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown("""
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 4px solid #28a745; margin: 20px 0;">
+        <h4>🤝 Engaging & Connecting Report</h4>
+        <p style="margin: 10px 0; font-size: 14px;">
+            <strong>Analysis Focus:</strong> Engaging & Connecting (การสร้างความเป็นมิตรและสร้างสัมพันธภาพ)<br>
+            <strong>Score:</strong> 7/10<br>
+            <strong>Video Duration:</strong> 63.6 seconds
+        </p>
+        <p style="margin: 10px 0; font-size: 14px;">
+            <strong>Summary:</strong> Effective instructing style! Clear and authoritative presence.
+        </p>
+        <p style="margin: 10px 0 0 0; font-style: italic; color: #666; font-size: 12px;">
+            Detected 2579 positive indicators out of 3816 total indicators
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Show the actual report image if available
+if Path("picture.jpg").exists():
+    st.markdown("### 📄 Sample Report Preview")
+    st.image("picture.jpg", caption="Movement Matters Report Sample", use_container_width=True)
 
 st.markdown("""
 <div class="section-header">
