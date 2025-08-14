@@ -623,7 +623,6 @@ if len(videos_to_show) >= 2 and len(videos_to_show[0]) >= 2 and len(videos_to_sh
                     """.format(video1_direct, video1_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[0][1])
-        st.caption(videos_to_show[0][2])
     
     with col2:
         # Try to embed YouTube videos
@@ -671,7 +670,6 @@ if len(videos_to_show) >= 2 and len(videos_to_show[0]) >= 2 and len(videos_to_sh
                     """.format(video2_direct, video2_direct), unsafe_allow_html=True)
         else:
             st.video(videos_to_show[1][1])
-        st.caption(videos_to_show[1][2])
         
 elif len(videos_to_show) == 1 and len(videos_to_show[0]) >= 2:
     st.markdown("#### Available Videos:")
@@ -718,7 +716,6 @@ elif len(videos_to_show) == 1 and len(videos_to_show[0]) >= 2:
                 """.format(videos_to_show[0][2], video1_direct, video1_direct), unsafe_allow_html=True)
     else:
         st.video(videos_to_show[0][1])
-    st.caption(videos_to_show[0][2])
 else:
     # Show fallback when no videos are available or properly configured
     st.warning("⚠️ No videos are currently available. Please check the video configuration.")
