@@ -19,6 +19,7 @@ import smtplib
 import ssl
 import mimetypes
 from email.message import EmailMessage
+import base64
 
 # Initialize session state for login
 if 'logged_in' not in st.session_state:
@@ -762,22 +763,27 @@ st.markdown("""
 </p>
 """, unsafe_allow_html=True)
 
-# Check if the PDF file exists and display it
+# Check if the PDF file exists and display it as embedded content
 pdf_path = Path(__file__).parent.parent / "Movement Matters Report Sample 2.pdf"
 if not pdf_path.exists():
     # Try current directory as fallback
     pdf_path = Path("Movement Matters Report Sample 2.pdf")
 if pdf_path.exists():
+    # Display the PDF as embedded content
     with open(pdf_path, "rb") as pdf_file:
         pdf_bytes = pdf_file.read()
     
-    st.download_button(
-        label="📄 Download Movement Matters Report Sample",
-        data=pdf_bytes,
-        file_name="Movement Matters Report Sample 2.pdf",
-        mime="application/pdf",
-        help="Download the sample report to see what kind of analysis you can expect"
-    )
+    # Display PDF as embedded content
+    pdf_base64 = base64.b64encode(pdf_bytes).decode()
+    st.markdown(f"""
+    <div style="text-align: center; margin: 20px 0;">
+        <embed src="data:application/pdf;base64,{pdf_base64}" 
+               type="application/pdf" 
+               width="100%" 
+               height="600px" 
+               style="border: 2px solid #ddd; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+    </div>
+    """, unsafe_allow_html=True)
     
     # Also display a preview/description
     st.markdown("""
