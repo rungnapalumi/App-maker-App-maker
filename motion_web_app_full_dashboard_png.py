@@ -503,12 +503,10 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://youtube.com/shorts/chueEl5qGzk?feature=share")
-video2_url = os.getenv("VIDEO2_URL", "https://youtube.com/shorts/KnhillUYHqM?feature=share")
+video1_url = os.getenv("VIDEO1_URL", "https://youtube.com/shorts/Lw9J7nYAsSA?feature=share")
 
-# Alternative direct video URLs for better compatibility
-video1_direct = "https://youtube.com/shorts/chueEl5qGzk?feature=share"
-video2_direct = "https://youtube.com/shorts/KnhillUYHqM?feature=share"
+# Alternative direct video URL for better compatibility
+video1_direct = "https://youtube.com/shorts/Lw9J7nYAsSA?feature=share"
 
 # Convert YouTube URLs to proper format for embedding
 def fix_youtube_url(url):
@@ -557,9 +555,8 @@ def is_youtube_url(url):
     return 'youtube.com' in url or 'youtu.be' in url
 
 video1_url = fix_youtube_url(video1_url)
-video2_url = fix_youtube_url(video2_url)
 
-# Determine which videos to show
+# Determine which video to show
 videos_to_show = []
 
 # Check local files first
@@ -568,108 +565,53 @@ if video1_path.exists():
 elif video1_url:
     videos_to_show.append(("Movement matters.mp4", video1_url, "🎯 **Movement Matters** - Understanding body language and motion analysis"))
 
-if video2_path.exists():
-    videos_to_show.append(("The key to effective public speaking your body movement.mp4", str(video2_path), "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
-elif video2_url:
-    videos_to_show.append(("The key to effective public speaking your body movement.mp4", video2_url, "🎤 **The Key to Effective Public Speaking** - Your body movement matters"))
-
-# Display videos
-if len(videos_to_show) >= 2 and len(videos_to_show[0]) >= 2 and len(videos_to_show[1]) >= 2:
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Try to embed YouTube videos
-        if videos_to_show[0][1].startswith('http'):
-            if is_youtube_url(videos_to_show[0][1]):
-                # Use YouTube embed for better compatibility
-                video_id = extract_youtube_video_id(videos_to_show[0][1])
-                if video_id:
-                    st.markdown(f"""
-                    <div style="text-align: center; margin: 20px 0;">
-                        <iframe width="100%" height="315" 
-                                src="https://www.youtube.com/embed/{video_id}" 
-                                frameborder="0" 
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                                allowfullscreen>
-                        </iframe>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    # Fallback if video ID extraction fails
-                    st.markdown("""
-                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                        <h4>🎯 Movement Matters</h4>
-                        <p>Understanding body language and motion analysis</p>
-                        <p><strong>Video ID extraction failed</strong></p>
-                        <div style="margin: 15px 0;">
-                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
-                        </div>
-                    </div>
-                    """.format(video1_direct), unsafe_allow_html=True)
+# Display single video
+if len(videos_to_show) >= 1 and len(videos_to_show[0]) >= 2:
+    # Try to embed YouTube video
+    if videos_to_show[0][1].startswith('http'):
+        if is_youtube_url(videos_to_show[0][1]):
+            # Use YouTube embed for better compatibility
+            video_id = extract_youtube_video_id(videos_to_show[0][1])
+            if video_id:
+                st.markdown(f"""
+                <div style="text-align: center; margin: 20px 0;">
+                    <iframe width="100%" height="315" 
+                            src="https://www.youtube.com/embed/{video_id}" 
+                            frameborder="0" 
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                            allowfullscreen>
+                    </iframe>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                try:
-                    st.video(videos_to_show[0][1])
-                except:
-                    st.markdown("""
-                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                        <h4>🎯 Movement Matters</h4>
-                        <p>Understanding body language and motion analysis</p>
-                        <p><strong>Video preview not available on this platform</strong></p>
-                        <div style="margin: 15px 0;">
-                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                            <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
-                        </div>
+                # Fallback if video ID extraction fails
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                    <h4>🎯 Movement Matters</h4>
+                    <p>Understanding body language and motion analysis</p>
+                    <p><strong>Video ID extraction failed</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
                     </div>
-                    """.format(video1_direct, video1_direct), unsafe_allow_html=True)
+                </div>
+                """.format(video1_direct), unsafe_allow_html=True)
         else:
-            st.video(videos_to_show[0][1])
-    
-    with col2:
-        # Try to embed YouTube videos
-        if videos_to_show[1][1].startswith('http'):
-            if is_youtube_url(videos_to_show[1][1]):
-                # Use YouTube embed for better compatibility
-                video_id = extract_youtube_video_id(videos_to_show[1][1])
-                if video_id:
-                    st.markdown(f"""
-                    <div style="text-align: center; margin: 20px 0;">
-                        <iframe width="100%" height="315" 
-                                src="https://www.youtube.com/embed/{video_id}" 
-                                frameborder="0" 
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-                                allowfullscreen>
-                        </iframe>
+            try:
+                st.video(videos_to_show[0][1])
+            except:
+                st.markdown("""
+                <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                    <h4>🎯 Movement Matters</h4>
+                    <p>Understanding body language and motion analysis</p>
+                    <p><strong>Video preview not available on this platform</strong></p>
+                    <div style="margin: 15px 0;">
+                        <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
+                        <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
                     </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    # Fallback if video ID extraction fails
-                    st.markdown("""
-                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                        <h4>🎤 The Key to Effective Public Speaking</h4>
-                        <p>Your body movement matters</p>
-                        <p><strong>Video ID extraction failed</strong></p>
-                        <div style="margin: 15px 0;">
-                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
-                        </div>
-                    </div>
-                    """.format(video2_direct), unsafe_allow_html=True)
-            else:
-                try:
-                    st.video(videos_to_show[1][1])
-                except:
-                    st.markdown("""
-                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-                        <h4>🎤 The Key to Effective Public Speaking</h4>
-                        <p>Your body movement matters</p>
-                        <p><strong>Video preview not available on this platform</strong></p>
-                        <div style="margin: 15px 0;">
-                            <a href="{}" target="_blank" style="background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">📥 Direct Download</a>
-                            <a href="{}" target="_blank" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">🔗 View on YouTube</a>
-                        </div>
-                    </div>
-                    """.format(video2_direct, video2_direct), unsafe_allow_html=True)
-        else:
-            st.video(videos_to_show[1][1])
+                </div>
+                """.format(video1_direct, video1_direct), unsafe_allow_html=True)
+    else:
+        st.video(videos_to_show[0][1])
         
 elif len(videos_to_show) == 1 and len(videos_to_show[0]) >= 2:
     st.markdown("#### Available Videos:")
