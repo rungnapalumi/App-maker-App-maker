@@ -503,10 +503,10 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/shorts/5ipvkyGVX-M")
+video1_url = os.getenv("VIDEO1_URL", "https://youtube.com/shorts/qpClWOkC2rw?si=N6yVCRrqxiJmOaSG")
 
 # Alternative direct video URL for better compatibility
-video1_direct = "https://www.youtube.com/shorts/5ipvkyGVX-M"
+video1_direct = "https://youtube.com/shorts/qpClWOkC2rw?si=N6yVCRrqxiJmOaSG"
 
 # Convert YouTube URLs to proper format for embedding
 def fix_youtube_url(url):
