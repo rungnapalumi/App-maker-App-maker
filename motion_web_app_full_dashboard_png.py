@@ -710,7 +710,7 @@ with col1:
         <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample Part 1</h4>
     </div>
     """, unsafe_allow_html=True)
-    st.image("Report sample/Report sample one.png", caption="Movement Matters Report Sample Part 1", use_container_width=True)
+    st.image("Reprot sample part 1.png", caption="Movement Matters Report Sample Part 1", use_container_width=True)
 
 with col2:
     st.markdown("""
@@ -718,7 +718,7 @@ with col2:
         <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample Part 2</h4>
     </div>
     """, unsafe_allow_html=True)
-    st.image("Report sample/Report sample two.png", caption="Movement Matters Report Sample Part 2", use_container_width=True)
+    st.image("Report sample part 2.png", caption="Movement Matters Report Sample Part 2", use_container_width=True)
 
 st.markdown("""
 <div class="section-header">
