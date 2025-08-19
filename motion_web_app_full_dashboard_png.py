@@ -503,10 +503,10 @@ video2_path = Path("The key to effective public speaking  your body movement.mp4
 
 # Check for environment variable URLs (for Render deployment)
 import os
-video1_url = os.getenv("VIDEO1_URL", "https://youtube.com/shorts/yAWgZEH-7CI?si=gjj-QNUYnsS_SmK2")
+video1_url = os.getenv("VIDEO1_URL", "https://www.youtube.com/shorts/5ipvkyGVX-M")
 
 # Alternative direct video URL for better compatibility
-video1_direct = "https://youtube.com/shorts/yAWgZEH-7CI?si=gjj-QNUYnsS_SmK2"
+video1_direct = "https://www.youtube.com/shorts/5ipvkyGVX-M"
 
 # Convert YouTube URLs to proper format for embedding
 def fix_youtube_url(url):
@@ -559,11 +559,11 @@ video1_url = fix_youtube_url(video1_url)
 # Determine which video to show
 videos_to_show = []
 
-# Check local files first
-if video1_path.exists():
-    videos_to_show.append(("Movement matters.mp4", str(video1_path), "🎯 **Movement Matters** - Understanding body language and motion analysis"))
-elif video1_url:
+# Force use of YouTube video instead of local files
+if video1_url:
     videos_to_show.append(("Movement matters.mp4", video1_url, "🎯 **Movement Matters** - Understanding body language and motion analysis"))
+elif video1_path.exists():
+    videos_to_show.append(("Movement matters.mp4", str(video1_path), "🎯 **Movement Matters** - Understanding body language and motion analysis"))
 
 # Display single video
 if len(videos_to_show) >= 1 and len(videos_to_show[0]) >= 2:
@@ -707,18 +707,18 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("""
     <div style="text-align: center; margin: 10px 0;">
-        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 1</h4>
+        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample Part 1</h4>
     </div>
     """, unsafe_allow_html=True)
-    st.image("Report sample one.png", caption="Movement Matters Report Sample 1", use_container_width=True)
+    st.image("Report sample/Report sample one.png", caption="Movement Matters Report Sample Part 1", use_container_width=True)
 
 with col2:
     st.markdown("""
     <div style="text-align: center; margin: 10px 0;">
-        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample 2</h4>
+        <h4 style="color: #333; margin-bottom: 15px;">📄 Report Sample Part 2</h4>
     </div>
     """, unsafe_allow_html=True)
-    st.image("Report sample two.png", caption="Movement Matters Report Sample 2", use_container_width=True)
+    st.image("Report sample/Report sample two.png", caption="Movement Matters Report Sample Part 2", use_container_width=True)
 
 st.markdown("""
 <div class="section-header">

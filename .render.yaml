@@ -8,6 +8,6 @@ services:
     autoDeploy: true
     envVars:
       - key: VIDEO1_URL
-        value: "https://www.youtube.com/shorts/c8wc8pEr-f0"
+        value: "https://www.youtube.com/shorts/5ipvkyGVX-M"
       - key: VIDEO2_URL
-        value: "https://www.youtube.com/shorts/c8wc8pEr-f0"
+        value: "https://www.youtube.com/shorts/5ipvkyGVX-M"
