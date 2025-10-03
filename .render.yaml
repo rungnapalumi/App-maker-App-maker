@@ -4,7 +4,7 @@ services:
     env: python
     region: oregon
     buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
-    startCommand: streamlit run motion_web_app_streamlined.py --server.port $PORT --server.address 0.0.0.0
+    startCommand: streamlit run motion_web_app_simple.py --server.port $PORT --server.address 0.0.0.0
     autoDeploy: true
     envVars:
       - key: VIDEO1_URL
