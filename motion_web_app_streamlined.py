@@ -1,12 +1,7 @@
 import streamlit as st
 import cv2
-try:
-    import mediapipe as mp
-    MEDIAPIPE_AVAILABLE = True
-    mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-except ImportError:
-    MEDIAPIPE_AVAILABLE = False
+# MediaPipe not needed since we use existing overlay files
+MEDIAPIPE_AVAILABLE = False
 import numpy as np
 import pandas as pd
 import tempfile
@@ -50,99 +45,7 @@ def angle_3pts(a, b, c):
     cos_angle = np.dot(ba, bc) / (np.linalg.norm(ba)*np.linalg.norm(bc) + 1e-6)
     return np.degrees(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
 
-def detect_motion_opencv(frame, prev_frame=None):
-    """Fallback motion detection using OpenCV when MediaPipe is not available"""
-    if prev_frame is None:
-        return []
-    
-    # Convert frames to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-    
-    # Calculate frame difference
-    frame_diff = cv2.absdiff(gray, prev_gray)
-    
-    # Apply threshold to get motion regions
-    _, thresh = cv2.threshold(frame_diff, 25, 255, cv2.THRESH_BINARY)
-    
-    # Find contours of motion
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    motions = []
-    
-    # Analyze motion based on contour properties
-    total_motion_area = sum(cv2.contourArea(c) for c in contours)
-    
-    if total_motion_area > 1000:  # Significant motion detected
-        # Get bounding boxes of motion regions
-        motion_regions = []
-        for contour in contours:
-            if cv2.contourArea(contour) > 100:  # Filter small noise
-                x, y, w, h = cv2.boundingRect(contour)
-                motion_regions.append((x, y, w, h))
-        
-        if motion_regions:
-            # Analyze motion patterns
-            avg_x = np.mean([x for x, y, w, h in motion_regions])
-            avg_y = np.mean([y for x, y, w, h in motion_regions])
-            
-            # Simple motion classification
-            if total_motion_area > 5000:
-                motions.append("Significant Motion")
-            elif total_motion_area > 2000:
-                motions.append("Moderate Motion")
-            else:
-                motions.append("Light Motion")
-    
-    return motions
-
-def detect_motion_v27(landmarks, prev_landmarks=None):
-    """Advanced motion detection using MediaPipe pose landmarks"""
-    if not MEDIAPIPE_AVAILABLE:
-        return []
-    
-    motions = []
-    get = lambda name: np.array([
-        landmarks[name.value].x,
-        landmarks[name.value].y,
-        landmarks[name.value].z
-    ])
-    lw, rw = get(mp_pose.PoseLandmark.LEFT_WRIST), get(mp_pose.PoseLandmark.RIGHT_WRIST)
-    le, re = get(mp_pose.PoseLandmark.LEFT_ELBOW), get(mp_pose.PoseLandmark.RIGHT_ELBOW)
-    ls, rs = get(mp_pose.PoseLandmark.LEFT_SHOULDER), get(mp_pose.PoseLandmark.RIGHT_SHOULDER)
-    lh, rh = get(mp_pose.PoseLandmark.LEFT_HIP), get(mp_pose.PoseLandmark.RIGHT_HIP)
-    la, ra = get(mp_pose.PoseLandmark.LEFT_ANKLE), get(mp_pose.PoseLandmark.RIGHT_ANKLE)
-
-    shoulder_width = np.linalg.norm(ls[:2] - rs[:2])
-    hand_distance = np.linalg.norm(lw[:2] - rw[:2])
-
-    delta_rw = delta_lw = delta_hip = delta_ankle = delta_shoulder = np.zeros(3)
-    if prev_landmarks is not None:
-        get_prev = lambda name: np.array([
-            prev_landmarks[name.value].x,
-            prev_landmarks[name.value].y,
-            prev_landmarks[name.value].z
-        ])
-        prev_rw, prev_lw = get_prev(mp_pose.PoseLandmark.RIGHT_WRIST), get_prev(mp_pose.PoseLandmark.LEFT_WRIST)
-        prev_lh, prev_rh = get_prev(mp_pose.PoseLandmark.LEFT_HIP), get_prev(mp_pose.PoseLandmark.RIGHT_HIP)
-        prev_la, prev_ra = get_prev(mp_pose.PoseLandmark.LEFT_ANKLE), get_prev(mp_pose.PoseLandmark.RIGHT_ANKLE)
-        prev_ls, prev_rs = get_prev(mp_pose.PoseLandmark.LEFT_SHOULDER), get_prev(mp_pose.PoseLandmark.RIGHT_SHOULDER)
-
-        delta_rw, delta_lw = rw - prev_rw, lw - prev_lw
-        delta_hip = ((lh+rh)/2 - (prev_lh+prev_rh)/2)
-        delta_ankle = ((la+ra)/2 - (prev_la+prev_ra)/2)
-        delta_shoulder = ((ls+rs)/2 - (prev_ls+prev_rs)/2)
-
-    left_elbow_angle = angle_3pts(ls, le, lw)
-    right_elbow_angle = angle_3pts(rs, re, rw)
-
-    # Basic motion detection when MediaPipe is available
-    if hand_distance < 0.4*shoulder_width:
-        motions.append("Enclosing")
-    elif hand_distance > 1.2*shoulder_width:
-        motions.append("Spreading")
-    
-    return motions
+# Motion detection functions removed since we use existing overlay files
 
 # ==== Streamlit Web App ====
 st.set_page_config(
