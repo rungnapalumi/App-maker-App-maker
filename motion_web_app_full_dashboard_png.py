@@ -303,7 +303,8 @@ if st.session_state.get('analysis_completed', False):
     st.markdown("---")
     st.markdown("### 📥 Permanent Downloads")
     st.success("🎯 **Analysis results are available for download:**")
-    st.info("💾 **Video and Report will be saved in Download folder**")
+    st.info("💾 **Click the download buttons below to save files to your Downloads folder**")
+    st.warning("⚠️ **Make sure to allow downloads in your browser if prompted**")
     
     # Create two columns for the downloads
     col1, col2, col3 = st.columns([2, 2, 1])
@@ -320,13 +321,18 @@ if st.session_state.get('analysis_completed', False):
             video_filename = "skeleton_overlay_with_audio.mp4"
         
         st.info(f"📹 **{video_filename}**")
-        st.download_button(
-            "📥 Download Video",
-            data=st.session_state.processed_video_data,
-            file_name=video_filename,
-            mime="video/mp4",
-            key="permanent_download_video"
-        )
+        # Create download button with proper data handling
+        if 'processed_video_data' in st.session_state:
+            st.download_button(
+                "📥 Download Video",
+                data=st.session_state.processed_video_data,
+                file_name=video_filename,
+                mime="video/mp4",
+                key="permanent_download_video",
+                help="Click to download the skeleton overlay video to your Downloads folder"
+            )
+        else:
+            st.error("❌ Video data not available. Please re-run the analysis.")
     
     with col2:
         st.markdown("#### 📄 Analysis Report")
@@ -343,13 +349,18 @@ if st.session_state.get('analysis_completed', False):
             mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         
         st.info(f"📋 **{report_filename}**")
-        st.download_button(
-            "📥 Download Report",
-            data=st.session_state.report_data,
-            file_name=report_filename,
-            mime=mime_type,
-            key="permanent_download_report"
-        )
+        # Create download button with proper data handling
+        if 'report_data' in st.session_state:
+            st.download_button(
+                "📥 Download Report",
+                data=st.session_state.report_data,
+                file_name=report_filename,
+                mime=mime_type,
+                key="permanent_download_report",
+                help="Click to download the analysis report to your Downloads folder"
+            )
+        else:
+            st.error("❌ Report data not available. Please re-run the analysis.")
     
     with col3:
         st.markdown("#### 🗑️ Clear Results")
@@ -367,3 +378,23 @@ if st.session_state.get('analysis_completed', False):
                 del st.session_state.report_data
             st.success("✅ Analysis results cleared!")
             st.rerun()
+    
+    # Add troubleshooting section
+    st.markdown("---")
+    st.markdown("### 🔧 Download Troubleshooting")
+    with st.expander("Having trouble downloading? Click here for help"):
+        st.markdown("""
+        **If downloads aren't working:**
+        
+        1. **Check browser settings**: Make sure your browser allows downloads
+        2. **Try right-click**: Right-click the download button and select "Save link as..."
+        3. **Check Downloads folder**: Files should appear in your computer's Downloads folder
+        4. **File extensions**: Make sure the files have the correct extensions (.mp4 for video, .pdf for report)
+        5. **Browser compatibility**: Try using Chrome, Firefox, or Safari
+        
+        **Expected file types:**
+        - Video files: `.mp4` format
+        - Report files: `.pdf` format
+        
+        If you're still having issues, try refreshing the page and re-running the analysis.
+        """)
