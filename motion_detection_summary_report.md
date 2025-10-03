@@ -192,8 +192,8 @@ conda install -c conda-forge mediapipe opencv streamlit pandas numpy
 ```
 
 ### Access Points
-- **Local URL**: http://localhost:8502
-- **Network URL**: http://192.168.1.236:8502
+- **Local URL**: http://localhost:8507
+- **Network URL**: http://192.168.1.236:8507
 - **File Structure**: Organized Python modules
 
 ## 🎯 Use Cases & Applications
