@@ -1,0 +1,12 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://127.0.0.1:8501
+
+2025-08-09 15:33:19.516 The `use_column_width` parameter has been deprecated and will be removed in a future release. Please utilize the `use_container_width` parameter instead.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1754729393.817791   44015 gl_context.cc:369] GL version: 2.1 (2.1 Metal - 89.4), renderer: Apple M4
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+W0000 00:00:1754729393.886782   44032 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1754729393.896649   44035 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1754729393.909453   44035 landmark_projection_calculator.cc:186] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.

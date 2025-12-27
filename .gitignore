@@ -9,19 +9,31 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+*.pyc
+*.pyo
+*.pyd
 
 # Streamlit
 .streamlit/
+.streamlit_*.log
 
-# Video outputs
+# Video outputs and large files
 *.mp4
 *.avi
 *.mov
+*.mpeg4
+
+# User uploads
+user_uploads/
 
 # Temporary files
 *.tmp
+*.temp
 temp-*.m4a
 *.m4a
+
+# Logs
+*.log
 
 # IDE
 .vscode/
@@ -29,11 +41,16 @@ temp-*.m4a
 *.swp
 *.swo
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
 
 # Environment variables
 .env
 .env.local
+.venv/
 
+# Data files
+*.csv
+*.xlsx
+*.xls
