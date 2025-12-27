@@ -2,6 +2,6 @@ streamlit>=1.28.0
 opencv-python>=4.8.0
 numpy>=1.24.0
 mediapipe>=0.10.0
-moviepy>=1.0.3
+moviepy==1.0.3
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.8
