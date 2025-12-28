@@ -3,7 +3,7 @@ services:
     name: App-maker-App-maker
     env: python
     region: oregon
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir protobuf>=3.20.0,<5.0.0 && pip install --no-cache-dir -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     autoDeploy: true
 
