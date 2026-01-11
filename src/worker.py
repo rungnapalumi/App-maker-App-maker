@@ -1,86 +1,178 @@
 # src/worker.py
-# ============================================
+# ============================================================
 # AI People Reader — Worker (Johansson DOTS ONLY)
-# - MediaPipe Pose
-# - DOT radius = 5 px
-# - NO skeleton lines
-# - NO audio
-# - Safe for Render / Linux
-# ============================================
+# - Polls S3 queue: jobs/pending/*.json
+# - Job format expected:
+#     {"job_id": "...", "input_key": "jobs/<job_id>/input/input.mp4", ...}
+# - Output:
+#     jobs/<job_id>/output/dot_overlay.mp4   (black bg, white dots, dot=5, NO AUDIO)
+# - Updates:
+#     jobs/<job_id>/status.json
+#
+# DEBUG INCLUDED:
+# - prints Python version
+# - prints mediapipe __file__
+# - checks mediapipe has solutions
+#
+# IMPORTANT:
+# - DO NOT use mediapipe.python.*
+# - Uses boto3 with proxies disabled
+# ============================================================
 
 import os
+import sys
 import json
 import time
-import uuid
 import tempfile
-import cv2
-import boto3
-import numpy as np
+import traceback
 from datetime import datetime, timezone
 
-# ✅ CORRECT MediaPipe import (THIS IS THE FIX)
+import boto3
+from botocore.config import Config
+
+import cv2
+import numpy as np
+
+# ✅ Render-safe import style (public API only)
 import mediapipe as mp
 
-# -----------------------
-# Config
-# -----------------------
-DOT_RADIUS = 5
-POSE_CONFIDENCE = 0.5
 
-AWS_REGION = os.getenv("AWS_REGION")
-S3_BUCKET = os.getenv("S3_BUCKET")
+# ----------------------------
+# ENV / CONFIG
+# ----------------------------
+AWS_REGION = (os.getenv("AWS_REGION") or "ap-southeast-1").strip()
+S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
+POLL_SECONDS = int((os.getenv("WORKER_POLL_SECONDS") or "5").strip())
 
-assert AWS_REGION, "AWS_REGION missing"
-assert S3_BUCKET, "S3_BUCKET missing"
+DOT_RADIUS = 5              # requested
+MIN_VIS = 0.5               # landmark visibility threshold
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+PENDING_PREFIX = "jobs/pending/"
+PROCESSING_PREFIX = "jobs/processing/"
+DONE_PREFIX = "jobs/done/"
+FAILED_PREFIX = "jobs/failed/"
 
-mp_pose = mp.solutions.pose
 
-
-# -----------------------
-# Utils
-# -----------------------
-def log(msg):
+def log(msg: str):
     print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
 
-def strip_audio(input_path, output_path):
+# ----------------------------
+# S3 client (no proxies / no endpoint_url)
+# ----------------------------
+def s3():
+    cfg = Config(
+        proxies={},  # important: disable proxy influence
+        retries={"max_attempts": 5, "mode": "standard"},
+    )
+    return boto3.client(
+        "s3",
+        region_name=AWS_REGION,
+        config=cfg,
+        aws_access_key_id=(os.getenv("AWS_ACCESS_KEY_ID") or "").strip(),
+        aws_secret_access_key=(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),
+    )
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def s3_put_json(key: str, data: dict):
+    s3().put_object(
+        Bucket=S3_BUCKET,
+        Key=key,
+        Body=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
+        ContentType="application/json",
+    )
+
+
+def s3_get_json(key: str) -> dict:
+    obj = s3().get_object(Bucket=S3_BUCKET, Key=key)
+    return json.loads(obj["Body"].read().decode("utf-8"))
+
+
+def s3_exists(key: str) -> bool:
+    try:
+        s3().head_object(Bucket=S3_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
+
+
+def list_pending_jobs(max_keys=10):
+    resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=PENDING_PREFIX, MaxKeys=max_keys)
+    contents = resp.get("Contents", [])
+    contents.sort(key=lambda x: x.get("LastModified"))
+    return [c["Key"] for c in contents if c["Key"].endswith(".json")]
+
+
+def claim_job(pending_key: str) -> str | None:
+    """
+    claim pending -> processing (copy + delete pending)
+    """
+    filename = pending_key.split("/")[-1]
+    processing_key = f"{PROCESSING_PREFIX}{filename}"
+
+    if s3_exists(processing_key):
+        return None
+
+    try:
+        s3().copy_object(
+            Bucket=S3_BUCKET,
+            Key=processing_key,
+            CopySource={"Bucket": S3_BUCKET, "Key": pending_key},
+        )
+        s3().delete_object(Bucket=S3_BUCKET, Key=pending_key)
+        return processing_key
+    except Exception as e:
+        log(f"❌ claim_job failed: {e!r}")
+        return None
+
+
+def update_status(job_id: str, status: str, progress: int, message: str = "", outputs: dict | None = None):
+    payload = {
+        "job_id": job_id,
+        "status": status,           # queued | running | done | failed
+        "progress": int(progress),  # 0-100
+        "message": message,
+        "updated_at": now_iso(),
+        "outputs": outputs or {},
+    }
+    s3_put_json(f"jobs/{job_id}/status.json", payload)
+
+
+# ----------------------------
+# DOT rendering (black bg, white dots, no audio)
+# ----------------------------
+def render_johansson_dots(input_path: str, output_path: str, dot_radius: int = 5):
+    """
+    Creates a NEW mp4 from frames → no audio by design.
+    """
     cap = cv2.VideoCapture(input_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if not cap.isOpened():
+        raise RuntimeError("Cannot open input video")
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if w <= 0 or h <= 0:
+        raise RuntimeError("Invalid video size")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    if not out.isOpened():
+        raise RuntimeError("Cannot open VideoWriter(mp4v)")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        out.write(frame)
-
-    cap.release()
-    out.release()
-
-
-# -----------------------
-# Core DOT renderer
-# -----------------------
-def render_johansson_dots(input_video, output_video):
-    cap = cv2.VideoCapture(input_video)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_video, fourcc, fps, (w, h))
+    # Use public API only
+    mp_pose = mp.solutions.pose
 
     with mp_pose.Pose(
         static_image_mode=False,
         model_complexity=1,
-        min_detection_confidence=POSE_CONFIDENCE,
-        min_tracking_confidence=POSE_CONFIDENCE,
+        enable_segmentation=False,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
     ) as pose:
 
         while True:
@@ -89,74 +181,118 @@ def render_johansson_dots(input_video, output_video):
                 break
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = pose.process(rgb)
+            res = pose.process(rgb)
 
-            blank = np.zeros_like(frame)
+            canvas = np.zeros((h, w, 3), dtype=np.uint8)
 
-            if result.pose_landmarks:
-                for lm in result.pose_landmarks.landmark:
-                    cx = int(lm.x * w)
-                    cy = int(lm.y * h)
-                    if 0 <= cx < w and 0 <= cy < h:
-                        cv2.circle(
-                            blank,
-                            (cx, cy),
-                            DOT_RADIUS,
-                            (255, 255, 255),
-                            -1,
-                        )
+            if res.pose_landmarks:
+                for lm in res.pose_landmarks.landmark:
+                    if lm.visibility is not None and lm.visibility < MIN_VIS:
+                        continue
+                    x = int(lm.x * w)
+                    y = int(lm.y * h)
+                    if 0 <= x < w and 0 <= y < h:
+                        cv2.circle(canvas, (x, y), dot_radius, (255, 255, 255), -1)
 
-            out.write(blank)
+            out.write(canvas)
 
     cap.release()
     out.release()
 
 
-# -----------------------
-# Job handler
-# -----------------------
-def handle_job(job):
+def handle_job(job: dict):
     job_id = job["job_id"]
     input_key = job["input_key"]
+    output_key = f"jobs/{job_id}/output/dot_overlay.mp4"
 
-    log(f"Processing job {job_id}")
+    update_status(job_id, "running", 5, "Downloading input...")
+
+    # guard: mediapipe sanity
+    if not hasattr(mp, "solutions"):
+        raise RuntimeError(
+            f"mediapipe has no attribute 'solutions'. mp.__file__={getattr(mp,'__file__',None)!r}"
+        )
 
     with tempfile.TemporaryDirectory() as tmp:
-        raw = os.path.join(tmp, "input_raw.mp4")
-        no_audio = os.path.join(tmp, "input_noaudio.mp4")
-        output = os.path.join(tmp, "overlay.mp4")
+        in_path = os.path.join(tmp, "input.mp4")
+        out_path = os.path.join(tmp, "dot_overlay.mp4")
 
-        # download
-        s3.download_file(S3_BUCKET, input_key, raw)
+        log(f"⬇️ download {input_key}")
+        s3().download_file(S3_BUCKET, input_key, in_path)
 
-        # strip audio
-        strip_audio(raw, no_audio)
+        update_status(job_id, "running", 25, "Rendering Johansson dots (dot=5, no lines, no audio)...")
+        render_johansson_dots(in_path, out_path, dot_radius=DOT_RADIUS)
 
-        # render dots
-        render_johansson_dots(no_audio, output)
+        update_status(job_id, "running", 90, "Uploading overlay...")
+        log(f"⬆️ upload {output_key}")
+        s3().upload_file(out_path, S3_BUCKET, output_key)
 
-        out_key = f"jobs/{job_id}/output/overlay.mp4"
-        s3.upload_file(output, S3_BUCKET, out_key)
-
-    return {
-        "overlay_key": out_key
-    }
+    update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": output_key})
 
 
-# -----------------------
-# Worker loop
-# -----------------------
 def main():
-    log("Worker boot (Johansson DOTS ONLY)")
-    log(f"AWS_REGION={AWS_REGION}")
-    log(f"S3_BUCKET={S3_BUCKET}")
-    s3.head_bucket(Bucket=S3_BUCKET)
-    log("S3 reachable ✅")
+    # ---- boot diagnostics ----
+    log("✅ Worker boot (Johansson DOTS ONLY)")
+    log(f"PYTHON_VERSION = {sys.version!r}")
+    log(f"AWS_REGION repr = {AWS_REGION!r}")
+    log(f"S3_BUCKET  repr = {S3_BUCKET!r}")
+    log(f"mediapipe __file__ = {getattr(mp, '__file__', None)!r}")
+    log(f"mediapipe has solutions? = {hasattr(mp, 'solutions')}")
+    log(f"mediapipe sol-related keys sample = {[k for k in dir(mp) if 'sol' in k.lower()][:20]}")
+
+    if not S3_BUCKET:
+        raise RuntimeError("S3_BUCKET env missing")
+
+    # S3 check
+    s3().head_bucket(Bucket=S3_BUCKET)
+    log("✅ S3 reachable")
 
     while True:
-        # ⬇️ replace this with your actual job queue pull
-        time.sleep(5)
-        log("heartbeat (no pending jobs)")
+        try:
+            pending = list_pending_jobs(max_keys=5)
+            if not pending:
+                log("⏳ heartbeat (no pending jobs)")
+                time.sleep(POLL_SECONDS)
+                continue
+
+            pending_key = pending[0]
+            processing_key = claim_job(pending_key)
+            if not processing_key:
+                time.sleep(1)
+                continue
+
+            job = s3_get_json(processing_key)
+            job_id = job.get("job_id", "unknown")
+            log(f"▶️ Processing job: {job_id}")
+
+            try:
+                handle_job(job)
+
+                # done marker
+                s3().copy_object(
+                    Bucket=S3_BUCKET,
+                    Key=f"{DONE_PREFIX}{job_id}.json",
+                    CopySource={"Bucket": S3_BUCKET, "Key": processing_key},
+                )
+                s3().delete_object(Bucket=S3_BUCKET, Key=processing_key)
+                log(f"✅ Job done: {job_id}")
+
+            except Exception as e:
+                log(f"❌ Job failed: {job_id} {e!r}")
+                log(traceback.format_exc())
+                update_status(job_id, "failed", 100, message=repr(e))
+
+                s3().copy_object(
+                    Bucket=S3_BUCKET,
+                    Key=f"{FAILED_PREFIX}{job_id}.json",
+                    CopySource={"Bucket": S3_BUCKET, "Key": processing_key},
+                )
+                s3().delete_object(Bucket=S3_BUCKET, Key=processing_key)
+
+        except Exception as e:
+            log(f"❌ Worker loop error: {e!r}")
+            log(traceback.format_exc())
+            time.sleep(3)
 
 
 if __name__ == "__main__":
