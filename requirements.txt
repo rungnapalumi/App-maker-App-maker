@@ -1,19 +1,18 @@
 streamlit>=1.31,<2
 
+
+
 opencv-contrib-python-headless>=4.8,<5
 numpy>=1.24,<3
+boto3
+botocore
 
-# ---- MediaPipe (STABLE on Render) ----
-mediapipe==0.10.31
-protobuf>=3.20,<5
 
 # ---- Video I/O ----
 moviepy>=1.0.3,<2
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.9,<0.6
 
-# ---- AWS ----
-boto3
-botocore
+
 
 
