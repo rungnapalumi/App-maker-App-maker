@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: vdo-uploader
+    env: python
+    plan: starter
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg libgl1 libglib2.0-0 libsm6 libxext6
+      pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      # Render requires full major.minor.patch (example: 3.10.13) [[memory:5590605]]
+      - key: PYTHON_VERSION
+        value: 3.10.13
+
+

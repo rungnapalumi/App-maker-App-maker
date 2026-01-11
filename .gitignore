@@ -1,56 +1,40 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
 .Python
-env/
+
+# Virtualenvs
+.venv/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
-*.pyc
-*.pyo
-*.pyd
 
-# Streamlit
-.streamlit/
-.streamlit_*.log
-
-# Video outputs and large files
-*.mp4
-*.avi
-*.mov
-*.mpeg4
-
-# User uploads
-user_uploads/
-
-# Temporary files
-*.tmp
-*.temp
-temp-*.m4a
-*.m4a
-
-# Logs
-*.log
-
-# IDE
+# OS / IDE
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS files
-.DS_Store
-Thumbs.db
+# Streamlit
+# Keep `.streamlit/config.toml` tracked for deployment; ignore secrets only.
+.streamlit/secrets.toml
+.streamlit_*.log
 
-# Environment variables
-.env
-.env.local
-.venv/
-
-# Data files
-*.csv
-*.xlsx
-*.xls
+# App outputs / temp
+user_uploads/
+*.log
+*.tmp
+*.temp
+temp-*.m4a
+*.m4a
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.mpeg4
+*.zip

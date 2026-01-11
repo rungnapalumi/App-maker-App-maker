@@ -1,0 +1,20 @@
+[server]
+# Support large uploads (in MB)
+maxUploadSize = 1024
+maxMessageSize = 1024
+
+# Render/reverse-proxy friendly
+enableCORS = false
+enableXsrfProtection = false
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#C9BCA9"
+backgroundColor = "#3D3D37"
+secondaryBackgroundColor = "#52524A"
+textColor = "#C9BCA9"
+font = "serif"
+
