@@ -1,26 +1,24 @@
 # src/worker.py
 # ============================================================
-# AI People Reader — Worker (Johansson DOTS ONLY)
-# - Polls S3 queue: jobs/pending/*.json
-# - Job format expected:
-#     {"job_id": "...", "input_key": "jobs/<job_id>/input/input.mp4", ...}
-# - Output:
-#     jobs/<job_id>/output/dot_overlay.mp4   (black bg, white dots, dot=5, NO AUDIO)
-# - Updates:
-#     jobs/<job_id>/status.json
+# AI People Reader — Worker (Johansson DOTS ONLY, NO MediaPipe)
+# Uses OpenCV Optical Flow to create "Johansson-style" dots:
+# - black background
+# - white dots (radius=5)
+# - no skeleton / no lines
+# - silent mp4 output (audio removed by re-encoding frames)
 #
-# DEBUG INCLUDED:
-# - prints Python version
-# - prints mediapipe __file__
-# - checks mediapipe has solutions
+# Queue:
+#   jobs/pending/<job_id>.json
+# Job format:
+#   {"job_id": "...", "input_key": "jobs/<job_id>/input/input.mp4", ...}
 #
-# IMPORTANT:
-# - DO NOT use mediapipe.python.*
-# - Uses boto3 with proxies disabled
+# Output:
+#   jobs/<job_id>/output/dot_overlay.mp4
+# Status:
+#   jobs/<job_id>/status.json  (queued->running->done/failed)
 # ============================================================
 
 import os
-import sys
 import json
 import time
 import tempfile
@@ -33,10 +31,6 @@ from botocore.config import Config
 import cv2
 import numpy as np
 
-# ✅ Render-safe import style (public API only)
-import mediapipe as mp
-
-
 # ----------------------------
 # ENV / CONFIG
 # ----------------------------
@@ -44,25 +38,32 @@ AWS_REGION = (os.getenv("AWS_REGION") or "ap-southeast-1").strip()
 S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
 POLL_SECONDS = int((os.getenv("WORKER_POLL_SECONDS") or "5").strip())
 
-DOT_RADIUS = 5              # requested
-MIN_VIS = 0.5               # landmark visibility threshold
+DOT_RADIUS = 5
+MAX_POINTS = 120              # number of tracked points
+MIN_QUALITY = 0.25            # corner quality
+MIN_DISTANCE = 12             # min distance between points
+FLOW_WIN = (21, 21)
+FLOW_MAX_LEVEL = 3
+FLOW_CRITERIA = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
 
 PENDING_PREFIX = "jobs/pending/"
 PROCESSING_PREFIX = "jobs/processing/"
 DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
-
+# ----------------------------
 def log(msg: str):
     print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 # ----------------------------
-# S3 client (no proxies / no endpoint_url)
+# S3 client (NO proxies / NO endpoint_url)
 # ----------------------------
 def s3():
     cfg = Config(
-        proxies={},  # important: disable proxy influence
+        proxies={},
         retries={"max_attempts": 5, "mode": "standard"},
     )
     return boto3.client(
@@ -73,11 +74,6 @@ def s3():
         aws_secret_access_key=(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),
     )
 
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
 def s3_put_json(key: str, data: dict):
     s3().put_object(
         Bucket=S3_BUCKET,
@@ -86,11 +82,9 @@ def s3_put_json(key: str, data: dict):
         ContentType="application/json",
     )
 
-
 def s3_get_json(key: str) -> dict:
     obj = s3().get_object(Bucket=S3_BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
-
 
 def s3_exists(key: str) -> bool:
     try:
@@ -99,24 +93,17 @@ def s3_exists(key: str) -> bool:
     except Exception:
         return False
 
-
 def list_pending_jobs(max_keys=10):
     resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=PENDING_PREFIX, MaxKeys=max_keys)
     contents = resp.get("Contents", [])
     contents.sort(key=lambda x: x.get("LastModified"))
     return [c["Key"] for c in contents if c["Key"].endswith(".json")]
 
-
 def claim_job(pending_key: str) -> str | None:
-    """
-    claim pending -> processing (copy + delete pending)
-    """
     filename = pending_key.split("/")[-1]
     processing_key = f"{PROCESSING_PREFIX}{filename}"
-
     if s3_exists(processing_key):
         return None
-
     try:
         s3().copy_object(
             Bucket=S3_BUCKET,
@@ -129,26 +116,24 @@ def claim_job(pending_key: str) -> str | None:
         log(f"❌ claim_job failed: {e!r}")
         return None
 
-
+# ----------------------------
+# Status updates
+# ----------------------------
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs: dict | None = None):
     payload = {
         "job_id": job_id,
-        "status": status,           # queued | running | done | failed
-        "progress": int(progress),  # 0-100
+        "status": status,
+        "progress": int(progress),
         "message": message,
         "updated_at": now_iso(),
         "outputs": outputs or {},
     }
     s3_put_json(f"jobs/{job_id}/status.json", payload)
 
-
 # ----------------------------
-# DOT rendering (black bg, white dots, no audio)
+# Johansson dots renderer using optical flow
 # ----------------------------
-def render_johansson_dots(input_path: str, output_path: str, dot_radius: int = 5):
-    """
-    Creates a NEW mp4 from frames → no audio by design.
-    """
+def render_johansson_dots_optical_flow(input_path: str, output_path: str):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open input video")
@@ -156,62 +141,111 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int = 5
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
     if w <= 0 or h <= 0:
         raise RuntimeError("Invalid video size")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
     if not out.isOpened():
-        raise RuntimeError("Cannot open VideoWriter(mp4v)")
+        raise RuntimeError("Cannot open VideoWriter (mp4v)")
 
-    # Use public API only
-    mp_pose = mp.solutions.pose
+    # Read first frame
+    ret, frame0 = cap.read()
+    if not ret:
+        cap.release()
+        out.release()
+        raise RuntimeError("Empty video")
 
-    with mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    ) as pose:
+    prev_gray = cv2.cvtColor(frame0, cv2.COLOR_BGR2GRAY)
 
+    # initial points (Shi-Tomasi corners)
+    p0 = cv2.goodFeaturesToTrack(
+        prev_gray,
+        maxCorners=MAX_POINTS,
+        qualityLevel=MIN_QUALITY,
+        minDistance=MIN_DISTANCE,
+        blockSize=7,
+    )
+    if p0 is None:
+        # no features -> output black video only
+        black = np.zeros((h, w, 3), dtype=np.uint8)
+        out.write(black)
         while True:
-            ret, frame = cap.read()
+            ret, _ = cap.read()
             if not ret:
                 break
+            out.write(black)
+        cap.release()
+        out.release()
+        return
 
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = pose.process(rgb)
+    # optical flow state
+    frame_i = 1
+    last_redetect = 0
+    REDETECT_EVERY = int(fps * 2) if fps else 60  # every ~2 seconds
 
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # track points
+        p1, st, err = cv2.calcOpticalFlowPyrLK(
+            prev_gray, gray, p0, None,
+            winSize=FLOW_WIN,
+            maxLevel=FLOW_MAX_LEVEL,
+            criteria=FLOW_CRITERIA,
+        )
+
+        # select good points
+        if p1 is not None and st is not None:
+            good_new = p1[st.flatten() == 1]
+            # draw dots on black canvas
             canvas = np.zeros((h, w, 3), dtype=np.uint8)
-
-            if res.pose_landmarks:
-                for lm in res.pose_landmarks.landmark:
-                    if lm.visibility is not None and lm.visibility < MIN_VIS:
-                        continue
-                    x = int(lm.x * w)
-                    y = int(lm.y * h)
-                    if 0 <= x < w and 0 <= y < h:
-                        cv2.circle(canvas, (x, y), dot_radius, (255, 255, 255), -1)
-
+            for pt in good_new:
+                x, y = int(pt[0]), int(pt[1])
+                if 0 <= x < w and 0 <= y < h:
+                    cv2.circle(canvas, (x, y), DOT_RADIUS, (255, 255, 255), -1)
             out.write(canvas)
+
+            # update for next frame
+            prev_gray = gray
+            p0 = good_new.reshape(-1, 1, 2) if len(good_new) else p0
+
+        else:
+            # fallback: write black
+            out.write(np.zeros((h, w, 3), dtype=np.uint8))
+            prev_gray = gray
+
+        frame_i += 1
+
+        # periodically re-detect features to keep dots meaningful
+        if frame_i - last_redetect >= REDETECT_EVERY:
+            p_new = cv2.goodFeaturesToTrack(
+                prev_gray,
+                maxCorners=MAX_POINTS,
+                qualityLevel=MIN_QUALITY,
+                minDistance=MIN_DISTANCE,
+                blockSize=7,
+            )
+            if p_new is not None:
+                p0 = p_new
+            last_redetect = frame_i
 
     cap.release()
     out.release()
 
-
+# ----------------------------
 def handle_job(job: dict):
     job_id = job["job_id"]
     input_key = job["input_key"]
-    output_key = f"jobs/{job_id}/output/dot_overlay.mp4"
+    overlay_key = f"jobs/{job_id}/output/dot_overlay.mp4"
 
     update_status(job_id, "running", 5, "Downloading input...")
-
-    # guard: mediapipe sanity
-    if not hasattr(mp, "solutions"):
-        raise RuntimeError(
-            f"mediapipe has no attribute 'solutions'. mp.__file__={getattr(mp,'__file__',None)!r}"
-        )
 
     with tempfile.TemporaryDirectory() as tmp:
         in_path = os.path.join(tmp, "input.mp4")
@@ -220,30 +254,25 @@ def handle_job(job: dict):
         log(f"⬇️ download {input_key}")
         s3().download_file(S3_BUCKET, input_key, in_path)
 
-        update_status(job_id, "running", 25, "Rendering Johansson dots (dot=5, no lines, no audio)...")
-        render_johansson_dots(in_path, out_path, dot_radius=DOT_RADIUS)
+        update_status(job_id, "running", 35, "Rendering Johansson dots (optical flow, dot=5, no audio)...")
+        render_johansson_dots_optical_flow(in_path, out_path)
 
-        update_status(job_id, "running", 90, "Uploading overlay...")
-        log(f"⬆️ upload {output_key}")
-        s3().upload_file(out_path, S3_BUCKET, output_key)
+        update_status(job_id, "running", 90, "Uploading overlay (silent mp4)...")
+        log(f"⬆️ upload {overlay_key}")
+        s3().upload_file(out_path, S3_BUCKET, overlay_key)
 
-    update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": output_key})
+    update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": overlay_key})
 
-
+# ----------------------------
 def main():
-    # ---- boot diagnostics ----
-    log("✅ Worker boot (Johansson DOTS ONLY)")
-    log(f"PYTHON_VERSION = {sys.version!r}")
-    log(f"AWS_REGION repr = {AWS_REGION!r}")
-    log(f"S3_BUCKET  repr = {S3_BUCKET!r}")
-    log(f"mediapipe __file__ = {getattr(mp, '__file__', None)!r}")
-    log(f"mediapipe has solutions? = {hasattr(mp, 'solutions')}")
-    log(f"mediapipe sol-related keys sample = {[k for k in dir(mp) if 'sol' in k.lower()][:20]}")
-
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
 
-    # S3 check
+    log("✅ Worker boot (Optical Flow Johansson DOTS ONLY)")
+    log(f"PYTHON_VERSION = {sys.version!r}" if "sys" in globals() else "PYTHON_VERSION unknown")
+    log(f"AWS_REGION={AWS_REGION!r}")
+    log(f"S3_BUCKET ={S3_BUCKET!r}")
+
     s3().head_bucket(Bucket=S3_BUCKET)
     log("✅ S3 reachable")
 
@@ -268,7 +297,6 @@ def main():
             try:
                 handle_job(job)
 
-                # done marker
                 s3().copy_object(
                     Bucket=S3_BUCKET,
                     Key=f"{DONE_PREFIX}{job_id}.json",
@@ -294,6 +322,6 @@ def main():
             log(traceback.format_exc())
             time.sleep(3)
 
-
 if __name__ == "__main__":
+    import sys
     main()
