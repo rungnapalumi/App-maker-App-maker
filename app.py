@@ -1,30 +1,26 @@
 import os
 import json
 import uuid
-import importlib
 from datetime import datetime, timezone
 
 import streamlit as st
 import boto3
-from botocore.exceptions import ClientError
 
 st.set_page_config(page_title="AI People Reader", layout="wide")
 
 # -----------------------------
-# Helpers: env + S3 client
-# (NO endpoint_url!)
+# Env + S3 client (NO endpoint_url)
 # -----------------------------
 REQUIRED_ENV = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "S3_BUCKET"]
 
-def require_env(keys):
-    missing = [k for k in keys if not (os.getenv(k) or "").strip()]
+def require_env():
+    missing = [k for k in REQUIRED_ENV if not (os.getenv(k) or "").strip()]
     if missing:
         st.error("Missing environment variables: " + ", ".join(missing))
-        st.info("Go to Render → Service → Environment and set these variables.")
+        st.info("Render → (Web service) → Environment: set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION / S3_BUCKET")
         st.stop()
 
 def s3():
-    # ✅ IMPORTANT: do NOT pass endpoint_url
     return boto3.client(
         "s3",
         region_name=(os.getenv("AWS_REGION") or "ap-southeast-1").strip(),
@@ -39,7 +35,7 @@ def put_json(bucket, key, data):
     s3().put_object(
         Bucket=bucket,
         Key=key,
-        Body=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+        Body=json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"),
         ContentType="application/json",
     )
 
@@ -62,50 +58,24 @@ def presigned_get(bucket, key, expires=3600):
     )
 
 # -----------------------------
-# UI: Mode
+# UI
 # -----------------------------
 st.sidebar.title("AI People Reader")
-mode = st.sidebar.selectbox(
-    "Mode",
-    ["Original app", "Worker mode (Background Processing)"],
-    index=1,
-)
+mode = st.sidebar.selectbox("Mode", ["Worker mode (Background Processing)"], index=0)
 
-# -----------------------------
-# Mode 1: Original app
-# -----------------------------
-if mode == "Original app":
-    st.info("Running: Original app (app_legacy.py)")
-    try:
-        legacy = importlib.import_module("app_legacy")
-        # if legacy has main(), call it; else importing may run it
-        if hasattr(legacy, "main") and callable(legacy.main):
-            legacy.main()
-    except ModuleNotFoundError:
-        st.error("Cannot find app_legacy.py. Please rename old app.py → app_legacy.py first.")
-    except Exception as e:
-        st.error("Original app crashed:")
-        st.exception(e)
-    st.stop()
-
-# -----------------------------
-# Mode 2: Worker mode (S3 queue)
-# -----------------------------
-st.title("🧠 AI People Reader — Worker Mode")
-require_env(REQUIRED_ENV)
-
+require_env()
 bucket = (os.getenv("S3_BUCKET") or "").strip()
 
-# Quick S3 check
+st.title("🧠 AI People Reader — Worker Mode")
 try:
     s3().head_bucket(Bucket=bucket)
     st.success("S3 reachable ✅")
 except Exception as e:
-    st.error("S3 connection failed ❌")
+    st.error("S3 not reachable ❌")
     st.exception(e)
     st.stop()
 
-st.write("Upload video → Submit → Worker processes → Status updates → Download overlay")
+st.markdown("Upload video → Submit → Worker processes → Status updates → Download overlay")
 
 video = st.file_uploader("Upload video for background processing", type=["mp4", "mov", "m4v"])
 
@@ -114,13 +84,13 @@ col1, col2 = st.columns([1, 1])
 with col1:
     if video and st.button("Submit to worker"):
         with st.spinner("Uploading to S3... (large files may take a while)"):
-            job_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S_") + "_" + uuid.uuid4().hex[:6]
+            job_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S") + "__" + uuid.uuid4().hex[:6]
             input_key = f"jobs/{job_id}/input/input.mp4"
 
-            # Upload input video
+            # Upload video to S3
             s3().upload_fileobj(video, bucket, input_key)
 
-            # Write initial status
+            # Initial status
             put_json(bucket, f"jobs/{job_id}/status.json", {
                 "job_id": job_id,
                 "status": "queued",
@@ -130,19 +100,19 @@ with col1:
                 "outputs": {}
             })
 
-            # Enqueue ticket
+            # Queue ticket (worker polls this)
             put_json(bucket, f"jobs/pending/{job_id}.json", {
                 "job_id": job_id,
                 "input_key": input_key,
-                "created_at": now_iso(),
+                "created_at": now_iso()
             })
 
         st.session_state["job_id"] = job_id
         st.success(f"Job submitted: {job_id}")
 
 with col2:
-    job_id = st.session_state.get("job_id")
     st.subheader("Job status")
+    job_id = st.session_state.get("job_id")
     if not job_id:
         st.info("Submit a job to see status here.")
     else:
@@ -155,12 +125,11 @@ with col2:
             st.progress(int(status.get("progress", 0)))
 
             if status.get("status") == "done":
-                overlay_key = (status.get("outputs") or {}).get("overlay_key") or (status.get("outputs") or {}).get("overlay_key")
-                # some workers used overlay_key, others used overlay_key name
+                overlay_key = (status.get("outputs") or {}).get("overlay_key")
                 if overlay_key:
                     url = presigned_get(bucket, overlay_key, expires=3600)
                     st.markdown(f"[⬇️ Download overlay]({url})")
                 else:
-                    st.warning("Done but no overlay_key found in outputs.")
+                    st.warning("Done but overlay_key missing.")
         else:
             st.info("Waiting for status.json... (refresh)")
