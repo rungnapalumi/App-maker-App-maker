@@ -1,5 +1,6 @@
 streamlit>=1.31,<2
-opencv-python-headless>=4.8,<5
+# MediaPipe expects OpenCV "contrib" features; use the headless contrib build for servers.
+opencv-contrib-python-headless>=4.8,<5
 numpy>=1.24,<3
 pandas>=2,<3
 matplotlib>=3.8,<4

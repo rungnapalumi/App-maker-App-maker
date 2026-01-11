@@ -4,7 +4,7 @@ services:
     env: python
     plan: starter
     buildCommand: |
-      apt-get update && apt-get install -y ffmpeg libgl1 libglib2.0-0 libsm6 libxext6
+      apt-get update && apt-get install -y ffmpeg libgl1 libglu1-mesa libglib2.0-0 libsm6 libxext6 libgomp1
       pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
