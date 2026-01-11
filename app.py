@@ -10,6 +10,107 @@
 #   streamlit run app.py
 # ------------------------------------------------------------
 
+# ===============================
+# SAFE WORKER MODE ENTRY (TOP)
+# ===============================
+import os
+import json
+import uuid
+import boto3
+import streamlit as st
+from datetime import datetime
+
+def _require_env(keys):
+    missing = [k for k in keys if not os.getenv(k)]
+    if missing:
+        st.warning("Worker mode ยังไม่พร้อม (ขาด env): " + ", ".join(missing))
+        st.stop()
+
+MODE = st.selectbox(
+    "Select mode",
+    ["Original app", "Worker mode (background processing)"],
+    index=0
+)
+
+if MODE == "Worker mode (background processing)":
+    st.title("🧠 AI People Reader — Worker Mode")
+
+    _require_env(["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "S3_BUCKET"])
+    bucket = os.getenv("S3_BUCKET")
+
+    def s3():
+        return boto3.client(
+            "s3",
+            region_name=os.getenv("AWS_REGION"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        )
+
+    video = st.file_uploader("Upload video for background processing", type=["mp4", "mov", "m4v"])
+
+    if video and st.button("Submit to worker"):
+        job_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
+        input_key = f"jobs/{job_id}/input/input.mp4"
+
+        s3().upload_fileobj(video, bucket, input_key)
+
+        # initial status
+        s3().put_object(
+            Bucket=bucket,
+            Key=f"jobs/{job_id}/status.json",
+            Body=json.dumps({
+                "job_id": job_id,
+                "status": "queued",
+                "progress": 0,
+                "message": "Queued",
+                "updated_at": datetime.utcnow().isoformat() + "Z",
+                "outputs": {}
+            }, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json"
+        )
+
+        # enqueue ticket
+        s3().put_object(
+            Bucket=bucket,
+            Key=f"jobs/pending/{job_id}.json",
+            Body=json.dumps({
+                "job_id": job_id,
+                "input_key": input_key,
+                "created_at": datetime.utcnow().isoformat() + "Z"
+            }, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json"
+        )
+
+        st.success(f"Job submitted: {job_id}")
+        st.session_state["job_id"] = job_id
+
+    job_id = st.session_state.get("job_id")
+    if job_id:
+        st.markdown("### Job status")
+        status_key = f"jobs/{job_id}/status.json"
+        try:
+            obj = s3().get_object(Bucket=bucket, Key=status_key)
+            status = json.loads(obj["Body"].read().decode("utf-8"))
+            st.json(status)
+            st.progress(int(status.get("progress", 0)))
+
+            if status.get("status") == "done":
+                overlay_key = status.get("outputs", {}).get("overlay_key")
+                if overlay_key:
+                    url = s3().generate_presigned_url(
+                        "get_object",
+                        Params={"Bucket": bucket, "Key": overlay_key},
+                        ExpiresIn=3600
+                    )
+                    st.markdown(f"[⬇️ Download overlay]({url})")
+        except Exception:
+            st.info("Waiting for worker... (refresh this page)")
+
+    st.stop()
+# ===============================
+# END WORKER MODE ENTRY
+# ===============================
+
 import os
 import io
 import math
