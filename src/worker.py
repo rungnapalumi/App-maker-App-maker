@@ -1,82 +1,61 @@
+# src/worker.py
 import os
 import time
 import json
-import uuid
-import cv2
+import shutil
+import tempfile
 import boto3
+import cv2
 import numpy as np
 from datetime import datetime
 
-# =========================
+# =====================
 # CONFIG
-# =========================
+# =====================
+AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
+S3_BUCKET = os.getenv("S3_BUCKET")
+
 DOT_RADIUS = 5
-MAX_CORNERS = 200
-QUALITY_LEVEL = 0.01
-MIN_DISTANCE = 7
-BLOCK_SIZE = 7
+POLL_INTERVAL = 5  # seconds
 
-S3_BUCKET = os.environ.get("S3_BUCKET")
-AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
-
-# =========================
-# S3 CLIENT (SAFE)
-# =========================
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-print("✅ Worker boot (Optical Flow Johansson DOTS ONLY)")
-print("AWS_REGION =", AWS_REGION)
-print("S3_BUCKET =", S3_BUCKET)
+# =====================
+# UTIL
+# =====================
+def log(msg):
+    print(f"[{datetime.utcnow().isoformat()}] {msg}", flush=True)
 
-# =========================
-# UTILS
-# =========================
-def now():
-    return datetime.utcnow().isoformat() + "Z"
+def s3_list(prefix):
+    resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+    return resp.get("Contents", [])
 
+def s3_move(src_key, dst_key):
+    s3.copy_object(
+        Bucket=S3_BUCKET,
+        CopySource={"Bucket": S3_BUCKET, "Key": src_key},
+        Key=dst_key,
+    )
+    s3.delete_object(Bucket=S3_BUCKET, Key=src_key)
 
-def safe_xy(pt):
-    """
-    Normalize optical-flow point to (x, y)
-    Handles: [x,y], [[x,y]], [x,y,dx,dy], etc.
-    """
-    arr = np.array(pt).reshape(-1)
-    if len(arr) < 2:
-        return None
-    return int(arr[0]), int(arr[1])
-
-
-# =========================
-# CORE: JOHANSSON DOTS
-# =========================
-def render_johansson_dots_optical_flow(input_path, output_path):
+# =====================
+# VIDEO PROCESS (Johansson DOTS)
+# =====================
+def render_johansson_dots(input_path, output_path):
     cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open input video")
-
     fps = cap.get(cv2.CAP_PROP_FPS)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
-
-    ret, prev_frame = cap.read()
-    if not ret:
-        raise RuntimeError("Cannot read first frame")
-
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-
-    p0 = cv2.goodFeaturesToTrack(
-        prev_gray,
-        maxCorners=MAX_CORNERS,
-        qualityLevel=QUALITY_LEVEL,
-        minDistance=MIN_DISTANCE,
-        blockSize=BLOCK_SIZE,
+    out = cv2.VideoWriter(
+        output_path,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (w, h),
     )
 
-    if p0 is None:
-        p0 = np.empty((0, 1, 2), dtype=np.float32)
+    prev_gray = None
+    dots = None
 
     while True:
         ret, frame = cap.read()
@@ -85,120 +64,96 @@ def render_johansson_dots_optical_flow(input_path, output_path):
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        if len(p0) > 0:
-            p1, st, err = cv2.calcOpticalFlowPyrLK(
-                prev_gray, gray, p0, None
-            )
-
-            good_new = p1[st == 1] if p1 is not None else []
+        if prev_gray is None:
+            # init random dots
+            dots = np.random.randint(0, [w, h], (150, 2))
+            prev_gray = gray
         else:
-            good_new = []
+            flow = cv2.calcOpticalFlowFarneback(
+                prev_gray, gray,
+                None,
+                0.5, 3, 15, 3, 5, 1.2, 0
+            )
+            for i in range(len(dots)):
+                x, y = dots[i]
+                dx, dy = flow[y % h, x % w]
+                dots[i] = [
+                    int(np.clip(x + dx, 0, w - 1)),
+                    int(np.clip(y + dy, 0, h - 1)),
+                ]
+            prev_gray = gray
 
-        # Black background
         canvas = np.zeros_like(frame)
-
-        for pt in good_new:
-            xy = safe_xy(pt)
-            if xy is None:
-                continue
-            x, y = xy
-            if 0 <= x < w and 0 <= y < h:
-                cv2.circle(canvas, (x, y), DOT_RADIUS, (255, 255, 255), -1)
+        for x, y in dots:
+            cv2.circle(canvas, (int(x), int(y)), DOT_RADIUS, (255, 255, 255), -1)
 
         out.write(canvas)
-
-        prev_gray = gray
-        p0 = good_new.reshape(-1, 1, 2) if len(good_new) > 0 else np.empty((0, 1, 2), dtype=np.float32)
 
     cap.release()
     out.release()
 
-
-# =========================
+# =====================
 # JOB HANDLER
-# =========================
-def handle_job(job):
-    job_id = job["job_id"]
-    input_key = f"jobs/{job_id}/input/input.mp4"
-    output_key = f"jobs/{job_id}/output/overlay.mp4"
+# =====================
+def handle_job(job_key):
+    job_id = job_key.split("/")[-1].replace(".json", "")
+    log(f"Processing job {job_id}")
 
-    local_in = f"/tmp/{job_id}_in.mp4"
-    local_out = f"/tmp/{job_id}_out.mp4"
+    with tempfile.TemporaryDirectory() as tmp:
+        job_json = os.path.join(tmp, "job.json")
+        s3.download_file(S3_BUCKET, job_key, job_json)
 
-    print("⬇️ download", input_key)
-    s3.download_file(S3_BUCKET, input_key, local_in)
+        with open(job_json) as f:
+            job = json.load(f)
 
-    print("🎥 Rendering Johansson dots (optical flow)")
-    render_johansson_dots_optical_flow(local_in, local_out)
+        input_key = job["input_key"]
+        local_input = os.path.join(tmp, "input.mp4")
+        local_output = os.path.join(tmp, "output.mp4")
 
-    print("⬆️ upload", output_key)
-    s3.upload_file(local_out, S3_BUCKET, output_key)
+        s3.download_file(S3_BUCKET, input_key, local_input)
 
-    job["status"] = "done"
-    job["progress"] = 100
-    job["outputs"] = {"overlay_key": output_key}
-    job["updated_at"] = now()
+        render_johansson_dots(local_input, local_output)
 
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key=f"jobs/{job_id}/status.json",
-        Body=json.dumps(job).encode("utf-8"),
-        ContentType="application/json",
-    )
+        output_key = f"jobs/{job_id}/output/dots.mp4"
+        s3.upload_file(local_output, S3_BUCKET, output_key)
 
-    print("✅ Job done:", job_id)
+        job["status"] = "done"
+        job["outputs"] = {"overlay_key": output_key}
+        job["updated_at"] = datetime.utcnow().isoformat()
 
+        done_key = f"jobs/done/{job_id}.json"
+        with open(job_json, "w") as f:
+            json.dump(job, f)
 
-# =========================
+        s3.upload_file(job_json, S3_BUCKET, done_key)
+
+# =====================
 # MAIN LOOP
-# =========================
+# =====================
 def main():
+    log("Worker boot (Johansson DOTS ONLY)")
+    log(f"AWS_REGION={AWS_REGION}")
+    log(f"S3_BUCKET={S3_BUCKET}")
+
     while True:
-        # Poll jobs
-        resp = s3.list_objects_v2(
-            Bucket=S3_BUCKET,
-            Prefix="jobs/",
-            Delimiter="/",
-        )
+        pending = s3_list("jobs/pending/")
+        if not pending:
+            time.sleep(POLL_INTERVAL)
+            continue
 
-        prefixes = [p["Prefix"] for p in resp.get("CommonPrefixes", [])]
+        job_obj = pending[0]
+        job_key = job_obj["Key"]
 
-        for p in prefixes:
-            status_key = p + "status.json"
-            try:
-                obj = s3.get_object(Bucket=S3_BUCKET, Key=status_key)
-                job = json.loads(obj["Body"].read())
-            except:
-                continue
+        processing_key = job_key.replace("jobs/pending/", "jobs/processing/")
+        s3_move(job_key, processing_key)
 
-            if job.get("status") == "queued":
-                print("▶️ Processing job:", job["job_id"])
-                job["status"] = "processing"
-                job["updated_at"] = now()
+        try:
+            handle_job(processing_key)
+            s3_move(processing_key, processing_key.replace("processing", "done"))
+        except Exception as e:
+            log(f"Job failed: {e}")
+            s3_move(processing_key, processing_key.replace("processing", "failed"))
 
-                s3.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=status_key,
-                    Body=json.dumps(job).encode("utf-8"),
-                    ContentType="application/json",
-                )
-
-                try:
-                    handle_job(job)
-                except Exception as e:
-                    print("❌ Job failed:", job["job_id"], e)
-                    job["status"] = "failed"
-                    job["message"] = str(e)
-                    job["updated_at"] = now()
-                    s3.put_object(
-                        Bucket=S3_BUCKET,
-                        Key=status_key,
-                        Body=json.dumps(job).encode("utf-8"),
-                        ContentType="application/json",
-                    )
-
-        time.sleep(3)
-
-
+# =====================
 if __name__ == "__main__":
     main()
