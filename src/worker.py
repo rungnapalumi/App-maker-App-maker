@@ -1,11 +1,11 @@
 # src/worker.py
 # ============================================================
-# Worker — Johansson dots (DOT ONLY, NO LINES) + Silent output
-# - Polls jobs/pending/*.json
-# - Downloads input video
-# - Generates dot-only video on BLACK background (radius=5)
-# - Writes mp4 via OpenCV (NO AUDIO)
-# - Uploads overlay.mp4 + updates status.json
+# Worker — Johansson dots ONLY (no lines), dot radius=5, silent mp4
+# Fix for Render: DO NOT use mp.solutions (avoids AttributeError)
+# Queue: jobs/pending/*.json
+# Input:  jobs/<job_id>/input/input.mp4
+# Output: jobs/<job_id>/output/dot_overlay.mp4
+# Status: jobs/<job_id>/status.json
 # ============================================================
 
 import os
@@ -17,22 +17,33 @@ from datetime import datetime, timezone
 
 import boto3
 
+# ✅ Render-safe mediapipe import (bypass mp.solutions)
+from mediapipe.python.solutions.pose import Pose
+
+# ------------------------------------------------------------
+# ENV
+# ------------------------------------------------------------
 AWS_REGION = (os.getenv("AWS_REGION") or "ap-southeast-1").strip()
 S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
 
 POLL_SECONDS = int((os.getenv("WORKER_POLL_SECONDS") or "5").strip())
-DOT_RADIUS = 5  # pixel radius as requested
+DOT_RADIUS = 5  # as requested
 
 PENDING_PREFIX = "jobs/pending/"
 PROCESSING_PREFIX = "jobs/processing/"
 DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
 def log(msg: str):
     print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
+# ------------------------------------------------------------
+# S3 client (IMPORTANT: NO endpoint_url)
+# ------------------------------------------------------------
 def s3():
-    # IMPORTANT: NO endpoint_url
     return boto3.client(
         "s3",
         region_name=AWS_REGION,
@@ -85,12 +96,15 @@ def claim_job(pending_key: str) -> str | None:
         log(f"❌ claim_job failed: {e!r}")
         return None
 
+# ------------------------------------------------------------
+# Status update for Web
+# ------------------------------------------------------------
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs: dict | None = None):
     key = f"jobs/{job_id}/status.json"
     payload = {
         "job_id": job_id,
-        "status": status,
-        "progress": int(progress),
+        "status": status,           # queued | running | done | failed
+        "progress": int(progress),  # 0-100
         "message": message,
         "updated_at": now_iso(),
         "outputs": outputs or {},
@@ -98,12 +112,10 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
     s3_put_json(key, payload)
 
 # ------------------------------------------------------------
-# Johansson DOT processing (black background, dots only)
-# Output has NO AUDIO because we render frames to mp4.
+# Johansson dots (black background, dots only, silent mp4)
 # ------------------------------------------------------------
 def johansson_dots_video(input_path: str, output_path: str, dot_radius: int = 5):
     import cv2
-    import mediapipe as mp
     import numpy as np
 
     cap = cv2.VideoCapture(input_path)
@@ -113,29 +125,23 @@ def johansson_dots_video(input_path: str, output_path: str, dot_radius: int = 5)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     if w <= 0 or h <= 0:
         raise RuntimeError("Invalid frame size")
 
+    # mp4 output (silent because we render frames only)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
     if not out.isOpened():
         raise RuntimeError("Cannot open VideoWriter (mp4v)")
 
-    mp_pose = mp.solutions.pose
-
-    # Pose model
-    with mp_pose.Pose(
+    with Pose(
         static_image_mode=False,
         model_complexity=1,
         enable_segmentation=False,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     ) as pose:
-
-        frame_i = 0
-        last_progress = -1
 
         while True:
             ok, frame = cap.read()
@@ -145,7 +151,7 @@ def johansson_dots_video(input_path: str, output_path: str, dot_radius: int = 5)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = pose.process(rgb)
 
-            # BLACK background
+            # BLACK background (Johansson style)
             canvas = np.zeros((h, w, 3), dtype=np.uint8)
 
             if res.pose_landmarks:
@@ -154,25 +160,22 @@ def johansson_dots_video(input_path: str, output_path: str, dot_radius: int = 5)
                         continue
                     x = int(lm.x * w)
                     y = int(lm.y * h)
-                    cv2.circle(canvas, (x, y), dot_radius, (255, 255, 255), -1)  # white dot
+                    cv2.circle(canvas, (x, y), dot_radius, (255, 255, 255), -1)
 
             out.write(canvas)
-
-            frame_i += 1
-            if total > 0:
-                prog = int((frame_i / total) * 100)
-                if prog // 5 != last_progress // 5:
-                    last_progress = prog
-                    # caller updates status; here just return frame count
-            # end loop
 
     cap.release()
     out.release()
 
+# ------------------------------------------------------------
+# Handle one job
+# job.json expected at jobs/pending/<job_id>.json:
+#   {"job_id": "...", "input_key": "jobs/<job_id>/input/input.mp4", ...}
+# ------------------------------------------------------------
 def handle_job(job: dict):
     job_id = job["job_id"]
     input_key = job["input_key"]
-    overlay_key = f"jobs/{job_id}/output/dot_overlay.mp4"  # explicit name
+    overlay_key = f"jobs/{job_id}/output/dot_overlay.mp4"
 
     update_status(job_id, "running", 5, "Downloading input...")
 
@@ -181,7 +184,7 @@ def handle_job(job: dict):
         out_path = os.path.join(tmp, "dot_overlay.mp4")
 
         s3().download_file(S3_BUCKET, input_key, in_path)
-        update_status(job_id, "running", 25, "Generating Johansson dots (no lines)...")
+        update_status(job_id, "running", 25, "Generating Johansson dots (dot=5, no lines)...")
 
         johansson_dots_video(in_path, out_path, dot_radius=DOT_RADIUS)
 
@@ -190,6 +193,9 @@ def handle_job(job: dict):
 
     update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": overlay_key})
 
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
 def main():
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
@@ -251,3 +257,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
