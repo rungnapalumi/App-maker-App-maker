@@ -5,6 +5,7 @@ import tempfile
 import boto3
 from datetime import datetime
 
+# ====== Config ======
 BUCKET = os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 
@@ -15,6 +16,9 @@ FAILED_PREFIX = "jobs/failed/"
 
 POLL_SECONDS = int(os.getenv("WORKER_POLL_SECONDS", "5"))
 
+# ====================
+# S3 helpers
+# ====================
 def s3():
     return boto3.client(
         "s3",
@@ -24,13 +28,11 @@ def s3():
     )
 
 def s3_get_json(key: str) -> dict:
-    client = s3()
-    obj = client.get_object(Bucket=BUCKET, Key=key)
+    obj = s3().get_object(Bucket=BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
 
 def s3_put_json(key: str, data: dict):
-    client = s3()
-    client.put_object(
+    s3().put_object(
         Bucket=BUCKET,
         Key=key,
         Body=json.dumps(data, ensure_ascii=False).encode("utf-8"),
@@ -38,43 +40,37 @@ def s3_put_json(key: str, data: dict):
     )
 
 def s3_exists(key: str) -> bool:
-    client = s3()
     try:
-        client.head_object(Bucket=BUCKET, Key=key)
+        s3().head_object(Bucket=BUCKET, Key=key)
         return True
     except Exception:
         return False
 
 def list_pending_jobs(max_keys=10):
-    client = s3()
-    resp = client.list_objects_v2(Bucket=BUCKET, Prefix=PENDING_PREFIX, MaxKeys=max_keys)
+    resp = s3().list_objects_v2(Bucket=BUCKET, Prefix=PENDING_PREFIX, MaxKeys=max_keys)
     contents = resp.get("Contents", [])
-    # oldest first
     contents.sort(key=lambda x: x.get("LastModified"))
     return [c["Key"] for c in contents]
 
 def claim_job(pending_key: str) -> str | None:
     """
     Best-effort claim:
-    - copy pending -> running (same filename)
-    - delete pending
-    Returns running_key if claimed else None
+      - copy pending -> running
+      - delete pending
     """
-    client = s3()
     filename = pending_key.split("/")[-1]
     running_key = f"{RUNNING_PREFIX}{filename}"
 
-    # If already running, skip
     if s3_exists(running_key):
         return None
 
     try:
-        client.copy_object(
+        s3().copy_object(
             Bucket=BUCKET,
             Key=running_key,
             CopySource={"Bucket": BUCKET, "Key": pending_key},
         )
-        client.delete_object(Bucket=BUCKET, Key=pending_key)
+        s3().delete_object(Bucket=BUCKET, Key=pending_key)
         return running_key
     except Exception as e:
         print("❌ claim_job failed:", repr(e))
@@ -84,58 +80,56 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
     key = f"jobs/{job_id}/status.json"
     payload = {
         "job_id": job_id,
-        "status": status,               # queued|running|done|failed
-        "progress": int(progress),      # 0-100
+        "status": status,          # queued|running|done|failed
+        "progress": int(progress), # 0-100
         "message": message,
         "updated_at": datetime.utcnow().isoformat() + "Z",
         "outputs": outputs or {},
     }
     s3_put_json(key, payload)
 
-def process_video_stub(input_path: str, output_overlay_path: str):
+# ====================
+# Processing (stub -> replace later)
+# ====================
+def process_video_stub(input_path: str, overlay_out_path: str):
     """
-    TODO: replace with your MediaPipe pipeline.
-    For now: just copy input -> output as placeholder.
+    TODO: Replace with your MediaPipe pipeline.
+    For now: copy input -> overlay output (proves full pipeline works).
     """
     import shutil
-    shutil.copyfile(input_path, output_overlay_path)
+    shutil.copyfile(input_path, overlay_out_path)
 
 def handle_job(job: dict):
     job_id = job["job_id"]
-    input_key = job["input_key"]  # e.g. jobs/{job_id}/input/input.mp4
+    input_key = job["input_key"]
 
     update_status(job_id, "running", 5, "Downloading input...")
 
-    client = s3()
     with tempfile.TemporaryDirectory() as tmp:
         in_path = os.path.join(tmp, "input.mp4")
         out_path = os.path.join(tmp, "overlay.mp4")
 
-        client.download_file(BUCKET, input_key, in_path)
+        s3().download_file(BUCKET, input_key, in_path)
         update_status(job_id, "running", 30, "Processing video...")
 
-        # ====== Replace this stub with your real pipeline ======
+        # ===== replace stub with real pipeline later =====
         process_video_stub(in_path, out_path)
-        # =======================================================
+        # ===============================================
 
         update_status(job_id, "running", 80, "Uploading outputs...")
         overlay_key = f"jobs/{job_id}/output/overlay.mp4"
-        client.upload_file(out_path, BUCKET, overlay_key)
+        s3().upload_file(out_path, BUCKET, overlay_key)
 
-    update_status(
-        job_id,
-        "done",
-        100,
-        "Completed",
-        outputs={"overlay_key": overlay_key}
-    )
+    update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": overlay_key})
 
+# ====================
+# Main loop
+# ====================
 def main():
     print("✅ Worker started (S3 queue mode)")
-    print("S3_BUCKET =", BUCKET)
     print("AWS_REGION =", AWS_REGION)
+    print("S3_BUCKET  =", BUCKET)
 
-    # quick check
     s3().head_bucket(Bucket=BUCKET)
     print("✅ S3 reachable")
 
@@ -157,16 +151,19 @@ def main():
 
             try:
                 handle_job(job)
-                # mark done file (optional)
+
+                # mark done ticket
                 s3().copy_object(
                     Bucket=BUCKET,
                     Key=f"{DONE_PREFIX}{job_id}.json",
                     CopySource={"Bucket": BUCKET, "Key": running_key},
                 )
                 s3().delete_object(Bucket=BUCKET, Key=running_key)
+
             except Exception as e:
                 print("❌ Job failed:", repr(e))
                 update_status(job_id, "failed", 100, message=repr(e))
+
                 s3().copy_object(
                     Bucket=BUCKET,
                     Key=f"{FAILED_PREFIX}{job_id}.json",
@@ -180,7 +177,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-if __name__ == "__main__":
-    main()
-
