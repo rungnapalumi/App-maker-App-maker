@@ -4,7 +4,7 @@ opencv-contrib-python-headless>=4.8,<5
 numpy>=1.24,<3
 
 # ---- MediaPipe (STABLE on Render) ----
-mediapipe==0.10.11
+mediapipe==0.10.31
 protobuf>=3.20,<5
 
 # ---- Video I/O ----
