@@ -1,5 +1,4 @@
 streamlit>=1.31,<2
-# MediaPipe expects OpenCV "contrib" features; use the headless contrib build for servers.
 opencv-contrib-python-headless>=4.8,<5
 numpy>=1.24,<3
 pandas>=2,<3
@@ -7,14 +6,13 @@ matplotlib>=3.8,<4
 python-docx>=1.1,<2
 openpyxl>=3.1,<4
 
-# MediaPipe stack (best-effort; app will fall back gracefully if unavailable)
 mediapipe==0.10.31
 protobuf>=3.20.0,<5.0.0
 
-# Video/audio helpers
 moviepy>=1.0.3,<2
 imageio>=2.31.0
 imageio-ffmpeg>=0.4.9,<0.6
+
 boto3
 botocore
 
