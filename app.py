@@ -2093,11 +2093,9 @@ rec_max_frames = None
 rec_duration = None
 if uploaded_video is not None and auto_recommend:
     try:
-        import hashlib
-
-        # Detect upload changes
-        file_bytes = uploaded_video.getvalue()
-        upload_sig = hashlib.md5(file_bytes).hexdigest()
+        # Detect upload changes without reading the entire file into memory.
+        # (Large uploads can otherwise cause high memory usage and backend restarts on small servers.)
+        upload_sig = f"{uploaded_video.name}:{getattr(uploaded_video, 'size', 'unknown')}"
         preset_sig = (recommend_preset or "Balanced").strip()
         rec_sig = f"{upload_sig}:{preset_sig}"
 
@@ -2105,7 +2103,11 @@ if uploaded_video is not None and auto_recommend:
             # New upload: write temp file + compute duration
             st.session_state["_upload_sig"] = rec_sig
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_video.name)[1]) as tmp:
-                tmp.write(file_bytes)
+                try:
+                    uploaded_video.seek(0)
+                except Exception:
+                    pass
+                shutil.copyfileobj(uploaded_video, tmp)
                 st.session_state["_upload_tmp_path"] = tmp.name
 
             rec_duration = get_video_duration_seconds(st.session_state["_upload_tmp_path"])
@@ -2193,7 +2195,11 @@ if generate:
     with st.spinner("Analyzing video and generating report..."):
         # Save uploaded file to temp
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_video.name)[1]) as tmp:
-            tmp.write(uploaded_video.getvalue())
+            try:
+                uploaded_video.seek(0)
+            except Exception:
+                pass
+            shutil.copyfileobj(uploaded_video, tmp)
             video_path = tmp.name
 
         # Analyze
