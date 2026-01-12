@@ -1,25 +1,6 @@
-# App-maker-App-maker/src/worker.py
-# ============================================================
-# AI People Reader — Worker (Johansson DOTS ONLY, NO MediaPipe)
-#
-# ✅ Reads jobs from S3: jobs/pending/*.json
-# ✅ Moves: pending -> processing -> done/failed
-# ✅ Creates output: jobs/<job_id>/output/dots.mp4
-# ✅ Writes status: jobs/<job_id>/status.json
-# ✅ Dot radius = 5, black background, silent mp4
-#
-# Job ticket JSON (from app.py) should include:
-#   {
-#     "job_id": "20260112_031304__be1359",
-#     "input_key": "jobs/20260112_031304__be1359/input/input.mp4",
-#     "dot_radius": 5,
-#     "dot_count": 150
-#   }
-# ============================================================
-
 import os
-import time
 import json
+import time
 import tempfile
 import traceback
 from datetime import datetime, timezone
@@ -27,13 +8,13 @@ from urllib.parse import quote
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 import cv2
 import numpy as np
 
-
 # ----------------------------
-# CONFIG / ENV
+# ENV / CONFIG
 # ----------------------------
 AWS_REGION = (os.getenv("AWS_REGION") or "ap-southeast-1").strip()
 S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
@@ -47,7 +28,7 @@ PROCESSING_PREFIX = "jobs/processing/"
 DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
-# Farneback flow params (stable defaults)
+# Farneback Optical Flow
 FLOW_PYR_SCALE = 0.5
 FLOW_LEVELS = 3
 FLOW_WINSIZE = 15
@@ -65,9 +46,6 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-# ----------------------------
-# S3 Client (NO endpoint override, NO proxies)
-# ----------------------------
 def s3():
     cfg = Config(proxies={}, retries={"max_attempts": 5, "mode": "standard"})
     return boto3.client(
@@ -79,11 +57,12 @@ def s3():
     )
 
 
-def list_keys(prefix: str, max_keys: int = 50):
-    resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=max_keys)
-    items = resp.get("Contents", [])
-    items.sort(key=lambda x: x.get("LastModified"))
-    return [it["Key"] for it in items]
+def exists(key: str) -> bool:
+    try:
+        s3().head_object(Bucket=S3_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def get_json(key: str) -> dict:
@@ -100,10 +79,16 @@ def put_json(key: str, data: dict):
     )
 
 
+def list_keys(prefix: str, max_keys: int = 50):
+    resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=max_keys)
+    items = resp.get("Contents", [])
+    items.sort(key=lambda x: x.get("LastModified"))
+    return [it["Key"] for it in items]
+
+
 def s3_move(src_key: str, dst_key: str):
     """
-    Move object: copy -> delete
-    CopySource MUST be "bucket/URL-encoded-key"
+    copy -> delete (safe copySource format)
     """
     encoded_key = quote(src_key, safe="/")
     copy_source = f"{S3_BUCKET}/{encoded_key}"
@@ -111,10 +96,13 @@ def s3_move(src_key: str, dst_key: str):
     s3().delete_object(Bucket=S3_BUCKET, Key=src_key)
 
 
+# ----------------------------
+# Status JSON (for UI)
+# ----------------------------
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs=None):
     payload = {
         "job_id": job_id,
-        "status": status,           # queued | processing | done | failed
+        "status": status,     # queued | processing | done | failed
         "progress": int(progress),
         "message": message,
         "updated_at": now_iso(),
@@ -124,8 +112,8 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
 
 
 # ----------------------------
-# Johansson dots via Optical Flow (Farneback)
-# Output is silent because we write a new mp4 from frames.
+# Johansson dots (Optical Flow)
+# Output: silent mp4 (we write new frames)
 # ----------------------------
 def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, dot_count: int):
     cap = cv2.VideoCapture(input_path)
@@ -147,7 +135,7 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, do
     )
     if not out.isOpened():
         cap.release()
-        raise RuntimeError("Cannot open VideoWriter (mp4v)")
+        raise RuntimeError("Cannot open VideoWriter(mp4v)")
 
     ret, prev_frame = cap.read()
     if not ret:
@@ -163,6 +151,7 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, do
         rng.integers(0, h, size=(dot_count,))
     ], axis=1).astype(np.float32)
 
+    frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -174,11 +163,11 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, do
             prev_gray, gray, None,
             FLOW_PYR_SCALE, FLOW_LEVELS, FLOW_WINSIZE, FLOW_ITERS,
             FLOW_POLY_N, FLOW_POLY_SIGMA, FLOW_FLAGS
-        )  # (h,w,2)
+        )
 
         xs = np.clip(dots[:, 0].astype(np.int32), 0, w - 1)
         ys = np.clip(dots[:, 1].astype(np.int32), 0, h - 1)
-        vecs = flow[ys, xs]  # (N,2)
+        vecs = flow[ys, xs]
 
         dots[:, 0] = np.clip(dots[:, 0] + vecs[:, 0], 0, w - 1)
         dots[:, 1] = np.clip(dots[:, 1] + vecs[:, 1], 0, h - 1)
@@ -189,25 +178,26 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, do
 
         out.write(canvas)
         prev_gray = gray
+        frame_idx += 1
 
     cap.release()
     out.release()
 
 
 # ----------------------------
-# Process a job ticket (processing/<job_id>.json)
+# Core job processing
 # ----------------------------
 def process_ticket(processing_key: str):
     job = get_json(processing_key)
-
     job_id = job.get("job_id") or processing_key.split("/")[-1].replace(".json", "")
     input_key = job.get("input_key")
     if not input_key:
-        raise RuntimeError("job missing input_key")
+        raise RuntimeError("Job JSON missing input_key")
 
     dot_radius = int(job.get("dot_radius", DOT_RADIUS_DEFAULT))
     dot_count = int(job.get("dot_count", DOT_COUNT_DEFAULT))
 
+    # ✅ Standard output path that UI waits for
     output_key = f"jobs/{job_id}/output/dots.mp4"
 
     update_status(job_id, "processing", 5, "Downloading input...")
@@ -219,24 +209,36 @@ def process_ticket(processing_key: str):
         log(f"⬇️ download {input_key}")
         s3().download_file(S3_BUCKET, input_key, in_path)
 
-        update_status(job_id, "processing", 35, f"Rendering Johansson dots (optical flow, dot={dot_radius}, no audio)...")
+        update_status(job_id, "processing", 35, f"Rendering dots (dot={dot_radius}, no audio)...")
         render_johansson_dots(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
 
-        update_status(job_id, "processing", 90, "Uploading output...")
+        update_status(job_id, "processing", 90, "Uploading dots.mp4 ...")
         log(f"⬆️ upload {output_key}")
         s3().upload_file(out_path, S3_BUCKET, output_key)
 
+    # ✅ Mark done + include overlay_key for UI
     update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": output_key})
 
 
-# ----------------------------
-# Main loop
-# ----------------------------
+def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
+    """
+    Move processing ticket to done/failed.
+    If it was already moved by another instance, ignore.
+    """
+    target_key = f"{target_prefix}{job_id}.json"
+    try:
+        s3_move(processing_key, target_key)
+        log(f"📦 Ticket moved: {processing_key} -> {target_key}")
+    except ClientError as e:
+        # If already moved/deleted, don't crash worker
+        log(f"⚠️ Ticket move skipped: {e}")
+
+
 def main():
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
 
-    log("✅ Worker boot (Johansson DOTS ONLY — Optical Flow, NO MediaPipe)")
+    log("✅ Worker boot (Dots ONLY — Optical Flow, NO MediaPipe)")
     log(f"AWS_REGION={AWS_REGION!r}")
     log(f"S3_BUCKET={S3_BUCKET!r}")
 
@@ -245,33 +247,26 @@ def main():
 
     while True:
         try:
-            # 1) Resume any stuck processing job first
+            # 1) Resume stuck processing jobs first
             processing_keys = list_keys(PROCESSING_PREFIX, max_keys=5)
             if processing_keys:
                 processing_key = processing_keys[0]
                 job_id = processing_key.split("/")[-1].replace(".json", "")
-                log(f"▶️ Resume processing: {processing_key}")
+                log(f"▶️ Resume processing {job_id}")
 
                 try:
                     process_ticket(processing_key)
-                    done_ticket = f"{DONE_PREFIX}{job_id}.json"
-                    log(f"✅ Move processing -> done: {processing_key} -> {done_ticket}")
-                    s3_move(processing_key, done_ticket)
+                    mark_ticket(processing_key, job_id, DONE_PREFIX)
                 except Exception as e:
-                    log(f"❌ Processing failed {job_id}: {e!r}")
+                    log(f"❌ Job failed {job_id}: {e!r}")
                     log(traceback.format_exc())
                     update_status(job_id, "failed", 100, message=repr(e))
-                    failed_ticket = f"{FAILED_PREFIX}{job_id}.json"
-                    log(f"❌ Move processing -> failed: {processing_key} -> {failed_ticket}")
-                    try:
-                        s3_move(processing_key, failed_ticket)
-                    except Exception as move_err:
-                        log(f"❌ Move-to-failed also failed: {move_err!r}")
+                    mark_ticket(processing_key, job_id, FAILED_PREFIX)
 
                 time.sleep(1)
                 continue
 
-            # 2) Claim a pending job
+            # 2) Claim pending job
             pending_keys = list_keys(PENDING_PREFIX, max_keys=5)
             if not pending_keys:
                 log("⏳ heartbeat (no pending jobs)")
@@ -287,19 +282,12 @@ def main():
 
             try:
                 process_ticket(processing_key)
-                done_ticket = f"{DONE_PREFIX}{job_id}.json"
-                log(f"✅ Move processing -> done: {processing_key} -> {done_ticket}")
-                s3_move(processing_key, done_ticket)
+                mark_ticket(processing_key, job_id, DONE_PREFIX)
             except Exception as e:
                 log(f"❌ Job failed {job_id}: {e!r}")
                 log(traceback.format_exc())
                 update_status(job_id, "failed", 100, message=repr(e))
-                failed_ticket = f"{FAILED_PREFIX}{job_id}.json"
-                log(f"❌ Move processing -> failed: {processing_key} -> {failed_ticket}")
-                try:
-                    s3_move(processing_key, failed_ticket)
-                except Exception as move_err:
-                    log(f"❌ Failed to move to failed/: {move_err!r}")
+                mark_ticket(processing_key, job_id, FAILED_PREFIX)
 
         except Exception as loop_err:
             log(f"❌ Worker loop error: {loop_err!r}")
