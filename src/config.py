@@ -1,6 +1,5 @@
 AWS_BUCKET = "ai-people-reader-storage"
 
-# Just folder prefixes (NO bucket here!)
 PENDING_PREFIX = "jobs/pending/"
 PROCESSING_PREFIX = "jobs/processing/"
 FAILED_PREFIX = "jobs/failed/"
