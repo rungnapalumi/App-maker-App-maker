@@ -1,12 +1,20 @@
 streamlit>=1.31,<2
-opencv-contrib-python-headless>=4.8,<5
-numpy>=1.24,<3
 
-mediapipe==0.10.31
-protobuf>=3.20.0,<5.0.0
+# Core
+numpy==1.26.4
+opencv-python-headless==4.9.0.80
 
-boto3
-botocore
+# MediaPipe (ต้องใช้กับ protobuf 3.20.x)
+mediapipe==0.10.7
+protobuf==3.20.3
+
+# AWS / S3
+boto3==1.34.14
+s3fs==2023.10.0
+
+# Utils / Others (ถ้ามีอยู่แล้วก็รวมมาได้)
+pydantic==2.6.1
+typing_extensions>=4.9.0
 
 
 
