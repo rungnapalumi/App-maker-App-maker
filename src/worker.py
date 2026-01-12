@@ -13,31 +13,30 @@ from botocore.exceptions import ClientError
 import cv2
 import numpy as np
 
-# ----------------------------
+# ============================================================
 # ENV / CONFIG
-# ----------------------------
+# ============================================================
 AWS_REGION = (os.getenv("AWS_REGION") or "ap-southeast-1").strip()
 S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
 POLL_SECONDS = int((os.getenv("WORKER_POLL_SECONDS") or "5").strip())
 
 DOT_RADIUS_DEFAULT = 5
-DOT_COUNT_DEFAULT = 60  # marker-like density
+DOT_COUNT_DEFAULT = 60  # marker-like (set 40-80 in UI for Johansson)
 
 PENDING_PREFIX = "jobs/pending/"
 PROCESSING_PREFIX = "jobs/processing/"
 DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
-# ----------------------------
-# Motion mask tuning (used mainly for initial bbox + occasional correction)
-# ----------------------------
+# ============================================================
+# Mask (MOG2) — used for initial bbox + periodic correction
+# ============================================================
 MOG2_HISTORY = 250
 MOG2_VAR_THRESHOLD = 25
 MOG2_DETECT_SHADOWS = False
 
 KERNEL_OPEN = 3
 KERNEL_CLOSE = 13
-
 BLUR_K = 7
 RETHRESH = 128
 
@@ -45,48 +44,54 @@ KEEP_LARGEST_BLOB = True
 DILATE_K = 11
 DILATE_ITER = 1
 
-# If mask too small, treat it as unreliable (use CSRT bbox)
 MIN_MASK_AREA_RATIO = 0.006  # ~0.6% of pixels
 
-# ----------------------------
-# Marker selection (Shi-Tomasi)
-# ----------------------------
+# ============================================================
+# Marker selection (Shi-Tomasi) inside bbox/mask
+# ============================================================
 GFTT_MAX_CORNERS_MULT = 6
 GFTT_QUALITY = 0.01
 GFTT_MIN_DIST = 10
 GFTT_BLOCK_SIZE = 7
 
-# ----------------------------
+# ============================================================
 # LK tracking (points)
-# ----------------------------
+# ============================================================
 LK_WIN = (21, 21)
 LK_MAX_LEVEL = 3
 LK_CRITERIA = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
 
-# Refill behaviour
 MIN_KEEP_RATIO = 0.60
 REFILL_RATIO = 0.40
 
-# ----------------------------
+# ============================================================
 # CSRT bbox tracking (person anchor)
-# ----------------------------
-BBOX_EXPAND = 1.15        # expand bbox a bit to keep limbs inside
+# ============================================================
+BBOX_EXPAND = 1.15
 BBOX_MIN_W = 60
 BBOX_MIN_H = 120
-REINIT_TRACKER_EVERY = 45 # frames; re-init CSRT from mask bbox when mask is good
 
-# clamp jitter (pixels)
+# Periodically re-init tracker from mask bbox IF mask is good
+REINIT_TRACKER_EVERY = 45
+
+# Clamp jitter (avoid stacking)
 CLAMP_JITTER = 3
+
+# If tracker fails too often, fallback to mask bbox
+MAX_TRACKER_FAIL_STREAK = 20
+
 
 def log(msg: str):
     print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
-# ----------------------------
+
+# ============================================================
 # S3 client (NO endpoint_url, NO proxies)
-# ----------------------------
+# ============================================================
 def s3():
     cfg = Config(proxies={}, retries={"max_attempts": 5, "mode": "standard"})
     return boto3.client(
@@ -97,9 +102,11 @@ def s3():
         aws_secret_access_key=(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),
     )
 
+
 def get_json(key: str) -> dict:
     obj = s3().get_object(Bucket=S3_BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
+
 
 def put_json(key: str, data: dict):
     s3().put_object(
@@ -109,17 +116,21 @@ def put_json(key: str, data: dict):
         ContentType="application/json",
     )
 
+
 def list_keys(prefix: str, max_keys: int = 50):
     resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=max_keys)
     items = resp.get("Contents", [])
     items.sort(key=lambda x: x.get("LastModified"))
     return [it["Key"] for it in items]
 
+
 def s3_move(src_key: str, dst_key: str):
+    # safe CopySource (url-encode key, keep /)
     encoded_key = quote(src_key, safe="/")
     copy_source = f"{S3_BUCKET}/{encoded_key}"
     s3().copy_object(Bucket=S3_BUCKET, CopySource=copy_source, Key=dst_key)
     s3().delete_object(Bucket=S3_BUCKET, Key=src_key)
+
 
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs=None):
     payload = {
@@ -132,6 +143,7 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
     }
     put_json(f"jobs/{job_id}/status.json", payload)
 
+
 def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
     target_key = f"{target_prefix}{job_id}.json"
     try:
@@ -140,25 +152,114 @@ def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
     except ClientError as e:
         log(f"⚠️ Ticket move skipped: {e}")
 
-# ----------------------------
-# OpenCV CSRT tracker factory (compat)
-# ----------------------------
+
+# ============================================================
+# CSRT tracker factory (compat)
+# ============================================================
 def create_csrt_tracker():
-    # OpenCV versions differ: cv2.TrackerCSRT_create or cv2.legacy.TrackerCSRT_create
     if hasattr(cv2, "TrackerCSRT_create"):
         return cv2.TrackerCSRT_create()
     if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
         return cv2.legacy.TrackerCSRT_create()
-    raise RuntimeError("CSRT tracker not available. Ensure opencv-contrib-python(-headless) is installed.")
+    raise RuntimeError("CSRT tracker not available. Ensure opencv-contrib-python-headless is installed.")
 
-# ----------------------------
-# Mask + bbox + centroid
-# ----------------------------
+
+# ============================================================
+# ✅ Critical fix: bbox sanitizer for tracker.init()
+# ============================================================
+def safe_bbox(bbox, frame_w, frame_h):
+    """
+    Ensure bbox is valid float tuple (x, y, w, h) for OpenCV tracker.init
+    Return None if invalid.
+    """
+    if bbox is None:
+        return None
+    try:
+        x, y, w, h = bbox
+        x = float(x)
+        y = float(y)
+        w = float(w)
+        h = float(h)
+
+        if not np.isfinite([x, y, w, h]).all():
+            return None
+
+        if w <= 5 or h <= 5:
+            return None
+
+        if x < 0 or y < 0:
+            return None
+
+        if x + w > frame_w or y + h > frame_h:
+            return None
+
+        return (x, y, w, h)
+    except Exception:
+        return None
+
+
+def expand_bbox_xywh(bbox_xywh, frame_w, frame_h, scale=BBOX_EXPAND):
+    x, y, w, h = bbox_xywh
+    cx = x + w / 2.0
+    cy = y + h / 2.0
+    nw = w * scale
+    nh = h * scale
+    x1 = max(0.0, cx - nw / 2.0)
+    y1 = max(0.0, cy - nh / 2.0)
+    x2 = min(float(frame_w), cx + nw / 2.0)
+    y2 = min(float(frame_h), cy + nh / 2.0)
+    return (x1, y1, max(1.0, x2 - x1), max(1.0, y2 - y1))
+
+
+def clamp_points_to_bbox(pts, bbox_xywh, frame_w, frame_h):
+    if pts is None or len(pts) == 0:
+        return pts
+    x, y, w, h = bbox_xywh
+    x1, y1 = x, y
+    x2, y2 = x + w - 1.0, y + h - 1.0
+
+    pts2 = pts.copy()
+    pts2[:, 0] = np.clip(pts2[:, 0], x1, x2)
+    pts2[:, 1] = np.clip(pts2[:, 1], y1, y2)
+
+    if CLAMP_JITTER > 0:
+        jitter = np.random.uniform(-CLAMP_JITTER, CLAMP_JITTER, size=pts2.shape).astype(np.float32)
+        pts2 += jitter
+        pts2[:, 0] = np.clip(pts2[:, 0], x1, x2)
+        pts2[:, 1] = np.clip(pts2[:, 1], y1, y2)
+
+    pts2[:, 0] = np.clip(pts2[:, 0], 0, frame_w - 1)
+    pts2[:, 1] = np.clip(pts2[:, 1], 0, frame_h - 1)
+    return pts2
+
+
+def pts_in_bbox(pts, bbox_xywh):
+    if pts is None or len(pts) == 0:
+        return np.zeros((0,), dtype=bool)
+    x, y, w, h = bbox_xywh
+    return (pts[:, 0] >= x) & (pts[:, 0] < x + w) & (pts[:, 1] >= y) & (pts[:, 1] < y + h)
+
+
+def pts_in_mask(mask, pts, frame_w, frame_h):
+    if pts is None or len(pts) == 0:
+        return np.zeros((0,), dtype=bool)
+    xs = pts[:, 0]
+    ys = pts[:, 1]
+    inside = (xs >= 0) & (xs < frame_w) & (ys >= 0) & (ys < frame_h)
+    xi = np.clip(xs.astype(np.int32), 0, frame_w - 1)
+    yi = np.clip(ys.astype(np.int32), 0, frame_h - 1)
+    in_mask = mask[yi, xi] > 0
+    return inside & in_mask
+
+
+# ============================================================
+# Mask + bbox extraction
+# ============================================================
 def build_person_mask_bbox(frame_bgr, fgbg, k_open, k_close, k_dilate):
     h, w = frame_bgr.shape[:2]
     fg = fgbg.apply(frame_bgr)
-    _, fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
 
+    _, fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
     fg = cv2.GaussianBlur(fg, (BLUR_K, BLUR_K), 0)
     _, fg = cv2.threshold(fg, RETHRESH, 255, cv2.THRESH_BINARY)
 
@@ -166,83 +267,32 @@ def build_person_mask_bbox(frame_bgr, fgbg, k_open, k_close, k_dilate):
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, k_close, iterations=1)
 
     bbox = None
-    centroid = None
-
     if KEEP_LARGEST_BLOB:
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(fg, connectivity=8)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
         if num_labels > 1:
             areas = stats[1:, cv2.CC_STAT_AREA]
             biggest = 1 + int(np.argmax(areas))
             fg = np.where(labels == biggest, 255, 0).astype(np.uint8)
 
             x, y, bw, bh, area = stats[biggest]
-            bbox = (int(x), int(y), int(bw), int(bh))
-            cx, cy = centroids[biggest]
-            centroid = (float(cx), float(cy))
+            if bw >= BBOX_MIN_W and bh >= BBOX_MIN_H:
+                bbox = (float(x), float(y), float(bw), float(bh))
 
     fg = cv2.dilate(fg, k_dilate, iterations=DILATE_ITER)
 
-    # Validate mask size
     min_area = int(MIN_MASK_AREA_RATIO * w * h)
-    mask_ok = (np.count_nonzero(fg) >= min_area) and (bbox is not None) and (bbox[2] >= BBOX_MIN_W) and (bbox[3] >= BBOX_MIN_H)
-    return fg, bbox, centroid, mask_ok
+    mask_ok = (np.count_nonzero(fg) >= min_area) and (bbox is not None)
+    return fg, bbox, mask_ok
 
-def expand_bbox(bbox, w, h, scale=BBOX_EXPAND):
-    x, y, bw, bh = bbox
-    cx = x + bw / 2.0
-    cy = y + bh / 2.0
-    nbw = bw * scale
-    nbh = bh * scale
-    x1 = int(max(0, cx - nbw/2))
-    y1 = int(max(0, cy - nbh/2))
-    x2 = int(min(w, cx + nbw/2))
-    y2 = int(min(h, cy + nbh/2))
-    return (x1, y1, max(1, x2-x1), max(1, y2-y1))
 
-def clamp_points_to_bbox(pts, bbox, w, h):
-    """pts (N,2) float32; clamp to bbox and image. Add tiny jitter to avoid stacking."""
-    if pts is None or len(pts) == 0:
-        return pts
-    x, y, bw, bh = bbox
-    x1, y1, x2, y2 = x, y, x + bw - 1, y + bh - 1
-    pts2 = pts.copy()
-    pts2[:, 0] = np.clip(pts2[:, 0], x1, x2)
-    pts2[:, 1] = np.clip(pts2[:, 1], y1, y2)
-    if CLAMP_JITTER > 0:
-        jitter = np.random.uniform(-CLAMP_JITTER, CLAMP_JITTER, size=pts2.shape).astype(np.float32)
-        pts2 += jitter
-        pts2[:, 0] = np.clip(pts2[:, 0], x1, x2)
-        pts2[:, 1] = np.clip(pts2[:, 1], y1, y2)
-    pts2[:, 0] = np.clip(pts2[:, 0], 0, w-1)
-    pts2[:, 1] = np.clip(pts2[:, 1], 0, h-1)
-    return pts2
-
-def pts_in_bbox(pts, bbox):
-    if pts is None or len(pts) == 0:
-        return np.zeros((0,), dtype=bool)
-    x, y, bw, bh = bbox
-    x2 = x + bw
-    y2 = y + bh
-    return (pts[:,0] >= x) & (pts[:,0] < x2) & (pts[:,1] >= y) & (pts[:,1] < y2)
-
-def pts_in_mask(mask, pts, w, h):
-    if pts is None or len(pts) == 0:
-        return np.zeros((0,), dtype=bool)
-    xs = pts[:,0]
-    ys = pts[:,1]
-    inside = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
-    xi = np.clip(xs.astype(np.int32), 0, w-1)
-    yi = np.clip(ys.astype(np.int32), 0, h-1)
-    in_mask = mask[yi, xi] > 0
-    return inside & in_mask
-
-def sample_markers_in_bbox(gray, mask, bbox, want_n):
-    """GFTT inside bbox, and inside mask for safety."""
+def sample_markers_in_bbox(gray, mask, bbox_xywh, want_n):
     if want_n <= 0:
         return None
-    x, y, bw, bh = bbox
-    roi_gray = gray[y:y+bh, x:x+bw]
-    roi_mask = mask[y:y+bh, x:x+bw]
+    x, y, w, h = bbox_xywh
+    x_i = int(max(0, x)); y_i = int(max(0, y))
+    w_i = int(max(1, w)); h_i = int(max(1, h))
+    roi_gray = gray[y_i:y_i + h_i, x_i:x_i + w_i]
+    roi_mask = mask[y_i:y_i + h_i, x_i:x_i + w_i]
     if roi_gray.size == 0:
         return None
 
@@ -258,42 +308,48 @@ def sample_markers_in_bbox(gray, mask, bbox, want_n):
     )
     if corners is None:
         return None
-    pts = corners.reshape(-1,2).astype(np.float32)
-    # convert to full coords
-    pts[:,0] += x
-    pts[:,1] += y
+
+    pts = corners.reshape(-1, 2).astype(np.float32)
+    pts[:, 0] += x_i
+    pts[:, 1] += y_i
+
     if len(pts) > want_n:
         idx = np.random.choice(len(pts), size=want_n, replace=False)
         pts = pts[idx]
+
     return pts if len(pts) > 0 else None
 
-def sample_random_in_bbox(mask, bbox, want_n):
-    x, y, bw, bh = bbox
-    roi = mask[y:y+bh, x:x+bw]
+
+def sample_random_in_bbox(mask, bbox_xywh, want_n):
+    x, y, w, h = bbox_xywh
+    x_i = int(max(0, x)); y_i = int(max(0, y))
+    w_i = int(max(1, w)); h_i = int(max(1, h))
+    roi = mask[y_i:y_i + h_i, x_i:x_i + w_i]
     ys, xs = np.where(roi > 0)
     if len(xs) == 0:
         return None
     n = min(want_n, len(xs))
     idx = np.random.choice(len(xs), size=n, replace=False)
-    pts = np.stack([xs[idx] + x, ys[idx] + y], axis=1).astype(np.float32)
+    pts = np.stack([xs[idx] + x_i, ys[idx] + y_i], axis=1).astype(np.float32)
     return pts
 
-# ----------------------------
-# Renderer: Marker dots + CSRT bbox anchor + clamp
-# ----------------------------
+
+# ============================================================
+# Renderer: Marker dots + CSRT bbox anchor + clamp (FIXED)
+# ============================================================
 def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_count: int):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open input video")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-    if w <= 0 or h <= 0:
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if frame_w <= 0 or frame_h <= 0:
         cap.release()
         raise RuntimeError("Invalid video size")
 
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame_w, frame_h))
     if not out.isOpened():
         cap.release()
         raise RuntimeError("Cannot open VideoWriter(mp4v)")
@@ -303,7 +359,6 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
     k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNEL_CLOSE, KERNEL_CLOSE))
     k_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (DILATE_K, DILATE_K))
 
-    # first frame
     ret, frame = cap.read()
     if not ret:
         cap.release()
@@ -312,33 +367,44 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
 
     prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    mask, bbox_m, centroid, mask_ok = build_person_mask_bbox(frame, fgbg, k_open, k_close, k_dilate)
+    mask, bbox_m, mask_ok = build_person_mask_bbox(frame, fgbg, k_open, k_close, k_dilate)
 
-    # init bbox
-    if mask_ok:
-        bbox = expand_bbox(bbox_m, w, h)
+    # initial bbox
+    if bbox_m is not None:
+        bbox_xywh = expand_bbox_xywh(bbox_m, frame_w, frame_h)
     else:
         # fallback center bbox
-        bbox = (int(w*0.35), int(h*0.15), int(w*0.30), int(h*0.60))
+        bbox_xywh = (frame_w * 0.35, frame_h * 0.15, frame_w * 0.30, frame_h * 0.60)
 
-    # init CSRT tracker
-    tracker = create_csrt_tracker()
-    tracker.init(frame, tuple(map(float, bbox)))
+    # ✅ FIX: init tracker ONLY if bbox is valid
+    tracker = None
+    safe = safe_bbox(bbox_xywh, frame_w, frame_h)
+    if safe is not None:
+        tracker = create_csrt_tracker()
+        tracker.init(frame, safe)
+    else:
+        # fallback bbox that is always valid
+        bbox_xywh = (frame_w * 0.35, frame_h * 0.15, frame_w * 0.30, frame_h * 0.60)
+        safe = safe_bbox(bbox_xywh, frame_w, frame_h)
+        tracker = create_csrt_tracker()
+        tracker.init(frame, safe)
 
-    # init points
-    pts = sample_markers_in_bbox(prev_gray, mask, bbox, dot_count)
+    tracker_fail_streak = 0
+
+    # seed points inside bbox
+    pts = sample_markers_in_bbox(prev_gray, mask, bbox_xywh, dot_count) if mask_ok else None
     if pts is None:
-        pts = sample_random_in_bbox(mask, bbox, dot_count)
+        pts = sample_random_in_bbox(mask, bbox_xywh, dot_count) if mask_ok else None
     if pts is None:
         rng = np.random.default_rng(1234)
         pts = np.stack([
-            rng.integers(bbox[0], bbox[0]+bbox[2], size=(dot_count,)),
-            rng.integers(bbox[1], bbox[1]+bbox[3], size=(dot_count,))
+            rng.integers(int(bbox_xywh[0]), int(bbox_xywh[0] + bbox_xywh[2]), size=(dot_count,)),
+            rng.integers(int(bbox_xywh[1]), int(bbox_xywh[1] + bbox_xywh[3]), size=(dot_count,))
         ], axis=1).astype(np.float32)
 
     p0 = pts.reshape(-1, 1, 2)
-
     frame_idx = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -346,21 +412,42 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
         frame_idx += 1
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        mask, bbox_m, centroid, mask_ok = build_person_mask_bbox(frame, fgbg, k_open, k_close, k_dilate)
+        mask, bbox_m, mask_ok = build_person_mask_bbox(frame, fgbg, k_open, k_close, k_dilate)
 
-        # update tracker bbox
-        ok_t, tb = tracker.update(frame)
-        if ok_t:
-            bbox_t = (int(tb[0]), int(tb[1]), int(tb[2]), int(tb[3]))
-            # keep bbox within frame and reasonable size
-            if bbox_t[2] >= BBOX_MIN_W and bbox_t[3] >= BBOX_MIN_H:
-                bbox = (max(0,bbox_t[0]), max(0,bbox_t[1]),
-                        min(w-bbox_t[0], bbox_t[2]), min(h-bbox_t[1], bbox_t[3]))
-        # if mask is good, occasionally re-init tracker to correct drift
+        # update tracker
+        if tracker is not None:
+            ok_t, tb = tracker.update(frame)
+            if ok_t:
+                tracker_fail_streak = 0
+                bbox_t = (float(tb[0]), float(tb[1]), float(tb[2]), float(tb[3]))
+                safe_t = safe_bbox(bbox_t, frame_w, frame_h)
+                if safe_t is not None and safe_t[2] >= BBOX_MIN_W and safe_t[3] >= BBOX_MIN_H:
+                    bbox_xywh = safe_t
+            else:
+                tracker_fail_streak += 1
+
+        # periodic correction: if mask ok, re-init tracker safely
         if mask_ok and bbox_m is not None and (frame_idx % REINIT_TRACKER_EVERY == 0):
-            bbox = expand_bbox(bbox_m, w, h)
-            tracker = create_csrt_tracker()
-            tracker.init(frame, tuple(map(float, bbox)))
+            candidate = expand_bbox_xywh(bbox_m, frame_w, frame_h)
+            safe_c = safe_bbox(candidate, frame_w, frame_h)
+            if safe_c is not None:
+                bbox_xywh = safe_c
+                tracker = create_csrt_tracker()
+                tracker.init(frame, safe_c)
+                tracker_fail_streak = 0
+
+        # if tracker failing too long, try reinit from mask if possible
+        if tracker_fail_streak >= MAX_TRACKER_FAIL_STREAK:
+            if mask_ok and bbox_m is not None:
+                candidate = expand_bbox_xywh(bbox_m, frame_w, frame_h)
+                safe_c = safe_bbox(candidate, frame_w, frame_h)
+                if safe_c is not None:
+                    bbox_xywh = safe_c
+                    tracker = create_csrt_tracker()
+                    tracker.init(frame, safe_c)
+                    tracker_fail_streak = 0
+            else:
+                tracker_fail_streak = 0  # avoid infinite loop
 
         # Track points with LK
         p1, stt, err = cv2.calcOpticalFlowPyrLK(
@@ -371,20 +458,20 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
         )
         stt = stt.reshape(-1)
         p1 = p1.reshape(-1, 2)
+
         good = (stt == 1)
 
-        # Gate: must remain in bbox always
-        keep = good & pts_in_bbox(p1, bbox)
-        # If mask ok, also require in mask (stronger)
+        # Always gate points to bbox (strong anti-drift)
+        keep = good & pts_in_bbox(p1, bbox_xywh)
+        # If mask OK, also gate to mask for extra safety
         if mask_ok:
-            keep = keep & pts_in_mask(mask, p1, w, h)
+            keep = keep & pts_in_mask(mask, p1, frame_w, frame_h)
 
         kept_pts = p1[keep]
 
-        # clamp (prevent drift)
-        kept_pts = clamp_points_to_bbox(kept_pts, bbox, w, h)
+        # clamp to bbox (prevents drift)
+        kept_pts = clamp_points_to_bbox(kept_pts, bbox_xywh, frame_w, frame_h)
 
-        # refill
         kept_n = len(kept_pts)
         missing = dot_count - kept_n
         refill_n = 0
@@ -397,26 +484,25 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
         if refill_n > 0:
             new_pts = None
             if mask_ok:
-                new_pts = sample_markers_in_bbox(gray, mask, bbox, refill_n)
+                new_pts = sample_markers_in_bbox(gray, mask, bbox_xywh, refill_n)
                 if new_pts is None:
-                    new_pts = sample_random_in_bbox(mask, bbox, refill_n)
+                    new_pts = sample_random_in_bbox(mask, bbox_xywh, refill_n)
 
             if new_pts is None:
                 rng = np.random.default_rng(1000 + frame_idx)
                 new_pts = np.stack([
-                    rng.integers(bbox[0], bbox[0] + bbox[2], size=(refill_n,)),
-                    rng.integers(bbox[1], bbox[1] + bbox[3], size=(refill_n,))
+                    rng.integers(int(bbox_xywh[0]), int(bbox_xywh[0] + bbox_xywh[2]), size=(refill_n,)),
+                    rng.integers(int(bbox_xywh[1]), int(bbox_xywh[1] + bbox_xywh[3]), size=(refill_n,))
                 ], axis=1).astype(np.float32)
 
             kept_pts = np.vstack([kept_pts, new_pts])
 
-        # if too many -> downsample
         if len(kept_pts) > dot_count:
             idx = np.random.choice(len(kept_pts), size=dot_count, replace=False)
             kept_pts = kept_pts[idx]
 
         # draw
-        canvas = np.zeros((h, w, 3), dtype=np.uint8)
+        canvas = np.zeros((frame_h, frame_w, 3), dtype=np.uint8)
         for x, y in kept_pts:
             cv2.circle(canvas, (int(x), int(y)), dot_radius, (255, 255, 255), -1)
         out.write(canvas)
@@ -428,9 +514,9 @@ def render_marker_csrt(input_path: str, output_path: str, dot_radius: int, dot_c
     out.release()
 
 
-# ----------------------------
+# ============================================================
 # Process one job ticket
-# ----------------------------
+# ============================================================
 def process_ticket(processing_key: str):
     job = get_json(processing_key)
     job_id = job.get("job_id") or processing_key.split("/")[-1].replace(".json", "")
@@ -452,7 +538,7 @@ def process_ticket(processing_key: str):
         log(f"⬇️ download {input_key}")
         s3().download_file(S3_BUCKET, input_key, in_path)
 
-        update_status(job_id, "processing", 35, f"Rendering MARKER dots (CSRT anchor, clamp) dot={dot_radius}, count={dot_count} ...")
+        update_status(job_id, "processing", 35, f"Rendering MARKER dots (CSRT anchor, SAFE bbox) dot={dot_radius}, count={dot_count} ...")
         render_marker_csrt(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
 
         update_status(job_id, "processing", 90, "Uploading dots.mp4 ...")
@@ -466,7 +552,7 @@ def main():
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
 
-    log("✅ Worker boot (Johansson MARKER MODE — CSRT bbox anchor + clamp, NO drift)")
+    log("✅ Worker boot (Johansson MARKER — CSRT anchor + SAFE bbox init FIXED)")
     log(f"AWS_REGION={AWS_REGION!r}")
     log(f"S3_BUCKET={S3_BUCKET!r}")
 
@@ -475,6 +561,7 @@ def main():
 
     while True:
         try:
+            # Resume processing first
             processing_keys = list_keys(PROCESSING_PREFIX, max_keys=3)
             if processing_keys:
                 processing_key = processing_keys[0]
@@ -493,6 +580,7 @@ def main():
                 time.sleep(1)
                 continue
 
+            # Claim pending
             pending_keys = list_keys(PENDING_PREFIX, max_keys=3)
             if not pending_keys:
                 log("⏳ heartbeat (no pending jobs)")
