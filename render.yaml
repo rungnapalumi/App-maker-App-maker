@@ -1,15 +1,40 @@
 services:
+  # ------------------------------
+  # 1) WEB SERVICE (Streamlit UI)
+  # ------------------------------
   - type: web
-    name: vdo-uploader
+    name: vdo-uploader          # ชื่อตรงนี้ใช้สำหรับ blueprint; ของเดิมใช้ได้เลย
     env: python
     plan: starter
     buildCommand: |
-      apt-get update && apt-get install -y ffmpeg libgl1 libglu1-mesa libglib2.0-0 libsm6 libxext6 libgomp1
+      apt-get update && apt-get install -y ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1
+      pip install --upgrade pip setuptools wheel
+      pip install --upgrade protobuf==3.20.*
       pip install -r requirements.txt
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
-      # Render requires full major.minor.patch (example: 3.10.13) [[memory:5590605]]
       - key: PYTHON_VERSION
         value: 3.10.13
 
-
+  # ------------------------------
+  # 2) BACKGROUND WORKER (MediaPipe)
+  # ------------------------------
+  - type: worker
+    name: ai-people-reader-worker
+    env: python
+    plan: standard
+    buildCommand: |
+      apt-get update && apt-get install -y ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1
+      pip install --upgrade pip setuptools wheel
+      pip install --upgrade protobuf==3.20.*
+      pip install -r requirements.txt
+    startCommand: python src/worker.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.13
+      - key: AWS_REGION
+        value: ap-southeast-1
+      - key: S3_BUCKET
+        value: ai-people-reader-storage
+      - key: JOB_POLL_INTERVAL
+        value: "10"
