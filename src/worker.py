@@ -1,319 +1,337 @@
 import os
-import json
 import time
+import json
 import tempfile
-import logging
-from typing import Dict, Any, List
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, List
 
 import boto3
-from botocore.exceptions import ClientError
-
 import cv2
 import numpy as np
+
+# MediaPipe pose
 import mediapipe as mp
 
-# -----------------------------
-# Logging setup
-# -----------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s"
-)
-logger = logging.getLogger("worker")
+# -----------------------------------------------------------------------------
+# Config
+# -----------------------------------------------------------------------------
 
-# -----------------------------
-# Environment
-# -----------------------------
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-S3_BUCKET = os.getenv("S3_BUCKET", "ai-people-reader-storage")
-JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
+@dataclass
+class WorkerConfig:
+    bucket: str
+    region: str
+    pending_prefix: str = "jobs/pending/"
+    jobs_prefix: str = "jobs/"
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+    @classmethod
+    def from_env(cls) -> "WorkerConfig":
+        bucket = os.environ.get("S3_BUCKET")
+        region = os.environ.get("AWS_REGION", "ap-southeast-1")
 
-JOBS_PREFIX = "jobs"
-PENDING_PREFIX = f"{JOBS_PREFIX}/pending"
-PROCESSING_PREFIX = f"{JOBS_PREFIX}/processing"
-FAILED_PREFIX = f"{JOBS_PREFIX}/failed"
+        if not bucket:
+            raise RuntimeError("S3_BUCKET env var is required")
 
-# MediaPipe Pose
-mp_pose = mp.solutions.pose
+        return cls(bucket=bucket, region=region)
 
 
-# =============================
-# S3 HELPERS
-# =============================
+# -----------------------------------------------------------------------------
+# S3 helper
+# -----------------------------------------------------------------------------
 
-def list_pending_jobs() -> List[Dict[str, Any]]:
-    """Return list of pending job objects from S3."""
-    try:
-        resp = s3.list_objects_v2(
-            Bucket=S3_BUCKET,
-            Prefix=PENDING_PREFIX + "/",
+class S3Client:
+    def __init__(self, cfg: WorkerConfig):
+        self.cfg = cfg
+        self.s3 = boto3.client("s3", region_name=cfg.region)
+
+    # ------ Job discovery -----------------------------------------------------
+
+    def find_next_pending_job(self) -> Optional[str]:
+        """
+        Returns the S3 key for the first pending job JSON, or None if no jobs.
+        Keys look like: jobs/pending/<job_id>.json
+        """
+        resp = self.s3.list_objects_v2(
+            Bucket=self.cfg.bucket,
+            Prefix=self.cfg.pending_prefix,
         )
-    except ClientError as e:
-        logger.error(f"list_pending_jobs error: {e}")
-        return []
+        contents = resp.get("Contents")
+        if not contents:
+            return None
 
-    contents = resp.get("Contents", [])
-    # filter only json files
-    jobs = [obj for obj in contents if obj["Key"].endswith(".json")]
-    jobs.sort(key=lambda o: o["LastModified"])  # oldest first
-    return jobs
+        # pick the oldest (by LastModified)
+        contents_sorted = sorted(contents, key=lambda o: o["LastModified"])
+        for obj in contents_sorted:
+            key = obj["Key"]
+            if key.endswith(".json"):
+                return key
+
+        return None
+
+    # ------ Job JSON ---------------------------------------------------------
+
+    def load_job_json(self, key: str) -> Dict[str, Any]:
+        obj = self.s3.get_object(Bucket=self.cfg.bucket, Key=key)
+        body = obj["Body"].read().decode("utf-8")
+        return json.loads(body)
+
+    def delete_key(self, key: str) -> None:
+        self.s3.delete_object(Bucket=self.cfg.bucket, Key=key)
+
+    # ------ Status -----------------------------------------------------------
+
+    def _status_key(self, job_id: str) -> str:
+        return f"{self.cfg.jobs_prefix}{job_id}/status.json"
+
+    def update_status(self, job_id: str, status: str,
+                      message: str = "",
+                      progress: int = 0,
+                      outputs: Optional[Dict[str, Any]] = None) -> None:
+        payload = {
+            "job_id": job_id,
+            "status": status,
+            "progress": progress,
+            "message": message,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            "outputs": outputs or {},
+        }
+        self.s3.put_object(
+            Bucket=self.cfg.bucket,
+            Key=self._status_key(job_id),
+            Body=json.dumps(payload, indent=2).encode("utf-8"),
+            ContentType="application/json",
+        )
+
+    # ------ Video I/O --------------------------------------------------------
+
+    def download_video(self, s3_key: str, local_path: str) -> None:
+        self.s3.download_file(self.cfg.bucket, s3_key, local_path)
+
+    def upload_video(self, local_path: str, s3_key: str) -> None:
+        self.s3.upload_file(local_path, self.cfg.bucket, s3_key)
 
 
-def download_json(key: str) -> Dict[str, Any]:
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-    text = obj["Body"].read().decode("utf-8")
-    return json.loads(text)
+# -----------------------------------------------------------------------------
+# MediaPipe Pose Utilities
+# -----------------------------------------------------------------------------
 
+mp_pose = mp.solutions.pose
+POSE_CONNECTIONS = list(mp_pose.POSE_CONNECTIONS)
 
-def upload_json(key: str, data: Dict[str, Any]) -> None:
-    body = json.dumps(data, ensure_ascii=False, indent=2)
-    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=body.encode("utf-8"))
-
-
-def move_object(src_key: str, dst_key: str) -> None:
-    s3.copy_object(
-        Bucket=S3_BUCKET,
-        CopySource={"Bucket": S3_BUCKET, "Key": src_key},
-        Key=dst_key,
-    )
-    s3.delete_object(Bucket=S3_BUCKET, Key=src_key)
-
-
-# =============================
-# MEDIA PIPE / JOHANSSON LOGIC
-# =============================
-
-# Approximate Johansson points using subset of Pose landmarks
-JOHANSSON_LANDMARK_IDXS = [
-    0,   # nose (หัว)
-    11,  # L shoulder
-    12,  # R shoulder
-    13,  # L elbow
-    14,  # R elbow
-    15,  # L wrist
-    16,  # R wrist
-    23,  # L hip
-    24,  # R hip
-    25,  # L knee
-    26,  # R knee
-    27,  # L ankle
-    28,  # R ankle
+# A subset of key joints for Johansson-style dots
+JOHANSSON_LANDMARKS = [
+    mp_pose.PoseLandmark.NOSE,
+    mp_pose.PoseLandmark.LEFT_SHOULDER,
+    mp_pose.PoseLandmark.RIGHT_SHOULDER,
+    mp_pose.PoseLandmark.LEFT_ELBOW,
+    mp_pose.PoseLandmark.RIGHT_ELBOW,
+    mp_pose.PoseLandmark.LEFT_WRIST,
+    mp_pose.PoseLandmark.RIGHT_WRIST,
+    mp_pose.PoseLandmark.LEFT_HIP,
+    mp_pose.PoseLandmark.RIGHT_HIP,
+    mp_pose.PoseLandmark.LEFT_KNEE,
+    mp_pose.PoseLandmark.RIGHT_KNEE,
+    mp_pose.PoseLandmark.LEFT_ANKLE,
+    mp_pose.PoseLandmark.RIGHT_ANKLE,
 ]
 
 
-def render_johansson_dots(
+def _landmark_to_px(landmark, width: int, height: int):
+    return int(landmark.x * width), int(landmark.y * height)
+
+
+# -----------------------------------------------------------------------------
+# Rendering functions
+# -----------------------------------------------------------------------------
+
+def render_pose_overlay(
     input_path: str,
     output_path: str,
+    mode: str = "dots",
     dot_radius: int = 5,
 ) -> None:
     """
-    Read input video, run MediaPipe Pose, and render Johansson-style dots.
-    Output video has black background + white dots at key joints.
+    mode = "dots"      -> Johansson-style dots on joints
+    mode = "skeleton"  -> full skeleton lines + joints
     """
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {input_path}")
+        raise RuntimeError("Cannot open input video")
 
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 25.0
 
+    # fourcc = mp4v
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    pose = mp_pose.Pose(
+    with mp_pose.Pose(
         static_image_mode=False,
         model_complexity=1,
-        smooth_landmarks=True,
         enable_segmentation=False,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
-    )
+    ) as pose:
 
-    frame_idx = 0
-    try:
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            frame_idx += 1
-
-            # Convert to RGB for mediapipe
+            # MediaPipe expects RGB
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = pose.process(rgb)
+            results = pose.process(rgb)
 
-            # Start from black frame
+            # start with black background
             black = np.zeros_like(frame)
 
-            if result.pose_landmarks:
-                h, w, _ = black.shape
-                landmarks = result.pose_landmarks.landmark
+            if results.pose_landmarks:
+                landmarks = results.pose_landmarks.landmark
 
-                for idx in JOHANSSON_LANDMARK_IDXS:
-                    if idx >= len(landmarks):
-                        continue
-                    lm = landmarks[idx]
-                    if lm.visibility < 0.5:
-                        continue
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    if 0 <= cx < w and 0 <= cy < h:
-                        cv2.circle(
-                            black,
-                            (cx, cy),
-                            dot_radius,
-                            (255, 255, 255),
-                            thickness=-1,
-                            lineType=cv2.LINE_AA,
-                        )
+                if mode == "skeleton":
+                    # draw connections
+                    for start_idx, end_idx in POSE_CONNECTIONS:
+                        p1 = landmarks[start_idx]
+                        p2 = landmarks[end_idx]
+                        x1, y1 = _landmark_to_px(p1, width, height)
+                        x2, y2 = _landmark_to_px(p2, width, height)
+                        cv2.line(black, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
+                    # draw all joints as small dots
+                    for lm in landmarks:
+                        x, y = _landmark_to_px(lm, width, height)
+                        cv2.circle(black, (x, y), dot_radius, (255, 255, 255), -1)
+
+                else:
+                    # Johansson-like: only important joints, clean dots
+                    for lm_id in JOHANSSON_LANDMARKS:
+                        lm = landmarks[lm_id]
+                        x, y = _landmark_to_px(lm, width, height)
+                        cv2.circle(black, (x, y), dot_radius, (255, 255, 255), -1)
 
             out.write(black)
 
-    finally:
-        cap.release()
-        out.release()
-        pose.close()
-
-    logger.info(f"Rendered Johansson dots to {output_path}")
+    cap.release()
+    out.release()
 
 
-# =============================
-# JOB PROCESSING
-# =============================
+# -----------------------------------------------------------------------------
+# Main worker loop
+# -----------------------------------------------------------------------------
 
-def process_single_job(src_key: str) -> None:
+def extract_job_id_from_key(pending_key: str) -> str:
     """
-    Take one pending job JSON (in jobs/pending),
-    move to processing, run overlay, update status.
+    jobs/pending/20260112_150620__abcd12.json -> 20260112_150620__abcd12
     """
-    logger.info(f"Claiming job: {src_key}")
-    job_pending = download_json(src_key)
-
-    job_id = job_pending.get("job_id")
-    if not job_id:
-        # Derive from filename
-        base_name = os.path.basename(src_key)
-        job_id = base_name.replace(".json", "")
-
-    # Keys
-    pending_key = src_key
-    processing_key = f"{PROCESSING_PREFIX}/{job_id}.json"
-    failed_key = f"{FAILED_PREFIX}/{job_id}.json"
-
-    # Video keys (ตาม convention เดิม)
-    input_key = job_pending.get(
-        "input_key",
-        f"{JOBS_PREFIX}/{job_id}/input/input.mp4",
-    )
-    overlay_key = job_pending.get(
-        "overlay_key",
-        f"{JOBS_PREFIX}/{job_id}/output/dots.mp4",
-    )
-
-    # Dot params
-    dot_radius = int(job_pending.get("dot_radius", 5))
-
-    # -----------------------
-    # Move to processing
-    # -----------------------
-    logger.info(f"Moving job to processing: {processing_key}")
-    move_object(pending_key, processing_key)
-
-    job = job_pending
-    job["status"] = "processing"
-    job["progress"] = 5
-    job["message"] = "Downloading input video"
-    job["job_id"] = job_id
-    job["input_key"] = input_key
-    job["overlay_key"] = overlay_key
-
-    upload_json(processing_key, job)
-
-    # -----------------------
-    # Download video
-    # -----------------------
-    with tempfile.TemporaryDirectory() as tmpdir:
-        local_input = os.path.join(tmpdir, "input.mp4")
-        local_output = os.path.join(tmpdir, "dots.mp4")
-
-        try:
-            logger.info(f"Downloading video from s3://{S3_BUCKET}/{input_key}")
-            s3.download_file(S3_BUCKET, input_key, local_input)
-
-            job["status"] = "processing"
-            job["progress"] = 30
-            job["message"] = "Running MediaPipe Pose"
-            upload_json(processing_key, job)
-
-            # -----------------------
-            # Run MediaPipe + render
-            # -----------------------
-            render_johansson_dots(local_input, local_output, dot_radius=dot_radius)
-
-            job["status"] = "processing"
-            job["progress"] = 80
-            job["message"] = "Uploading overlay"
-            upload_json(processing_key, job)
-
-            # -----------------------
-            # Upload result
-            # -----------------------
-            logger.info(f"Uploading overlay to s3://{S3_BUCKET}/{overlay_key}")
-            s3.upload_file(local_output, S3_BUCKET, overlay_key)
-
-            job["status"] = "done"
-            job["progress"] = 100
-            job["message"] = "Completed"
-            job["outputs"] = {"overlay_key": overlay_key}
-            upload_json(processing_key, job)
-
-            logger.info(f"Job {job_id} completed successfully.")
-
-        except Exception as e:
-            logger.exception(f"Job {job_id} failed: {e}")
-            job["status"] = "failed"
-            job["message"] = f"{type(e).__name__}: {e}"
-            job["progress"] = 100
-            upload_json(processing_key, job)
-
-            # move JSON -> failed
-            move_object(processing_key, failed_key)
-            logger.info(f"Job {job_id} moved to failed.")
-            return
-
-        # (optional) ถ้าอยาก move processing -> completed แยก folder
-        # ตอนนี้ให้ status = done อยู่ใน processing ตามที่ UI ใช้งานอยู่
+    filename = pending_key.split("/")[-1]
+    if filename.endswith(".json"):
+        return filename[:-5]
+    return filename
 
 
-def main_loop():
-    logger.info("AI People Reader worker started.")
-    logger.info(f"Region={AWS_REGION} Bucket={S3_BUCKET}")
+def run_worker_loop():
+    cfg = WorkerConfig.from_env()
+    s3c = S3Client(cfg)
+
+    print("AI People Reader worker started. Waiting for jobs...")
 
     while True:
         try:
-            jobs = list_pending_jobs()
-            if not jobs:
-                logger.info("No pending jobs. Sleeping...")
-                time.sleep(JOB_POLL_INTERVAL)
+            pending_key = s3c.find_next_pending_job()
+            if not pending_key:
+                print("No pending jobs. Sleeping 10s...")
+                time.sleep(10)
                 continue
 
-            # Process first job in queue
-            job_obj = jobs[0]
-            src_key = job_obj["Key"]
-            try:
-                process_single_job(src_key)
-            except Exception as e:
-                logger.exception(f"Unexpected error while processing {src_key}: {e}")
+            job_id = extract_job_id_from_key(pending_key)
+            print(f"Picked job: {job_id} ({pending_key})")
 
-        except Exception as outer:
-            logger.exception(f"Worker main loop error: {outer}")
-            time.sleep(JOB_POLL_INTERVAL)
+            # Load job config
+            job_cfg = s3c.load_job_json(pending_key)
+            print("Job config:", job_cfg)
+
+            mode = job_cfg.get("mode", "dots")  # "dots" or "skeleton"
+            dot_radius = int(job_cfg.get("dot_radius", 5))
+
+            # Input video key:
+            # 1) explicitly provided in JSON, or
+            # 2) default convention: jobs/<job_id>/input/input.mp4
+            input_key = job_cfg.get(
+                "input_key",
+                f"{cfg.jobs_prefix}{job_id}/input/input.mp4",
+            )
+
+            # Output file name depends on mode (to avoid confusion)
+            if mode == "skeleton":
+                output_filename = "skeleton.mp4"
+            else:
+                output_filename = "dots.mp4"
+
+            output_key = job_cfg.get(
+                "output_key",
+                f"{cfg.jobs_prefix}{job_id}/output/{output_filename}",
+            )
+
+            # Update status -> processing
+            s3c.update_status(
+                job_id,
+                status="processing",
+                message=f"Processing job in mode='{mode}'",
+                progress=10,
+            )
+
+            # Local temp files
+            with tempfile.TemporaryDirectory() as tmpdir:
+                local_in = os.path.join(tmpdir, "input.mp4")
+                local_out = os.path.join(tmpdir, "output.mp4")
+
+                print(f"Downloading video from s3://{cfg.bucket}/{input_key}")
+                s3c.download_video(input_key, local_in)
+
+                # Do rendering
+                print(f"Rendering overlay mode={mode}, dot_radius={dot_radius}")
+                render_pose_overlay(
+                    input_path=local_in,
+                    output_path=local_out,
+                    mode=mode,
+                    dot_radius=dot_radius,
+                )
+
+                print(f"Uploading result to s3://{cfg.bucket}/{output_key}")
+                s3c.upload_video(local_out, output_key)
+
+            # Job completed
+            s3c.update_status(
+                job_id,
+                status="done",
+                message="Completed",
+                progress=100,
+                outputs={"overlay_key": output_key, "mode": mode},
+            )
+
+            # Remove pending json so it won't be picked again
+            s3c.delete_key(pending_key)
+            print(f"Job {job_id} completed and pending JSON deleted.\n")
+
+        except Exception as e:
+            # Try to update status with error (best effort)
+            err_msg = str(e)
+            print("ERROR processing job:", err_msg)
+            try:
+                if "job_id" in locals():
+                    s3c.update_status(
+                        job_id,
+                        status="failed",
+                        message=err_msg,
+                        progress=100,
+                    )
+            except Exception:
+                pass
+
+            # avoid tight error loop
+            time.sleep(5)
 
 
 if __name__ == "__main__":
-    main_loop()
+    run_worker_loop()
