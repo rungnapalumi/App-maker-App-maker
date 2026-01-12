@@ -21,7 +21,7 @@ S3_BUCKET = (os.getenv("S3_BUCKET") or "").strip()
 POLL_SECONDS = int((os.getenv("WORKER_POLL_SECONDS") or "5").strip())
 
 DOT_RADIUS_DEFAULT = 5
-DOT_COUNT_DEFAULT = 150  # suggest 150-250 for Johansson feel
+DOT_COUNT_DEFAULT = 60  # ✅ Johansson marker-like density (adjustable from UI)
 
 PENDING_PREFIX = "jobs/pending/"
 PROCESSING_PREFIX = "jobs/processing/"
@@ -29,7 +29,7 @@ DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
 # ----------------------------
-# Motion mask tuning
+# Motion mask (to find "person region")
 # ----------------------------
 MOG2_HISTORY = 250
 MOG2_VAR_THRESHOLD = 25
@@ -42,32 +42,42 @@ BLUR_K = 7
 RETHRESH = 128
 
 KEEP_LARGEST_BLOB = True
-
-# Expand mask slightly so limbs are included more often
-DILATE_K = 9
+DILATE_K = 11
 DILATE_ITER = 1
 
 # ----------------------------
-# Dot tracking (Lucas-Kanade)
+# Marker selection (Shi-Tomasi)
 # ----------------------------
-# How many new dots to add if lost (percentage of dot_count)
-REFILL_RATIO = 0.35
+# Prefer stable "important" points (corners/texture) inside person mask
+GFTT_MAX_CORNERS_MULT = 6  # we detect more, then sample
+GFTT_QUALITY = 0.01
+GFTT_MIN_DIST = 10
+GFTT_BLOCK_SIZE = 7
 
-# LK parameters (stable)
+# ----------------------------
+# Tracking (Lucas-Kanade)
+# ----------------------------
 LK_WIN = (21, 21)
 LK_MAX_LEVEL = 3
 LK_CRITERIA = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03)
 
-# If too few good points remain, re-seed more
-MIN_KEEP_RATIO = 0.55  # if kept < 55% -> refill aggressively
+# Refill behaviour
+MIN_KEEP_RATIO = 0.60      # if < 60% points remain, refill more
+REFILL_RATIO = 0.40        # refill this fraction of dot_count when low
+MAX_RETRY_EMPTY_MASK = 30  # tolerate mask empty for some frames
 
 
 def log(msg: str):
     print(f"[{datetime.now(timezone.utc).isoformat()}] {msg}", flush=True)
 
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
+
+# ----------------------------
+# S3 client (NO endpoint_url, NO proxies)
+# ----------------------------
 def s3():
     cfg = Config(proxies={}, retries={"max_attempts": 5, "mode": "standard"})
     return boto3.client(
@@ -78,9 +88,11 @@ def s3():
         aws_secret_access_key=(os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip(),
     )
 
+
 def get_json(key: str) -> dict:
     obj = s3().get_object(Bucket=S3_BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
+
 
 def put_json(key: str, data: dict):
     s3().put_object(
@@ -90,17 +102,20 @@ def put_json(key: str, data: dict):
         ContentType="application/json",
     )
 
+
 def list_keys(prefix: str, max_keys: int = 50):
     resp = s3().list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix, MaxKeys=max_keys)
     items = resp.get("Contents", [])
     items.sort(key=lambda x: x.get("LastModified"))
     return [it["Key"] for it in items]
 
+
 def s3_move(src_key: str, dst_key: str):
     encoded_key = quote(src_key, safe="/")
     copy_source = f"{S3_BUCKET}/{encoded_key}"
     s3().copy_object(Bucket=S3_BUCKET, CopySource=copy_source, Key=dst_key)
     s3().delete_object(Bucket=S3_BUCKET, Key=src_key)
+
 
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs=None):
     payload = {
@@ -113,6 +128,7 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
     }
     put_json(f"jobs/{job_id}/status.json", payload)
 
+
 def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
     target_key = f"{target_prefix}{job_id}.json"
     try:
@@ -121,12 +137,12 @@ def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
     except ClientError as e:
         log(f"⚠️ Ticket move skipped: {e}")
 
+
 # ----------------------------
 # Mask builder
 # ----------------------------
 def build_person_mask(frame_bgr, fgbg, k_open, k_close, k_dilate):
-    fg = fgbg.apply(frame_bgr)
-
+    fg = fgbg.apply(frame_bgr)  # 0..255
     _, fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
 
     fg = cv2.GaussianBlur(fg, (BLUR_K, BLUR_K), 0)
@@ -135,7 +151,6 @@ def build_person_mask(frame_bgr, fgbg, k_open, k_close, k_dilate):
     fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, k_open, iterations=1)
     fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, k_close, iterations=1)
 
-    # Keep largest blob to reduce background noise
     if KEEP_LARGEST_BLOB:
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
         if num_labels > 1:
@@ -143,30 +158,65 @@ def build_person_mask(frame_bgr, fgbg, k_open, k_close, k_dilate):
             biggest = 1 + int(np.argmax(areas))
             fg = np.where(labels == biggest, 255, 0).astype(np.uint8)
 
-    # Dilate to include limbs and fill gaps
     fg = cv2.dilate(fg, k_dilate, iterations=DILATE_ITER)
-
     return fg  # uint8 0/255
 
 
-def sample_points_from_mask(mask, n):
-    ys, xs = np.where(mask > 0)
-    if len(xs) == 0:
+def pts_in_mask(mask, pts, w, h):
+    """pts shape (N,2) float32"""
+    if pts is None or len(pts) == 0:
+        return np.zeros((0,), dtype=bool)
+    xs = pts[:, 0]
+    ys = pts[:, 1]
+    inside = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
+    xi = np.clip(xs.astype(np.int32), 0, w - 1)
+    yi = np.clip(ys.astype(np.int32), 0, h - 1)
+    in_mask = mask[yi, xi] > 0
+    return inside & in_mask
+
+
+def sample_markers_from_mask(gray, mask, want_n, w, h):
+    """
+    Use goodFeaturesToTrack inside the masked area (marker-like).
+    Returns (N,2) float32.
+    """
+    if want_n <= 0:
         return None
-    n = min(n, len(xs))
-    idx = np.random.choice(len(xs), size=n, replace=False)
-    pts = np.stack([xs[idx], ys[idx]], axis=1).astype(np.float32)  # (N,2)
-    return pts
+
+    if np.count_nonzero(mask) == 0:
+        return None
+
+    # gftt accepts mask directly
+    max_corners = max(want_n * GFTT_MAX_CORNERS_MULT, want_n)
+    corners = cv2.goodFeaturesToTrack(
+        gray,
+        maxCorners=int(max_corners),
+        qualityLevel=GFTT_QUALITY,
+        minDistance=GFTT_MIN_DIST,
+        mask=mask,
+        blockSize=GFTT_BLOCK_SIZE,
+        useHarrisDetector=False,
+    )
+    if corners is None:
+        return None
+
+    pts = corners.reshape(-1, 2).astype(np.float32)
+
+    # If too many, downsample to want_n
+    if len(pts) > want_n:
+        idx = np.random.choice(len(pts), size=want_n, replace=False)
+        pts = pts[idx]
+
+    # Ensure in mask
+    keep = pts_in_mask(mask, pts, w, h)
+    pts = pts[keep]
+    return pts if len(pts) > 0 else None
 
 
 # ----------------------------
-# Johansson-like stable dots
-# - seed points from mask once
-# - track with LK optical flow
-# - remove points that leave mask
-# - refill missing points from mask
+# Marker-mode Johansson dots
 # ----------------------------
-def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: int, dot_count: int):
+def render_marker_johansson(input_path: str, output_path: str, dot_radius: int, dot_count: int):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open input video")
@@ -197,7 +247,7 @@ def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: 
     k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNEL_CLOSE, KERNEL_CLOSE))
     k_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (DILATE_K, DILATE_K))
 
-    # Read first frame
+    # First frame
     ret, frame = cap.read()
     if not ret:
         cap.release()
@@ -207,19 +257,26 @@ def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: 
     prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     mask = build_person_mask(frame, fgbg, k_open, k_close, k_dilate)
 
-    pts = sample_points_from_mask(mask, dot_count)
+    pts = sample_markers_from_mask(prev_gray, mask, dot_count, w, h)
     if pts is None:
-        # fallback: use center-ish random points if mask empty at start
-        rng = np.random.default_rng(1234)
-        pts = np.stack([
-            rng.integers(w * 0.4, w * 0.6, size=(dot_count,)),
-            rng.integers(h * 0.2, h * 0.8, size=(dot_count,))
-        ], axis=1).astype(np.float32)
+        # fallback: random inside mask pixels
+        ys, xs = np.where(mask > 0)
+        if len(xs) > 0:
+            n = min(dot_count, len(xs))
+            idx = np.random.choice(len(xs), size=n, replace=False)
+            pts = np.stack([xs[idx], ys[idx]], axis=1).astype(np.float32)
+        else:
+            # final fallback
+            rng = np.random.default_rng(1234)
+            pts = np.stack([
+                rng.integers(int(w*0.45), int(w*0.55), size=(dot_count,)),
+                rng.integers(int(h*0.20), int(h*0.80), size=(dot_count,))
+            ], axis=1).astype(np.float32)
 
-    # LK expects shape (N,1,2)
     p0 = pts.reshape(-1, 1, 2)
-
+    empty_mask_streak = 0
     frame_idx = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -229,7 +286,12 @@ def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         mask = build_person_mask(frame, fgbg, k_open, k_close, k_dilate)
 
-        # Track points
+        if np.count_nonzero(mask) == 0:
+            empty_mask_streak += 1
+        else:
+            empty_mask_streak = 0
+
+        # Track markers
         p1, stt, err = cv2.calcOpticalFlowPyrLK(
             prev_gray, gray, p0, None,
             winSize=LK_WIN,
@@ -237,66 +299,59 @@ def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: 
             criteria=LK_CRITERIA
         )
 
-        # Filter good points
         stt = stt.reshape(-1)
         p1 = p1.reshape(-1, 2)
-        p0_flat = p0.reshape(-1, 2)
 
         good = (stt == 1)
+        keep_mask = pts_in_mask(mask, p1, w, h) if empty_mask_streak < MAX_RETRY_EMPTY_MASK else good
+        keep = good & keep_mask
 
-        # Also require inside frame and inside mask
-        xs = p1[:, 0]
-        ys = p1[:, 1]
-        inside = (xs >= 0) & (xs < w) & (ys >= 0) & (ys < h)
-
-        xi = np.clip(xs.astype(np.int32), 0, w - 1)
-        yi = np.clip(ys.astype(np.int32), 0, h - 1)
-        in_mask = mask[yi, xi] > 0
-
-        keep = good & inside & in_mask
         kept_pts = p1[keep]
 
-        # Refill missing points if too many lost
         kept_n = len(kept_pts)
         target_n = dot_count
 
-        # If mask is empty (rare), keep whatever we have (avoid full drop)
-        if np.count_nonzero(mask) == 0 and kept_n > 0:
-            refill_n = 0
-        else:
-            missing = target_n - kept_n
+        # Decide refill amount (small refill = less blink)
+        missing = target_n - kept_n
+        if missing > 0:
+            # if many lost, refill more
             if kept_n < int(target_n * MIN_KEEP_RATIO):
-                # aggressive refill
-                refill_n = int(target_n * REFILL_RATIO) + max(0, missing)
+                refill_n = int(target_n * REFILL_RATIO) + missing
             else:
-                refill_n = max(0, missing)
+                refill_n = missing
 
-        if refill_n > 0:
-            new_pts = sample_points_from_mask(mask, refill_n)
-            if new_pts is not None:
+            # Use marker selection first (Johansson-like)
+            new_pts = sample_markers_from_mask(gray, mask, refill_n, w, h)
+            if new_pts is None:
+                # fallback: random in mask
+                ys, xs = np.where(mask > 0)
+                if len(xs) > 0:
+                    n = min(refill_n, len(xs))
+                    idx = np.random.choice(len(xs), size=n, replace=False)
+                    new_pts = np.stack([xs[idx], ys[idx]], axis=1).astype(np.float32)
+
+            if new_pts is not None and len(new_pts) > 0:
                 kept_pts = np.vstack([kept_pts, new_pts])
 
-        # If still empty, fallback to avoid crash
+        # If still empty (rare), fallback
         if len(kept_pts) == 0:
-            # fallback random within frame center region
             rng = np.random.default_rng(1234 + frame_idx)
             kept_pts = np.stack([
-                rng.integers(w * 0.4, w * 0.6, size=(dot_count,)),
-                rng.integers(h * 0.2, h * 0.8, size=(dot_count,))
+                rng.integers(int(w*0.45), int(w*0.55), size=(dot_count,)),
+                rng.integers(int(h*0.20), int(h*0.80), size=(dot_count,))
             ], axis=1).astype(np.float32)
 
-        # If too many points after refill, downsample to dot_count
+        # Downsample if too many
         if len(kept_pts) > dot_count:
             idx = np.random.choice(len(kept_pts), size=dot_count, replace=False)
             kept_pts = kept_pts[idx]
 
-        # Draw dots
+        # Draw (black background)
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
         for x, y in kept_pts:
             cv2.circle(canvas, (int(x), int(y)), dot_radius, (255, 255, 255), -1)
         out.write(canvas)
 
-        # Prepare next
         prev_gray = gray
         p0 = kept_pts.reshape(-1, 1, 2)
 
@@ -304,6 +359,9 @@ def render_stable_johansson_dots(input_path: str, output_path: str, dot_radius: 
     out.release()
 
 
+# ----------------------------
+# Process one job ticket
+# ----------------------------
 def process_ticket(processing_key: str):
     job = get_json(processing_key)
     job_id = job.get("job_id") or processing_key.split("/")[-1].replace(".json", "")
@@ -325,8 +383,8 @@ def process_ticket(processing_key: str):
         log(f"⬇️ download {input_key}")
         s3().download_file(S3_BUCKET, input_key, in_path)
 
-        update_status(job_id, "processing", 35, f"Rendering Johansson-like stable dots (dot={dot_radius}, count={dot_count}, no audio)...")
-        render_stable_johansson_dots(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
+        update_status(job_id, "processing", 35, f"Rendering MARKER dots (dot={dot_radius}, count={dot_count}, no audio)...")
+        render_marker_johansson(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
 
         update_status(job_id, "processing", 90, "Uploading dots.mp4 ...")
         log(f"⬆️ upload {output_key}")
@@ -339,7 +397,7 @@ def main():
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
 
-    log("✅ Worker boot (Johansson-like STABLE DOTS — Mask + Tracking, NO MediaPipe)")
+    log("✅ Worker boot (Johansson MARKER MODE — GFTT + LK Tracking, NO MediaPipe)")
     log(f"AWS_REGION={AWS_REGION!r}")
     log(f"S3_BUCKET={S3_BUCKET!r}")
 
