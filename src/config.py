@@ -1,0 +1,6 @@
+AWS_BUCKET = "ai-people-reader-storage"
+PENDING_PREFIX = "jobs/pending/"
+PROCESSING_PREFIX = "jobs/processing/"
+FAILED_PREFIX = "jobs/failed/"
+OUTPUT_PREFIX = "jobs/output/"
+REGION_NAME = "ap-southeast-1"
