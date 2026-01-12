@@ -28,14 +28,17 @@ PROCESSING_PREFIX = "jobs/processing/"
 DONE_PREFIX = "jobs/done/"
 FAILED_PREFIX = "jobs/failed/"
 
-# Farneback Optical Flow
-FLOW_PYR_SCALE = 0.5
-FLOW_LEVELS = 3
-FLOW_WINSIZE = 15
-FLOW_ITERS = 3
-FLOW_POLY_N = 5
-FLOW_POLY_SIGMA = 1.2
-FLOW_FLAGS = 0
+# Motion mask params
+MOG2_HISTORY = 200
+MOG2_VAR_THRESHOLD = 16
+MOG2_DETECT_SHADOWS = False
+
+# Morphology to clean mask
+KERNEL_OPEN = 3
+KERNEL_CLOSE = 9
+
+# How often to resample dots from the mask (frames)
+RESAMPLE_EVERY = 1  # 1 = every frame (most silhouette-like, stable)
 
 
 def log(msg: str):
@@ -46,6 +49,9 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+# ----------------------------
+# S3 client (NO endpoint_url, NO proxies)
+# ----------------------------
 def s3():
     cfg = Config(proxies={}, retries={"max_attempts": 5, "mode": "standard"})
     return boto3.client(
@@ -88,7 +94,7 @@ def list_keys(prefix: str, max_keys: int = 50):
 
 def s3_move(src_key: str, dst_key: str):
     """
-    copy -> delete (safe copySource format)
+    copy -> delete (safe CopySource format)
     """
     encoded_key = quote(src_key, safe="/")
     copy_source = f"{S3_BUCKET}/{encoded_key}"
@@ -102,7 +108,7 @@ def s3_move(src_key: str, dst_key: str):
 def update_status(job_id: str, status: str, progress: int, message: str = "", outputs=None):
     payload = {
         "job_id": job_id,
-        "status": status,     # queued | processing | done | failed
+        "status": status,  # queued | processing | done | failed
         "progress": int(progress),
         "message": message,
         "updated_at": now_iso(),
@@ -112,10 +118,11 @@ def update_status(job_id: str, status: str, progress: int, message: str = "", ou
 
 
 # ----------------------------
-# Johansson dots (Optical Flow)
-# Output: silent mp4 (we write new frames)
+# Motion-mask Johansson dots (silhouette)
+# - Black bg + white dots placed ONLY where mask says "foreground/person"
+# - Silent mp4 (new encode)
 # ----------------------------
-def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, dot_count: int):
+def render_motionmask_dots(input_path: str, output_path: str, dot_radius: int, dot_count: int):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open input video")
@@ -137,55 +144,62 @@ def render_johansson_dots(input_path: str, output_path: str, dot_radius: int, do
         cap.release()
         raise RuntimeError("Cannot open VideoWriter(mp4v)")
 
-    ret, prev_frame = cap.read()
-    if not ret:
-        cap.release()
-        out.release()
-        raise RuntimeError("Cannot read first frame")
+    # Background subtractor (foreground = moving person)
+    fgbg = cv2.createBackgroundSubtractorMOG2(
+        history=MOG2_HISTORY,
+        varThreshold=MOG2_VAR_THRESHOLD,
+        detectShadows=MOG2_DETECT_SHADOWS,
+    )
 
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-
-    rng = np.random.default_rng(1234)
-    dots = np.stack([
-        rng.integers(0, w, size=(dot_count,)),
-        rng.integers(0, h, size=(dot_count,))
-    ], axis=1).astype(np.float32)
+    k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNEL_OPEN, KERNEL_OPEN))
+    k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNEL_CLOSE, KERNEL_CLOSE))
 
     frame_idx = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame_idx += 1
 
-        flow = cv2.calcOpticalFlowFarneback(
-            prev_gray, gray, None,
-            FLOW_PYR_SCALE, FLOW_LEVELS, FLOW_WINSIZE, FLOW_ITERS,
-            FLOW_POLY_N, FLOW_POLY_SIGMA, FLOW_FLAGS
-        )
+        # 1) Foreground mask
+        fg = fgbg.apply(frame)  # 0..255
+        # 2) Threshold
+        _, fg = cv2.threshold(fg, 200, 255, cv2.THRESH_BINARY)
+        # 3) Clean mask
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, k_open, iterations=1)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, k_close, iterations=1)
 
-        xs = np.clip(dots[:, 0].astype(np.int32), 0, w - 1)
-        ys = np.clip(dots[:, 1].astype(np.int32), 0, h - 1)
-        vecs = flow[ys, xs]
+        # Optional: focus on larger blobs only (reduce background noise)
+        # keep only biggest connected component
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
+        if num_labels > 1:
+            # stats[0] is background
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            biggest = 1 + int(np.argmax(areas))
+            fg = np.where(labels == biggest, 255, 0).astype(np.uint8)
 
-        dots[:, 0] = np.clip(dots[:, 0] + vecs[:, 0], 0, w - 1)
-        dots[:, 1] = np.clip(dots[:, 1] + vecs[:, 1], 0, h - 1)
-
+        # 4) Sample points from mask
+        ys, xs = np.where(fg > 0)
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
-        for x, y in dots:
-            cv2.circle(canvas, (int(x), int(y)), dot_radius, (255, 255, 255), -1)
+
+        if len(xs) > 0:
+            # sample dots uniformly from mask pixels
+            n = min(dot_count, len(xs))
+            idx = np.random.choice(len(xs), size=n, replace=False)
+            pts = list(zip(xs[idx], ys[idx]))
+            for x, y in pts:
+                cv2.circle(canvas, (int(x), int(y)), dot_radius, (255, 255, 255), -1)
 
         out.write(canvas)
-        prev_gray = gray
-        frame_idx += 1
 
     cap.release()
     out.release()
 
 
 # ----------------------------
-# Core job processing
+# Process one job ticket (processing/<job_id>.json)
 # ----------------------------
 def process_ticket(processing_key: str):
     job = get_json(processing_key)
@@ -197,7 +211,7 @@ def process_ticket(processing_key: str):
     dot_radius = int(job.get("dot_radius", DOT_RADIUS_DEFAULT))
     dot_count = int(job.get("dot_count", DOT_COUNT_DEFAULT))
 
-    # ✅ Standard output path that UI waits for
+    # Standard output path that UI should watch
     output_key = f"jobs/{job_id}/output/dots.mp4"
 
     update_status(job_id, "processing", 5, "Downloading input...")
@@ -209,28 +223,26 @@ def process_ticket(processing_key: str):
         log(f"⬇️ download {input_key}")
         s3().download_file(S3_BUCKET, input_key, in_path)
 
-        update_status(job_id, "processing", 35, f"Rendering dots (dot={dot_radius}, no audio)...")
-        render_johansson_dots(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
+        update_status(job_id, "processing", 35, f"Rendering silhouette dots (mask, dot={dot_radius}, no audio)...")
+        render_motionmask_dots(in_path, out_path, dot_radius=dot_radius, dot_count=dot_count)
 
         update_status(job_id, "processing", 90, "Uploading dots.mp4 ...")
         log(f"⬆️ upload {output_key}")
         s3().upload_file(out_path, S3_BUCKET, output_key)
 
-    # ✅ Mark done + include overlay_key for UI
     update_status(job_id, "done", 100, "Completed", outputs={"overlay_key": output_key})
 
 
 def mark_ticket(processing_key: str, job_id: str, target_prefix: str):
     """
     Move processing ticket to done/failed.
-    If it was already moved by another instance, ignore.
+    If already moved/deleted, ignore.
     """
     target_key = f"{target_prefix}{job_id}.json"
     try:
         s3_move(processing_key, target_key)
         log(f"📦 Ticket moved: {processing_key} -> {target_key}")
     except ClientError as e:
-        # If already moved/deleted, don't crash worker
         log(f"⚠️ Ticket move skipped: {e}")
 
 
@@ -238,7 +250,7 @@ def main():
     if not S3_BUCKET:
         raise RuntimeError("S3_BUCKET env missing")
 
-    log("✅ Worker boot (Dots ONLY — Optical Flow, NO MediaPipe)")
+    log("✅ Worker boot (Johansson DOTS — Motion Mask Silhouette, NO MediaPipe)")
     log(f"AWS_REGION={AWS_REGION!r}")
     log(f"S3_BUCKET={S3_BUCKET!r}")
 
