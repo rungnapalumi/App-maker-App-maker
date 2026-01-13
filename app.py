@@ -1,165 +1,121 @@
+# app.py  --- Streamlit frontend สำหรับสร้าง / เช็คงาน dot
 import os
 import io
 import json
 import uuid
-import datetime as dt
+from datetime import datetime, timezone
 
-import boto3
 import streamlit as st
+import boto3
 
-# ---------------------------------------------------------
-# S3 CONFIG (ต้องตรงกับ worker.py / config.py)
-# ---------------------------------------------------------
+# ----------------------------------------------------------
+# Config
+# ----------------------------------------------------------
+AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
-AWS_BUCKET = os.environ.get("S3_BUCKET")  # ใน Render ตั้งชื่อ S3_BUCKET ไว้แล้ว
 
-PENDING_PREFIX = "jobs/pending/"
-OUTPUT_PREFIX = "jobs/output/"
-FAILED_PREFIX = "jobs/failed/"
+if not AWS_BUCKET:
+    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
 
-# ---------------------------------------------------------
-# S3 CLIENT
-# ---------------------------------------------------------
-session = boto3.session.Session(
-    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    region_name=AWS_REGION,
-)
-s3 = session.client("s3")
+s3 = boto3.client("s3", region_name=AWS_REGION)
 
+st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 
-# ---------------------------------------------------------
-# HELPER FUNCTIONS
-# ---------------------------------------------------------
-def generate_job_id() -> str:
-    """สร้าง job id แบบ 20260113_125711__92fddc"""
-    ts = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    rand = uuid.uuid4().hex[:6]
+# ----------------------------------------------------------
+# Helper functions
+# ----------------------------------------------------------
+def new_job_id() -> str:
+    """สร้าง job id ใหม่"""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    rand = uuid.uuid4().hex[:5]
     return f"{ts}__{rand}"
 
+def upload_bytes_to_s3(data: bytes, bucket: str, key: str):
+    s3.put_object(Bucket=bucket, Key=key, Body=data)
 
-def upload_video_and_create_job(video_file, mode: str):
-    """
-    1) อัปโหลดวิดีโอไปที่ jobs/pending/<job_id>/input/input.mp4
-    2) สร้าง job JSON: jobs/pending/<job_id>.json
-    3) คืนค่า job_id, video_key, job_key
-    """
-    job_id = generate_job_id()
+def upload_fileobj_to_s3(file_obj, bucket: str, key: str):
+    s3.upload_fileobj(file_obj, bucket, key)
 
-    # ที่อยู่ของไฟล์ใน S3 (ต้องใช้ key นี้ใน worker ด้วย)
-    video_key = f"{PENDING_PREFIX}{job_id}/input/input.mp4"
-    job_key = f"{PENDING_PREFIX}{job_id}.json"
-
-    # 1) อัปโหลดวิดีโอ
-    file_bytes = video_file.read()
-    video_buffer = io.BytesIO(file_bytes)
-
-    s3.upload_fileobj(
-        video_buffer,
-        AWS_BUCKET,
-        video_key,
-        ExtraArgs={"ContentType": "video/mp4"},
-    )
-
-    # 2) สร้าง job JSON ให้ worker อ่าน
-    job_data = {
-        "job_id": job_id,
-        "mode": mode,
-        "video_key": video_key,  # สำคัญ! worker จะใช้ key นี้ download_file
-        "created_at": dt.datetime.utcnow().isoformat() + "Z",
-        "status": "pending",
-    }
-
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=job_key,
-        Body=json.dumps(job_data).encode("utf-8"),
-        ContentType="application/json",
-    )
-
-    return job_id, video_key, job_key
-
-
-def get_job_result(job_id: str):
-    """ลองอ่านผลลัพธ์ ถ้า worker ทำเสร็จแล้วจะอยู่ที่ output หรือ failed"""
-    output_key = f"{OUTPUT_PREFIX}{job_id}.json"
-    failed_key = f"{FAILED_PREFIX}{job_id}.json"
-
+def get_json_from_s3(bucket: str, key: str):
     try:
-        obj = s3.get_object(Bucket=AWS_BUCKET, Key=output_key)
-        body = obj["Body"].read().decode("utf-8")
-        return "done", json.loads(body)
+        obj = s3.get_object(Bucket=bucket, Key=key)
     except s3.exceptions.NoSuchKey:
-        pass
-    except Exception:
-        pass
+        return None
+    body = obj["Body"].read()
+    return json.loads(body)
 
-    try:
-        obj = s3.get_object(Bucket=AWS_BUCKET, Key=failed_key)
-        body = obj["Body"].read().decode("utf-8")
-        return "failed", json.loads(body)
-    except s3.exceptions.NoSuchKey:
-        return "pending", None
-    except Exception:
-        return "unknown", None
+# ----------------------------------------------------------
+# UI – อัปโหลดและสร้าง job ใหม่
+# ----------------------------------------------------------
+st.title("AI People Reader – Job Creator / Checker")
 
+st.header("1. สร้าง Job ใหม่ใน S3")
 
-# ---------------------------------------------------------
-# STREAMLIT UI
-# ---------------------------------------------------------
-st.set_page_config(page_title="AI People Reader — Job maker", layout="wide")
-
-st.title("AI People Reader — สร้างงานบน S3")
-
-st.markdown(
-    """
-เว็บนี้มีหน้าที่อย่างเดียว:
-
-1. อัปโหลดวิดีโอไปเก็บใน S3 ภายใต้โฟลเดอร์ `jobs/pending/`
-2. สร้างไฟล์ job `.json` ให้ **worker** (src/worker.py) ไปอ่าน
-"""
-)
-
-mode = st.selectbox("เลือกโหมดประมวลผล", ["dots", "skeleton", "effort"], index=0)
+mode = st.selectbox("เลือกโหมดการประมวลผล", ["dots"], index=0)
 
 uploaded = st.file_uploader(
-    "อัปโหลดวิดีโอ (mp4 / mov / m4v)", type=["mp4", "mov", "m4v"]
+    "อัปโหลดวิดีโอ (MP4 / MOV / AVI)",
+    type=["mp4", "mov", "avi", "m4v"]
 )
 
-if st.button("สร้าง Job ใหม่ใน S3"):
+if uploaded is not None:
+    st.info(f"ไฟล์: **{uploaded.name}**, ขนาด ~{uploaded.size/1_000_000:.2f} MB")
+
+if st.button("สร้าง Job ใหม่ใน S3", disabled=(uploaded is None)):
     if uploaded is None:
-        st.error("กรุณาอัปโหลดวิดีโอก่อนค่ะ")
+        st.warning("กรุณาอัปโหลดวิดีก่อนนะคะ")
     else:
-        try:
-            job_id, video_key, job_key = upload_video_and_create_job(uploaded, mode)
+        job_id = new_job_id()
 
-            st.success("สร้าง job ใหม่เรียบร้อยแล้วค่ะ 🎉")
-            st.code(job_id, language="text")
+        # 1) อัปโหลดวิดีโอไปที่ jobs/pending/<job_id>/input/input.mp4
+        video_key = f"jobs/pending/{job_id}/input/input.mp4"
+        upload_fileobj_to_s3(uploaded, AWS_BUCKET, video_key)
 
-            st.write("**Video S3 key:**")
-            st.code(video_key, language="text")
+        # 2) สร้างไฟล์ job metadata ที่ jobs/pending/<job_id>.json
+        job_meta = {
+            "job_id": job_id,
+            "mode": mode,
+            "video_key": video_key,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "pending",
+        }
+        buf = io.BytesIO(json.dumps(job_meta, ensure_ascii=False).encode("utf-8"))
+        meta_key = f"jobs/pending/{job_id}.json"
+        upload_fileobj_to_s3(buf, AWS_BUCKET, meta_key)
 
-            st.write("**Job JSON S3 key (อยู่ในโฟลเดอร์ jobs/pending/):**")
-            st.code(job_key, language="text")
+        st.success("สร้าง job ใหม่เรียบร้อยแล้ว 🎉")
+        st.code(job_id, language="text")
+        st.write("Job JSON S3 key:", meta_key)
+        st.write("Video S3 key:", video_key)
 
-            st.info(
-                "worker (src/worker.py) จะอ่าน job จากโฟลเดอร์ `jobs/pending/` "
-                "แล้วเขียนผลลัพธ์ไปที่ `jobs/output/` หรือ `jobs/failed/`"
-            )
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการสร้าง job: {e}")
+# ----------------------------------------------------------
+# UI – เช็คสถานะของ job
+# ----------------------------------------------------------
+st.header("2. เช็คสถานะผลลัพธ์ของ job")
 
-
-st.markdown("---")
-st.subheader("เช็คสถานะผลลัพธ์ของ job")
-
-check_id = st.text_input("กรอก Job ID (เช่น 20260113_125711__92fddc)")
+default_job_id = ""
+input_job_id = st.text_input("กรอก Job ID (เช่น 20260113_133856__02d9f4)", value=default_job_id)
 
 if st.button("เช็คผลลัพธ์จาก S3"):
-    if not check_id.strip():
-        st.warning("ใส่ Job ID ก่อนนะคะ")
+    job_id = input_job_id.strip()
+    if not job_id:
+        st.warning("กรุณากรอก Job ID ก่อนนะคะ")
     else:
-        status, data = get_job_result(check_id.strip())
-        st.write(f"สถานะ: **{status}**")
-        if data is not None:
-            st.json(data)
+        # ลำดับการเช็ค:
+        # 1) output -> done
+        # 2) failed -> failed
+        # 3) ถ้าไม่มีทั้งคู่ -> pending/processing
+        output_key = f"jobs/output/{job_id}.json"
+        failed_key = f"jobs/failed/{job_id}.json"
+
+        job_output = get_json_from_s3(AWS_BUCKET, output_key)
+        if job_output is not None:
+            st.success("สถานะ: done ✅")
+            st.json(job_output, expanded=False)
+        else:
+            job_failed = get_json_from_s3(AWS_BUCKET, failed_key)
+            if job_failed is not None:
+                st.error("สถานะ: failed ❌")
+                st.json(job_failed, expanded=False)
+            else:
+                st.warning("ยังไม่พบผลลัพธ์ใน output หรือ failed\nอาจจะยังอยู่ในคิว (pending / processing)")
