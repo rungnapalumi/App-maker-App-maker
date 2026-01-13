@@ -1,6 +1,9 @@
-boto3
-numpy
+streamlit
 opencv-python-headless
-mediapipe==0.10.7
+mediapipe
+numpy
+pillow
+boto3
+python-dotenv
 
 
