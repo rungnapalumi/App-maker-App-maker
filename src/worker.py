@@ -1,4 +1,14 @@
-# src/worker.py
+"""
+worker.py — AI People Reader background worker
+
+หน้าที่:
+- ดึง "งาน" (.json) จากโฟลเดอร์ S3: jobs/pending/
+- ย้ายไป jobs/processing/ (เพื่อถือว่ากำลังทำ)
+- ดาวน์โหลด input video ตามที่ระบุใน json
+- แปลงเป็น Johansson dots video ด้วย Mediapipe Pose
+- อัปโหลดผลลัพธ์ไป jobs/output/{job_id}/dots.mp4
+- ถ้าพลาด -> ย้าย job json ไป jobs/failed/
+"""
 
 import os
 import io
@@ -6,13 +16,25 @@ import json
 import time
 import logging
 import tempfile
-from typing import Optional
+from typing import Optional, Tuple
 
 import boto3
-import botocore
+from botocore.exceptions import BotoCoreError, ClientError
+
 import cv2
 import numpy as np
-import mediapipe as mp
+
+try:
+    import mediapipe as mp
+    MP_AVAILABLE = True
+except ImportError:
+    MP_AVAILABLE = False
+
+try:
+    from moviepy.editor import VideoFileClip
+    MOVIEPY_AVAILABLE = True
+except ImportError:
+    MOVIEPY_AVAILABLE = False
 
 from config import (
     PENDING_PREFIX,
@@ -21,133 +43,190 @@ from config import (
     FAILED_PREFIX,
 )
 
-# --------------------------------------------------
+# ---------------------------------------------------------
 # Logging setup
-# --------------------------------------------------
+# ---------------------------------------------------------
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------
-# AWS / S3 setup
-# --------------------------------------------------
-AWS_BUCKET = os.getenv("AWS_BUCKET", os.getenv("BUCKET", "ai-people-reader-storage"))
-AWS_REGION = os.getenv("AWS_REGION", os.getenv("REGION_NAME", "ap-southeast-1"))
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "5"))  # seconds
+# ---------------------------------------------------------
+# Environment / S3 client
+# ---------------------------------------------------------
+
+AWS_BUCKET = os.getenv("AWS_BUCKET")
+AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "ap-southeast-1"))
+
+if not AWS_BUCKET:
+    logger.error("Environment variable AWS_BUCKET is not set. Worker cannot start.")
+    raise SystemExit(1)
+
+logger.info(f"Using bucket: {AWS_BUCKET}, region: {AWS_REGION}")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-logger.info(
-    "Worker starting. Bucket=%s, region=%s, poll_interval=%ss",
-    AWS_BUCKET,
-    AWS_REGION,
-    POLL_INTERVAL,
-)
 
-# --------------------------------------------------
-# Helper functions
-# --------------------------------------------------
+# ---------------------------------------------------------
+# Helper functions for S3 and job management
+# ---------------------------------------------------------
 
-
-def list_pending_job_keys() -> list[str]:
-    """Return list of JSON job keys under the pending prefix."""
+def list_pending_jobs(max_jobs: int = 5) -> list[str]:
+    """
+    List pending job JSON keys under PENDING_PREFIX.
+    Returns a list of S3 keys.
+    """
+    keys: list[str] = []
     try:
-        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX)
-    except botocore.exceptions.BotoCoreError as e:
-        logger.error("Error listing pending jobs: %s", e)
-        return []
+        resp = s3.list_objects_v2(
+            Bucket=AWS_BUCKET,
+            Prefix=PENDING_PREFIX,
+            MaxKeys=max_jobs,
+        )
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Error listing pending jobs: {e}")
+        return keys
 
     contents = resp.get("Contents", [])
-    keys = [obj["Key"] for obj in contents if obj["Key"].endswith(".json")]
+    for obj in contents:
+        key = obj["Key"]
+        if key.endswith(".json"):
+            keys.append(key)
+
     return keys
 
 
-def move_object(src_key: str, dest_key: str) -> None:
-    """Move an object within the same bucket (copy + delete)."""
-    if src_key == dest_key:
-        return
-
-    copy_source = {"Bucket": AWS_BUCKET, "Key": src_key}
-    s3.copy_object(Bucket=AWS_BUCKET, CopySource=copy_source, Key=dest_key)
-    s3.delete_object(Bucket=AWS_BUCKET, Key=src_key)
-
-
-def claim_next_job() -> Optional[str]:
+def move_object(src_key: str, dst_key: str) -> None:
     """
-    Claim one job:
-    - pick first JSON in pending
-    - move to processing
-    - return processing key
+    Move an object within the same bucket by copy + delete.
     """
-    pending_keys = list_pending_job_keys()
-    if not pending_keys:
-        return None
+    try:
+        logger.info(f"Moving {src_key} -> {dst_key}")
+        s3.copy_object(
+            Bucket=AWS_BUCKET,
+            CopySource={"Bucket": AWS_BUCKET, "Key": src_key},
+            Key=dst_key,
+        )
+        s3.delete_object(Bucket=AWS_BUCKET, Key=src_key)
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Error moving {src_key} to {dst_key}: {e}")
+        raise
 
-    pending_key = sorted(pending_keys)[0]  # deterministic
-    job_id = os.path.basename(pending_key)
 
-    processing_key = os.path.join(PROCESSING_PREFIX, job_id)
-    logger.info("Claim job %s: %s -> %s", job_id, pending_key, processing_key)
+def claim_job(pending_key: str) -> str:
+    """
+    Claim a job by moving it from pending/ to processing/.
+    Returns the processing key.
+    """
+    filename = os.path.basename(pending_key)
+    processing_key = os.path.join(PROCESSING_PREFIX, filename)
 
     move_object(pending_key, processing_key)
+    logger.info(f"Claimed job: {pending_key} -> {processing_key}")
     return processing_key
 
 
-def download_s3_to_temp(key: str, suffix: str) -> str:
-    """Download S3 object to a temporary file and return the local path."""
-    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)  # we will reopen via OpenCV
-    logger.info("Downloading s3://%s/%s -> %s", AWS_BUCKET, key, tmp_path)
-    s3.download_file(AWS_BUCKET, key, tmp_path)
-    return tmp_path
-
-
-def upload_file_to_s3(local_path: str, key: str, content_type: str = "video/mp4") -> None:
-    """Upload local file to S3."""
-    logger.info("Uploading %s -> s3://%s/%s", local_path, AWS_BUCKET, key)
-    extra = {"ContentType": content_type}
-    s3.upload_file(local_path, AWS_BUCKET, key, ExtraArgs=extra)
-
-
-# --------------------------------------------------
-# Johansson dots generator (using MediaPipe Pose)
-# --------------------------------------------------
-
-
-def create_johansson_dots_video(input_path: str, output_path: str) -> None:
+def load_job_json(key: str) -> dict:
     """
-    Read input video, run MediaPipe Pose, and render white dots on black background.
-    Save as MP4 at output_path.
+    Download and parse the job JSON file from S3.
     """
-    logger.info("Creating Johansson dots: %s -> %s", input_path, output_path)
+    try:
+        resp = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+        data = resp["Body"].read()
+        return json.loads(data.decode("utf-8"))
+    except (BotoCoreError, ClientError, json.JSONDecodeError) as e:
+        logger.error(f"Error loading job JSON {key}: {e}")
+        raise
 
-    cap = cv2.VideoCapture(input_path)
+
+def upload_file(local_path: str, s3_key: str) -> None:
+    """
+    Upload a local file to S3 at s3_key.
+    """
+    try:
+        logger.info(f"Uploading {local_path} -> s3://{AWS_BUCKET}/{s3_key}")
+        s3.upload_file(local_path, AWS_BUCKET, s3_key)
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Error uploading {local_path} to {s3_key}: {e}")
+        raise
+
+
+def mark_failed(processing_key: str, reason: str) -> None:
+    """
+    Move processing job JSON to failed/ and log the reason.
+    """
+    filename = os.path.basename(processing_key)
+    failed_key = os.path.join(FAILED_PREFIX, filename)
+    logger.error(f"Marking job as FAILED: {processing_key} -> {failed_key} ({reason})")
+    try:
+        move_object(processing_key, failed_key)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Error moving job to failed/: {e}")
+
+
+# ---------------------------------------------------------
+# Johansson dots generation
+# ---------------------------------------------------------
+
+def load_video_metadata(path: str) -> Tuple[int, int, float, int]:
+    """
+    Return (width, height, fps, frame_count) for a given video file.
+    """
+    cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        raise RuntimeError(f"Cannot open input video: {input_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or np.isnan(fps):
-        fps = 25.0
+        raise RuntimeError(f"Cannot open video: {path}")
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    size = (width, height)
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+    cap.release()
+    return width, height, fps, frame_count
+
+
+def create_johansson_dots_video(
+    input_path: str,
+    output_path: str,
+    dot_radius: int = 6,
+    min_detection_confidence: float = 0.5,
+    min_tracking_confidence: float = 0.5,
+) -> None:
+    """
+    Read input video, run Mediapipe Pose per frame,
+    and create a black-background video with white dots
+    at all pose landmarks (Johansson-style).
+
+    Requires mediapipe + opencv to be installed.
+    """
+    if not MP_AVAILABLE:
+        raise RuntimeError("mediapipe is not installed in this environment.")
+
+    width, height, fps, _ = load_video_metadata(input_path)
+    logger.info(
+        f"Creating Johansson dots: {input_path} -> {output_path} | "
+        f"{width}x{height} @ {fps:.2f} fps"
+    )
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {input_path}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, size)
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), True)
 
     mp_pose = mp.solutions.pose
 
+    frame_idx = 0
     with mp_pose.Pose(
         static_image_mode=False,
         model_complexity=1,
         enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        min_detection_confidence=min_detection_confidence,
+        min_tracking_confidence=min_tracking_confidence,
     ) as pose:
-        frame_idx = 0
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -157,120 +236,171 @@ def create_johansson_dots_video(input_path: str, output_path: str) -> None:
             image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = pose.process(image_rgb)
 
-            # black background
-            dots_frame = np.zeros_like(frame)
+            # Black background
+            dot_frame = np.zeros_like(frame)
 
             if results.pose_landmarks:
-                h, w, _ = frame.shape
                 for lm in results.pose_landmarks.landmark:
-                    x = int(lm.x * w)
-                    y = int(lm.y * h)
-                    if 0 <= x < w and 0 <= y < h:
-                        cv2.circle(dots_frame, (x, y), 4, (255, 255, 255), -1)
+                    x_px = int(lm.x * width)
+                    y_px = int(lm.y * height)
+                    if 0 <= x_px < width and 0 <= y_px < height:
+                        cv2.circle(dot_frame, (x_px, y_px), dot_radius, (255, 255, 255), -1)
 
-            out.write(dots_frame)
+            out.write(dot_frame)
+
+            if frame_idx % 100 == 0:
+                logger.info(f"Processed {frame_idx} frames...")
 
     cap.release()
     out.release()
     logger.info("Johansson dots video created successfully.")
 
 
-# --------------------------------------------------
-# Job processing
-# --------------------------------------------------
+# ---------------------------------------------------------
+# Job processing logic
+# ---------------------------------------------------------
+
+def download_s3_to_tempfile(key: str, suffix: str = "") -> str:
+    """
+    Download an S3 object to a temporary file and return its path.
+    """
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    try:
+        logger.info(f"Downloading s3://{AWS_BUCKET}/{key} -> {path}")
+        s3.download_file(AWS_BUCKET, key, path)
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Error downloading {key}: {e}")
+        os.remove(path)
+        raise
+
+    return path
 
 
 def process_job(processing_key: str) -> None:
     """
-    processing_key: jobs/processing/<job_id>.json
-
-    Expected job JSON:
-    {
-        "video_key": "jobs/<job_id>/input/input.mp4",
-        "mode": "dots"   # future: could support 'skeleton' etc.
-    }
+    Handle a single job in processing/.
     """
     job_id = os.path.splitext(os.path.basename(processing_key))[0]
-    logger.info("Processing job %s (%s)", job_id, processing_key)
+    logger.info(f"Processing job: {job_id}")
 
-    # Download and parse job JSON
-    obj = s3.get_object(Bucket=AWS_BUCKET, Key=processing_key)
-    job_data = json.loads(obj["Body"].read().decode("utf-8"))
+    try:
+        job = load_job_json(processing_key)
+    except Exception as e:  # noqa: BLE001
+        mark_failed(processing_key, f"Invalid job json: {e}")
+        return
 
-    video_key = job_data.get("video_key")
-    mode = job_data.get("mode", "dots")
+    video_key = job.get("video_key")
+    mode = job.get("mode", "dots")
 
     if not video_key:
-        raise ValueError("Job JSON missing 'video_key'")
+        mark_failed(processing_key, "Missing 'video_key' in job json.")
+        return
 
-    # Download video
-    input_path = download_s3_to_temp(video_key, suffix=".mp4")
+    logger.info(f"Job {job_id}: video_key={video_key}, mode={mode}")
 
-    # Prepare local output
+    # Download input video
+    try:
+        input_path = download_s3_to_tempfile(video_key, suffix=".mp4")
+    except Exception as e:  # noqa: BLE001
+        mark_failed(processing_key, f"Failed to download input video: {e}")
+        return
+
+    # Prepare temp output path
     fd, output_path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
 
-    if mode == "dots":
-        create_johansson_dots_video(input_path, output_path)
-        output_key = os.path.join(OUTPUT_PREFIX, job_id, "dots.mp4")
-    else:
-        # สำหรับอนาคต ถ้าจะมีโหมดอื่น
-        raise ValueError(f"Unsupported mode: {mode}")
-
-    # Upload result
-    upload_file_to_s3(output_path, output_key)
-
-    logger.info("Job %s done. Output=%s", job_id, output_key)
-
-
-def mark_job_failed(processing_key: str, error_message: str) -> None:
-    """Move job JSON to failed/ และเก็บ error message เพิ่มเติม."""
-    job_id = os.path.basename(processing_key)
-    failed_key = os.path.join(FAILED_PREFIX, job_id)
-
     try:
-        # Read current JSON
-        obj = s3.get_object(Bucket=AWS_BUCKET, Key=processing_key)
-        job_data = json.loads(obj["Body"].read().decode("utf-8"))
-    except Exception:
-        job_data = {}
+        if mode == "dots":
+            create_johansson_dots_video(input_path, output_path)
+        else:
+            logger.warning(
+                f"Unknown mode '{mode}' for job {job_id}. "
+                f"Defaulting to Johansson dots."
+            )
+            create_johansson_dots_video(input_path, output_path)
 
-    job_data["status"] = "failed"
-    job_data["error"] = error_message
+        # Upload result
+        output_key = os.path.join(OUTPUT_PREFIX, job_id, "dots.mp4")
+        upload_file(output_path, output_key)
 
-    body = json.dumps(job_data).encode("utf-8")
-    s3.put_object(Bucket=AWS_BUCKET, Key=failed_key, Body=body, ContentType="application/json")
-    s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
+        logger.info(f"Job {job_id} completed. Output: s3://{AWS_BUCKET}/{output_key}")
 
-    logger.error("Marked job failed: %s (%s)", job_id, error_message)
+        # Optionally, we could delete the processing json or keep it as history.
+        # For now, move it to output/ as well for record.
+        finished_json_key = os.path.join(OUTPUT_PREFIX, job_id, f"{job_id}.json")
+        move_object(processing_key, finished_json_key)
+
+    except Exception as e:  # noqa: BLE001
+        logger.exception(f"Error while processing job {job_id}: {e}")
+        mark_failed(processing_key, str(e))
+    finally:
+        # Clean up temp files
+        try:
+            if os.path.exists(input_path):
+                os.remove(input_path)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+        except Exception:
+            pass
 
 
-# --------------------------------------------------
+# ---------------------------------------------------------
 # Main loop
-# --------------------------------------------------
+# ---------------------------------------------------------
+
+POLL_INTERVAL_SECONDS = 5
 
 
 def main() -> None:
+    """
+    Main worker loop:
+    - list pending jobs
+    - claim & process one by one
+    - sleep if nothing to do
+    """
+    if not MP_AVAILABLE:
+        logger.error(
+            "mediapipe is NOT available. "
+            "Please ensure 'mediapipe' (or mediapipe-lite with correct imports) "
+            "is installed in this environment."
+        )
+
+    if not MOVIEPY_AVAILABLE:
+        logger.warning(
+            "moviepy is not available. This worker will still run using OpenCV only, "
+            "but make sure requirements.txt includes 'moviepy' if needed elsewhere."
+        )
+
+    logger.info("AI People Reader worker started. Waiting for jobs...")
+
     while True:
         try:
-            processing_key = claim_next_job()
-            if not processing_key:
-                logger.info("No pending jobs. Sleeping %ss...", POLL_INTERVAL)
-                time.sleep(POLL_INTERVAL)
+            pending = list_pending_jobs()
+            if not pending:
+                logger.info("No pending jobs. Sleeping...")
+                time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
-            try:
-                process_job(processing_key)
-                # ถ้า success สามารถลบ job JSON ใน processing ได้ หรือจะเก็บไว้ก็ได้
-                s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
-            except Exception as e:
-                logger.exception("Error while processing job %s", processing_key)
-                mark_job_failed(processing_key, str(e))
+            logger.info(f"Found {len(pending)} pending job(s).")
+            for pending_key in pending:
+                try:
+                    processing_key = claim_job(pending_key)
+                    process_job(processing_key)
+                except Exception as e:  # noqa: BLE001
+                    # If claiming itself fails badly, just log and continue.
+                    logger.exception(f"Unexpected error handling job {pending_key}: {e}")
 
-        except Exception:
-            # อย่าให้ worker ตายง่าย ๆ
-            logger.exception("Unexpected error in main loop")
-            time.sleep(POLL_INTERVAL)
+        except KeyboardInterrupt:
+            logger.info("Worker interrupted, shutting down.")
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Unexpected top-level error: {e}")
+            time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
