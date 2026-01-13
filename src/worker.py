@@ -1,43 +1,54 @@
 import os
 import json
+import time
 import boto3
+import tempfile
 import cv2
 import numpy as np
-from datetime import datetime
-from mediapipe.python.solutions import pose as mp_pose
+from moviepy.editor import VideoFileClip
 
-# Load environment variables
-AWS_BUCKET = os.environ["AWS_BUCKET"]
-AWS_REGION = os.environ["AWS_REGION"]
-JOB_POLL_INTERVAL = int(os.environ.get("JOB_POLL_INTERVAL", 10))
+# ---------------------------------------------------------
+# 1) LOAD ENVIRONMENT VARIABLES
+# ---------------------------------------------------------
+AWS_ACCESS_KEY_ID     = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+AWS_REGION            = os.environ.get("AWS_REGION", "ap-southeast-1")
+AWS_BUCKET            = os.environ.get("AWS_BUCKET")
+JOB_POLL_INTERVAL     = int(os.environ.get("JOB_POLL_INTERVAL", "10"))
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+# ---------------------------------------------------------
+# 2) CREATE S3 CLIENT
+# ---------------------------------------------------------
+s3 = boto3.client(
+    "s3",
+    region_name = AWS_REGION,
+    aws_access_key_id = AWS_ACCESS_KEY_ID,
+    aws_secret_access_key = AWS_SECRET_ACCESS_KEY
+)
 
-PENDING_PREFIX = "jobs/pending/"
-PROCESSING_PREFIX = "jobs/processing/"
-OUTPUT_PREFIX = "jobs/output/"
-FAILED_PREFIX = "jobs/failed/"
+# ---------------------------------------------------------
+# 3) IMPORTANT: FIXED MEDIAPIPE IMPORT
+# ---------------------------------------------------------
+import mediapipe as mp
+mp_pose = mp.solutions.pose
 
-def read_job_json(key):
-    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
-    return json.loads(obj["Body"].read())
 
-def write_json_to_s3(data, key):
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=key,
-        Body=json.dumps(data),
-        ContentType="application/json"
-    )
+# ---------------------------------------------------------
+# 4) PROCESS VIDEO → DOT MOTION
+# ---------------------------------------------------------
+def generate_dot_video(input_path, output_path, dot_size=2):
 
-def process_dot_video(input_path, output_path, dot_size=2):
+    print("Processing video:", input_path)
+
     cap = cv2.VideoCapture(input_path)
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps    = int(cap.get(cv2.CAP_PROP_FPS))
+    width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    temp_no_audio = output_path.replace(".mp4", "_temp.mp4")
+
+    writer = cv2.VideoWriter(temp_no_audio, fourcc, fps, (width, height))
 
     with mp_pose.Pose(static_image_mode=False) as pose:
         while True:
@@ -45,95 +56,119 @@ def process_dot_video(input_path, output_path, dot_size=2):
             if not ret:
                 break
 
-            black = np.zeros((h, w, 3), dtype=np.uint8)
+            h, w, _ = frame.shape
+            out_frame = np.zeros((h, w, 3), dtype=np.uint8)
+
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            result = pose.process(rgb)
+            results = pose.process(rgb)
 
-            if result.pose_landmarks:
-                for lm in result.pose_landmarks.landmark:
-                    cx = int(lm.x * w)
-                    cy = int(lm.y * h)
-                    if 0 <= cx < w and 0 <= cy < h:
-                        cv2.circle(
-                            black, 
-                            (cx, cy), 
-                            dot_size, 
-                            (255, 255, 255), 
-                            -1
-                        )
+            if results.pose_landmarks:
+                for lm in results.pose_landmarks.landmark:
+                    x = int(lm.x * w)
+                    y = int(lm.y * h)
+                    if 0 <= x < w and 0 <= y < h:
+                        cv2.circle(out_frame, (x, y), dot_size, (255, 255, 255), -1)
 
-            out.write(black)
+            writer.write(out_frame)
 
     cap.release()
-    out.release()
+    writer.release()
 
-def process_job(job_id):
-    json_key = f"{PENDING_PREFIX}{job_id}.json"
-    folder = f"{PENDING_PREFIX}{job_id}/"
-    video_key = f"{folder}input/input.mp4"
-
-    local_in = "/tmp/input.mp4"
-    local_out = "/tmp/output.mp4"
-
-    print(f"[JOB] Start job {job_id}")
-
+    # ---- Add Audio Back ----------------------------------
     try:
-        s3.download_file(AWS_BUCKET, video_key, local_in)
-    except Exception as e:
-        print("[ERROR] Cannot download input video:", e)
-        write_json_to_s3(
-            {"job_id": job_id, "status": "failed", "error": "Cannot download video"},
-            f"{FAILED_PREFIX}{job_id}.json"
-        )
-        return
+        original = VideoFileClip(input_path)
+        processed = VideoFileClip(temp_no_audio)
 
-    try:
-        process_dot_video(local_in, local_out)
-    except Exception as e:
-        print("[ERROR] Video processing failed:", e)
-        write_json_to_s3(
-            {"job_id": job_id, "status": "failed", "error": str(e)},
-            f"{FAILED_PREFIX}{job_id}.json"
-        )
-        return
-
-    out_key = f"{OUTPUT_PREFIX}{job_id}.mp4"
-    json_out_key = f"{OUTPUT_PREFIX}{job_id}.json"
-
-    try:
-        s3.upload_file(local_out, AWS_BUCKET, out_key)
-
-        write_json_to_s3(
-            {"job_id": job_id, "status": "done", "video": out_key},
-            json_out_key
-        )
-        print(f"[DONE] Job {job_id} finished")
-
-    except Exception as e:
-        print("[ERROR] Failed uploading output:", e)
-        write_json_to_s3(
-            {"job_id": job_id, "status": "failed", "error": "Upload failed"},
-            f"{FAILED_PREFIX}{job_id}.json"
-        )
-
-def poll_jobs():
-    print("Worker started. Waiting for jobs...")
-    while True:
-        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX)
-        items = resp.get("Contents", [])
-
-        jobs = [x["Key"] for x in items if x["Key"].endswith(".json")]
-
-        if jobs:
-            job_key = jobs[0]
-            job_id = job_key.split("/")[-1].replace(".json", "")
-            process_job(job_id)
-
+        if original.audio:
+            final = processed.set_audio(original.audio)
         else:
-            print("No pending jobs. Sleeping...")
-        
-        import time
+            final = processed
+
+        final.write_videofile(
+            output_path,
+            codec="libx264",
+            audio_codec="aac",
+            temp_audiofile="temp-audio.m4a",
+            remove_temp=True
+        )
+
+        original.close()
+        processed.close()
+        final.close()
+
+    except Exception as e:
+        print("Audio merge failed:", e)
+        os.rename(temp_no_audio, output_path)
+
+    if os.path.exists(temp_no_audio):
+        os.remove(temp_no_audio)
+
+    print("Processing complete:", output_path)
+
+
+# ---------------------------------------------------------
+# 5) PROCESS A SINGLE JOB
+# ---------------------------------------------------------
+def process_job(job_id, job_key):
+
+    input_key = f"jobs/pending/{job_id}/input/input.mp4"
+    output_key = f"jobs/output/{job_id}.json"
+
+    print("Downloading input video from S3:", input_key)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        local_input  = os.path.join(tmpdir, "input.mp4")
+        local_output = os.path.join(tmpdir, "dots.mp4")
+        result_json  = os.path.join(tmpdir, "result.json")
+
+        # --- Download video
+        s3.download_file(AWS_BUCKET, input_key, local_input)
+
+        # --- Process video
+        generate_dot_video(local_input, local_output, dot_size=2)
+
+        # --- Upload processed video
+        s3.upload_file(local_output, AWS_BUCKET, f"jobs/output/{job_id}/dots.mp4")
+
+        result = {"status": "done", "job_id": job_id}
+        with open(result_json, "w") as f:
+            json.dump(result, f)
+
+        s3.upload_file(result_json, AWS_BUCKET, output_key)
+
+        # --- Clean pending folder
+        s3.delete_object(Bucket=AWS_BUCKET, Key=input_key)
+
+    print("Job completed:", job_id)
+
+
+# ---------------------------------------------------------
+# 6) MAIN LOOP
+# ---------------------------------------------------------
+def main():
+    print("Worker started, polling for jobs every", JOB_POLL_INTERVAL, "seconds…")
+
+    while True:
         time.sleep(JOB_POLL_INTERVAL)
 
+        response = s3.list_objects_v2(
+            Bucket=AWS_BUCKET,
+            Prefix="jobs/pending/",
+        )
+
+        if "Contents" not in response:
+            continue
+
+        for item in response["Contents"]:
+            key = item["Key"]
+            if key.endswith(".json"):
+                try:
+                    job_id = key.split("/")[-1].replace(".json", "")
+                    print("Found job:", job_id)
+                    process_job(job_id, key)
+                except Exception as e:
+                    print("FAILED:", job_id, str(e))
+
+
 if __name__ == "__main__":
-    poll_jobs()
+    main()
