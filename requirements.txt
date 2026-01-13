@@ -1,11 +1,12 @@
 streamlit
 opencv-python-headless
-mediapipe-lite
+mediapipe
 numpy
 pillow
 boto3
 python-dotenv
 moviepy
+
 
 
 
