@@ -1,8 +1,8 @@
 streamlit
 opencv-python-headless
-mediapipe
+mediapipe==0.10.9.post1
 numpy
-pillow
+Pillow
 boto3
 python-dotenv
 moviepy==1.0.3
