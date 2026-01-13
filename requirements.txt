@@ -6,7 +6,8 @@ pillow
 boto3
 python-dotenv
 moviepy==1.0.3
-imageio_ffmpeg
+imageio-ffmpeg
+
 
 
 
