@@ -2,12 +2,4 @@ services:
   - type: worker
     name: ai-people-reader-worker
     env: python
-    plan: starter
-    buildCommand: |
-      pip install -r requirements.txt
     startCommand: python src/worker.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.13
-
-
