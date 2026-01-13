@@ -1,9 +1,13 @@
-mediapipe==0.10.9
+streamlit
 opencv-python-headless
-moviepy
+mediapipe==0.9.0.1
 numpy
+pillow
 boto3
-Pillow
+python-dotenv
+moviepy==1.0.3
+imageio-ffmpeg
+
 
 
 
