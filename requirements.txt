@@ -1,8 +1,10 @@
-mediapipe~=0.10.14
-opencv-python-headless
+opencv-python
+pillow
 numpy
+mediapipe==0.9.1.0
 boto3
-python-dotenv
+botocore
+moviepy
 
 
 
