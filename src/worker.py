@@ -52,14 +52,14 @@ def list_pending_jobs():
     return keys
 
 
-def load_json(key):
+def load_json(key: str) -> dict:
     """Download and parse JSON from S3"""
     obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
     data = obj["Body"].read().decode("utf-8")
     return json.loads(data)
 
 
-def save_json(data, key):
+def save_json(data: dict, key: str) -> None:
     """Upload JSON to S3"""
     body = json.dumps(data).encode("utf-8")
     s3.put_object(
@@ -70,74 +70,100 @@ def save_json(data, key):
     )
 
 
-def move_object(src_key, dst_key):
-    """Move object inside the same bucket (copy + delete)"""
+def move_object(src_key: str, dst_key: str) -> None:
+    """
+    Move object inside the same bucket (copy + delete).
+
+    IMPORTANT:
+    ใช้รูปแบบ dict ให้ S3 ชัดเจนว่า bucket ไหน / key ไหน
+    ป้องกัน error: Invalid copy source bucket name
+    """
+    copy_source = {"Bucket": S3_BUCKET, "Key": src_key}
     s3.copy_object(
         Bucket=S3_BUCKET,
-        CopySource={"Bucket": S3_BUCKET, "Key": src_key},
+        CopySource=copy_source,
         Key=dst_key,
     )
     s3.delete_object(Bucket=S3_BUCKET, Key=src_key)
 
 
-def copy_video(video_key: str, result_key: str):
+def copy_video(src_key: str, dst_key: str) -> None:
     """
-    คัดลอกไฟล์วิดีโอจาก video_key -> result_key ใน bucket เดียวกัน
-    ตอนนี้เรายังไม่ได้ประมวลผลจริง แค่ copy เพื่อให้ pipeline สมบูรณ์ก่อน
+    Copy video from src_key -> dst_key ใน bucket เดียวกัน
+
+    src_key  เช่น jobs/pending/{job_id}__/input/input.mp4
+    dst_key  เช่น jobs/output/{job_id}__.mp4  (หรือ path ที่กำหนดเอง)
     """
-    logging.info(
-        "Copying video from s3://%s/%s to s3://%s/%s",
-        S3_BUCKET,
-        video_key,
-        S3_BUCKET,
-        result_key,
-    )
+    logging.info("Copying video from %s to %s", src_key, dst_key)
+    copy_source = {"Bucket": S3_BUCKET, "Key": src_key}
     s3.copy_object(
         Bucket=S3_BUCKET,
-        CopySource={"Bucket": S3_BUCKET, "Key": video_key},
-        Key=result_key,
+        CopySource=copy_source,
+        Key=dst_key,
     )
 
 
 # -------------------------------------------------
 # Job processing
 # -------------------------------------------------
-def process_job(job_key: str):
+def process_job(job_key: str) -> None:
     """
-    Processor เวอร์ชันเริ่มต้น:
+    Simple processor:
     - อ่าน job JSON จาก jobs/pending/
-    - ถ้ามี video_key: copy วิดีโอไป jobs/output/<job_id>/output.mp4
-    - เขียนผลลัพธ์ไปที่ jobs/output/<job_id>.json
-    - ย้าย job JSON จาก pending -> done
+    - ถ้ามี video_key ให้ copy วิดีโอไป output
+    - เขียนผล JSON ไป jobs/output/{job_id}.json
+    - ย้าย job JSON ไป jobs/done/
     """
     job = load_json(job_key)
     job_id = job.get("job_id") or os.path.basename(job_key).replace(".json", "")
-    mode = job.get("mode", "dots")
-    video_key = job.get("video_key")  # เช่น jobs/pending/<job_id>/input/input.mp4
 
     logging.info("Processing job %s (key=%s)", job_id, job_key)
 
+    video_key = job.get("video_key")
+
     result_video_key = None
-
-    # ถ้า job มี video_key ให้ copy ไป output
     if video_key:
-        result_video_key = f"{OUTPUT_PREFIX}{job_id}/output.mp4"
-        copy_video(video_key, result_video_key)
-    else:
-        logging.warning("Job %s has no 'video_key' field in JSON", job_id)
+        # พยายาม map จาก pending -> output แบบ automatic
+        # ตัวอย่าง:
+        #   jobs/pending/20260113__abcd/input/input.mp4
+        # -> jobs/output/20260113__abcd.mp4
+        if video_key.startswith(PENDING_PREFIX):
+            # ตัด prefix 'jobs/pending/' ออก แล้วไปต่อท้ายที่ OUTPUT_PREFIX
+            tail = video_key[len(PENDING_PREFIX) :]
+            # ลบโฟลเดอร์ input/ ช่วงท้ายถ้ามี
+            # เช่น '20260113__abcd/input/input.mp4' -> '20260113__abcd.mp4'
+            if "/input/" in tail:
+                folder, filename = tail.split("/input/", 1)
+                tail = f"{folder}.mp4"
+            result_video_key = f"{OUTPUT_PREFIX}{tail}"
+        else:
+            # fallback แบบง่าย ๆ
+            result_video_key = f"{OUTPUT_PREFIX}{job_id}.mp4"
 
-    # สร้าง payload ผลลัพธ์
+        try:
+            copy_video(video_key, result_video_key)
+        except Exception as e:
+            logging.exception(
+                "Failed to copy video for job %s (src=%s, dst=%s): %s",
+                job_id,
+                video_key,
+                result_video_key,
+                e,
+            )
+            # ถ้าก๊อปวิดีโอไม่ได้ เราถือว่า job fail เลย
+            raise
+
+    # ถ้ามาถึงตรงนี้ แปลว่าอย่างน้อยส่วนที่จำเป็นสำเร็จ
     result = {
         "status": "done",
         "job_id": job_id,
-        "mode": mode,
         "video_key": video_key,
         "result_video_key": result_video_key,
     }
 
     # เขียนผลลัพธ์ไปที่ jobs/output/{job_id}.json
-    output_key = f"{OUTPUT_PREFIX}{job_id}.json"
-    save_json(result, output_key)
+    output_json_key = f"{OUTPUT_PREFIX}{job_id}.json"
+    save_json(result, output_json_key)
 
     # ย้าย job เดิมจาก pending -> done
     done_key = f"{DONE_PREFIX}{os.path.basename(job_key)}"
@@ -147,7 +173,7 @@ def process_job(job_key: str):
         "Job %s finished. Output JSON at s3://%s/%s",
         job_id,
         S3_BUCKET,
-        output_key,
+        output_json_key,
     )
 
 
@@ -175,7 +201,7 @@ def main():
                 process_job(job_key)
             except Exception as e:
                 logging.exception("Job failed for %s: %s", job_key, e)
-                # ย้ายไฟล์ job JSON ไปโฟลเดอร์ failed แบบเดิม
+                # ย้ายไฟล์ job JSON ไปโฟลเดอร์ failed
                 failed_key = f"{FAILED_PREFIX}{os.path.basename(job_key)}"
                 try:
                     move_object(job_key, failed_key)
@@ -185,7 +211,7 @@ def main():
                         job_key,
                     )
 
-        # เสร็จรอบนึงแล้วกลับไป loop ต่อทันที (ไม่ต้อง sleep เพิ่ม)
+        # เสร็จหนึ่งรอบแล้ววน loop ต่อเลย
 
 
 if __name__ == "__main__":
