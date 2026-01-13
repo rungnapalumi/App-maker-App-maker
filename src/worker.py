@@ -46,7 +46,7 @@ def list_pending_jobs():
     keys = []
     for obj in resp.get("Contents", []):
         key = obj["Key"]
-        # เราเอาเฉพาะไฟล์ .json ไม่เอาโฟลเดอร์
+        # เอาเฉพาะไฟล์ .json ไม่เอาโฟลเดอร์
         if key.endswith(".json") and not key.endswith("/"):
             keys.append(key)
     return keys
@@ -80,24 +80,59 @@ def move_object(src_key, dst_key):
     s3.delete_object(Bucket=S3_BUCKET, Key=src_key)
 
 
+def copy_video(video_key: str, result_key: str):
+    """
+    คัดลอกไฟล์วิดีโอจาก video_key -> result_key ใน bucket เดียวกัน
+    ตอนนี้เรายังไม่ได้ประมวลผลจริง แค่ copy เพื่อให้ pipeline สมบูรณ์ก่อน
+    """
+    logging.info(
+        "Copying video from s3://%s/%s to s3://%s/%s",
+        S3_BUCKET,
+        video_key,
+        S3_BUCKET,
+        result_key,
+    )
+    s3.copy_object(
+        Bucket=S3_BUCKET,
+        CopySource={"Bucket": S3_BUCKET, "Key": video_key},
+        Key=result_key,
+    )
+
+
 # -------------------------------------------------
 # Job processing
 # -------------------------------------------------
 def process_job(job_key: str):
     """
-    ตอนนี้ยังไม่ทำ video processing จริง ๆ
-    แค่เปลี่ยนสถานะเป็น done แล้วเขียนผลลัพธ์ไปที่ jobs/output/
+    Processor เวอร์ชันเริ่มต้น:
+    - อ่าน job JSON จาก jobs/pending/
+    - ถ้ามี video_key: copy วิดีโอไป jobs/output/<job_id>/output.mp4
+    - เขียนผลลัพธ์ไปที่ jobs/output/<job_id>.json
+    - ย้าย job JSON จาก pending -> done
     """
     job = load_json(job_key)
     job_id = job.get("job_id") or os.path.basename(job_key).replace(".json", "")
+    mode = job.get("mode", "dots")
+    video_key = job.get("video_key")  # เช่น jobs/pending/<job_id>/input/input.mp4
 
     logging.info("Processing job %s (key=%s)", job_id, job_key)
 
-    # ตรงนี้เดี๋ยวอนาคตเราค่อยเสียบ logic ทำ dot / skeleton ฯลฯ
-    # ตอนนี้คือ dummy processor: mark status=done
+    result_video_key = None
+
+    # ถ้า job มี video_key ให้ copy ไป output
+    if video_key:
+        result_video_key = f"{OUTPUT_PREFIX}{job_id}/output.mp4"
+        copy_video(video_key, result_video_key)
+    else:
+        logging.warning("Job %s has no 'video_key' field in JSON", job_id)
+
+    # สร้าง payload ผลลัพธ์
     result = {
         "status": "done",
         "job_id": job_id,
+        "mode": mode,
+        "video_key": video_key,
+        "result_video_key": result_video_key,
     }
 
     # เขียนผลลัพธ์ไปที่ jobs/output/{job_id}.json
