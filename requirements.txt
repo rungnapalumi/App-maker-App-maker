@@ -1,11 +1,6 @@
-opencv-python
-pillow
-numpy
-mediapipe==0.10.10
 boto3
-botocore
-moviepy
-
-
+numpy
+opencv-python-headless
+mediapipe==0.10.7
 
 
