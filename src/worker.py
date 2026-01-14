@@ -1,11 +1,11 @@
-# worker.py — AI People Reader Worker (Johansson dot processor)
+# worker.py — AI People Reader Worker (Johansson dots, no OpenCV)
 #
 # Pipeline:
 #   - Poll jobs จาก jobs/pending/*.json
-#   - อ่าน JSON (schema ใหม่/เก่า)
-#   - โหลด input video จาก S3
+#   - อ่าน JSON (input_key/output_key หรือ video_key/result_video_key)
+#   - ดาวน์โหลด input video จาก S3
 #   - ประมวลผลเป็น Johansson-style dot video (พื้นดำ + จุดข้อต่อ)
-#   - อัปโหลด result.mp4 ไปยัง output_key ใน S3
+#   - อัปโหลด result.mp4 กลับไปที่ output_key ใน S3
 #   - ย้าย JSON: pending -> processing -> finished/failed
 
 import json
@@ -13,14 +13,13 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
-import io
 import tempfile
 
 import boto3
 from botocore.exceptions import ClientError
 
-import cv2
 import numpy as np
+import imageio.v2 as imageio
 import mediapipe as mp
 
 # ----------------------------------------------------------
@@ -42,12 +41,12 @@ JOBS_FINISHED_PREFIX = "jobs/finished/"
 JOBS_FAILED_PREFIX = "jobs/failed/"
 JOBS_OUTPUT_PREFIX = "jobs/output/"
 
-print("====== AI People Reader Worker (Johansson) ======", flush=True)
+print("====== AI People Reader Worker (Johansson, no cv2) ======", flush=True)
 print(f"Using bucket: {AWS_BUCKET}", flush=True)
 print(f"Region     : {AWS_REGION}", flush=True)
 print(f"Poll every : {JOB_POLL_INTERVAL} seconds", flush=True)
 
-# MediaPipe pose setup (สร้างครั้งเดียวใช้ทั้ง worker)
+# MediaPipe pose setup
 mp_pose = mp.solutions.pose
 
 
@@ -78,9 +77,6 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 
 def list_pending_objects() -> List[str]:
-    """
-    คืน list ของ key ทั้งหมดใต้ jobs/pending/
-    """
     keys: List[str] = []
     continuation_token: Optional[str] = None
 
@@ -110,10 +106,6 @@ def list_pending_objects() -> List[str]:
 
 
 def find_one_pending_job_key() -> Optional[str]:
-    """
-    หา job .json ตัวแรกใน jobs/pending/
-    - เลือกเฉพาะ key ที่ลงท้ายด้วย ".json"
-    """
     print(f"[find_one_pending_job_key] prefix={JOBS_PENDING_PREFIX}", flush=True)
     all_keys = list_pending_objects()
     json_keys = sorted(k for k in all_keys if k.endswith(".json"))
@@ -128,12 +120,13 @@ def find_one_pending_job_key() -> Optional[str]:
 
 
 # ----------------------------------------------------------
-# Johansson dot processing
+# Johansson dot processing (no cv2)
 # ----------------------------------------------------------
 
 def process_video_to_johansson(input_key: str, output_key: str) -> None:
     """
     ดาวน์โหลด input video จาก S3 -> ประมวลผลเป็น Johansson dots -> อัปโหลด output video กลับ S3
+    ใช้ imageio + mediapipe (ไม่ใช้ cv2)
     """
     print(f"[johansson] start processing {input_key} -> {output_key}", flush=True)
 
@@ -148,21 +141,28 @@ def process_video_to_johansson(input_key: str, output_key: str) -> None:
     os.close(tmp_out_fd)
     print(f"[johansson] will write output to {tmp_out_path}", flush=True)
 
-    cap = cv2.VideoCapture(tmp_in_path)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open input video")
+    reader = imageio.get_reader(tmp_in_path)
+    meta = reader.get_meta_data()
+    fps = float(meta.get("fps", 25.0))
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if not fps or fps <= 0:
-        fps = 25.0
+    print(f"[johansson] input fps={fps}", flush=True)
 
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 360)
+    # เราต้องอ่าน frame แรกก่อน เพื่อรู้ขนาดภาพ
+    try:
+        first_frame = reader.get_next_data()
+    except StopIteration:
+        reader.close()
+        raise RuntimeError("Input video has no frames")
 
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(tmp_out_path, fourcc, fps, (width, height))
+    height, width, _ = first_frame.shape
+    print(f"[johansson] video size={width}x{height}", flush=True)
 
-    print(f"[johansson] video info: {width}x{height} @ {fps} fps", flush=True)
+    writer = imageio.get_writer(
+        tmp_out_path,
+        fps=fps,
+        codec="libx264",
+        macro_block_size=None,  # ให้รับขนาดภาพอะไรก็ได้
+    )
 
     # Pose estimator
     with mp_pose.Pose(
@@ -173,44 +173,48 @@ def process_video_to_johansson(input_key: str, output_key: str) -> None:
         min_tracking_confidence=0.5,
     ) as pose:
         frame_idx = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
 
-            frame_idx += 1
-            if frame_idx % 50 == 0:
-                print(f"[johansson] processed {frame_idx} frames", flush=True)
+        def process_frame(frame: np.ndarray) -> np.ndarray:
+            """Convert frame -> black+white dots"""
+            h, w, _ = frame.shape
+            # frame จาก imageio เป็น RGB อยู่แล้ว
+            results = pose.process(frame)
 
-            # Run pose
-            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(image_rgb)
-
-            # พื้นดำล้วน
-            black = np.zeros_like(frame)
+            black = np.zeros_like(frame)  # พื้นดำสนิท
 
             if results.pose_landmarks:
-                h, w, _ = frame.shape
                 for lm in results.pose_landmarks.landmark:
                     if lm.visibility < 0.5:
                         continue
                     x = int(lm.x * w)
                     y = int(lm.y * h)
                     if 0 <= x < w and 0 <= y < h:
-                        # จุดสีขาว ขนาด 6 px (ปรับได้)
-                        cv2.circle(black, (x, y), 6, (255, 255, 255), -1)
+                        # จุดขาวขนาด 6 px
+                        black[y - 3 : y + 4, x - 3 : x + 4] = 255
+            return black
 
-            out.write(black)
+        # process frame แรกที่อ่านมาแล้ว
+        frame_idx += 1
+        if frame_idx % 50 == 0:
+            print(f"[johansson] processed {frame_idx} frames", flush=True)
+        writer.append_data(process_frame(first_frame))
 
-    cap.release()
-    out.release()
+        # process frame ที่เหลือ
+        for frame in reader:
+            frame_idx += 1
+            if frame_idx % 50 == 0:
+                print(f"[johansson] processed {frame_idx} frames", flush=True)
+            writer.append_data(process_frame(frame))
+
+    reader.close()
+    writer.close()
 
     # 3) Upload output video to S3
     print(f"[johansson] uploading {tmp_out_path} to s3://{AWS_BUCKET}/{output_key}", flush=True)
     with open(tmp_out_path, "rb") as f:
         s3.upload_fileobj(f, AWS_BUCKET, output_key)
 
-    # 4) Cleanup temp files
+    # 4) Cleanup
     try:
         os.remove(tmp_in_path)
     except OSError:
@@ -229,10 +233,6 @@ def process_video_to_johansson(input_key: str, output_key: str) -> None:
 # ----------------------------------------------------------
 
 def process_job(pending_key: str) -> None:
-    """
-    ประมวลผล job หนึ่งตัวจาก jobs/pending/<job_id>.json
-    """
-
     print(f"[process_job] start pending_key={pending_key}", flush=True)
 
     job = s3_get_json(pending_key)
@@ -242,23 +242,17 @@ def process_job(pending_key: str) -> None:
         job_id = os.path.splitext(os.path.basename(pending_key))[0]
         job["job_id"] = job_id
 
-    # รองรับทั้ง 2 schema:
-    # v2 (ใหม่): input_key, output_key
-    # v1 (เก่า): video_key, result_video_key
+    # รองรับทั้ง schema เก่า/ใหม่
     input_key = job.get("input_key") or job.get("video_key")
     output_key = job.get("output_key") or job.get("result_video_key")
 
     if not input_key:
         raise RuntimeError("Job JSON missing 'input_key' / 'video_key'")
 
-    # ถ้าไม่มี output_key/result_video_key -> ใช้ default
     if not output_key:
         output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
         job["output_key"] = output_key
-        print(
-            f"[process_job] no output key in JSON, using default {output_key}",
-            flush=True,
-        )
+        print(f"[process_job] no output key in JSON, using default {output_key}", flush=True)
 
     processing_key = pending_key.replace(JOBS_PENDING_PREFIX, JOBS_PROCESSING_PREFIX)
 
@@ -272,13 +266,10 @@ def process_job(pending_key: str) -> None:
     print("[process_job] moved JSON pending -> processing", flush=True)
 
     try:
-        # งานจริง: ทำ Johansson dots
         print(f"[process_job] johansson video {input_key} -> {output_key}", flush=True)
         process_video_to_johansson(input_key, output_key)
 
-        finished_key = processing_key.replace(
-            JOBS_PROCESSING_PREFIX, JOBS_FINISHED_PREFIX
-        )
+        finished_key = processing_key.replace(JOBS_PROCESSING_PREFIX, JOBS_FINISHED_PREFIX)
         now = utc_now_iso()
         job["status"] = "finished"
         job["finished_at"] = now
@@ -290,12 +281,8 @@ def process_job(pending_key: str) -> None:
         print("[process_job] moved JSON processing -> finished", flush=True)
 
     except Exception as exc:
-        # ถ้า error -> failed
         print(f"[process_job] ERROR: {exc}", flush=True)
-
-        failed_key = processing_key.replace(
-            JOBS_PROCESSING_PREFIX, JOBS_FAILED_PREFIX
-        )
+        failed_key = processing_key.replace(JOBS_PROCESSING_PREFIX, JOBS_FAILED_PREFIX)
         now = utc_now_iso()
         job["status"] = "failed"
         job["failed_at"] = now
@@ -305,8 +292,6 @@ def process_job(pending_key: str) -> None:
         s3_put_json(failed_key, job)
         s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
         print("[process_job] moved JSON processing -> failed", flush=True)
-
-        # ให้ main เห็น error ด้วย
         raise
 
 
