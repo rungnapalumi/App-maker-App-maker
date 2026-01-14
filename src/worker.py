@@ -1,16 +1,19 @@
-# worker.py — AI People Reader Worker (compat + default output path)
+# worker.py — AI People Reader Worker (final version)
 #
-# รองรับได้ทั้ง 2 schema:
-#   v2: input_key, output_key
-#   v1: video_key, result_video_key
-# ถ้าไม่มี output_key/result_video_key จะสร้าง
-#   jobs/output/<job_id>/result.mp4 ให้เองอัตโนมัติ
+# Features:
+#   - Poll jobs จาก jobs/pending/*.json
+#   - รองรับทั้ง 2 schema:
+#       v1: video_key, result_video_key
+#       v2: input_key, output_key
+#   - ถ้าไม่มี output_key/result_video_key -> ใช้ default jobs/output/<job_id>/result.mp4
+#   - ย้ายสถานะ: pending -> processing -> finished/failed
+#   - เลือกเฉพาะ .json จาก jobs/pending (ไม่ไปอ่าน .mp4 เป็น JSON)
 
 import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import boto3
 from botocore.exceptions import ClientError
@@ -68,35 +71,66 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 def copy_object(src_key: str, dst_key: str) -> None:
     """
-    Copy object ใน bucket เดียวกันตาม spec ของ S3
+    Copy object ภายใน bucket เดียวกัน
+    ใช้ CopySource เป็น string ตาม spec ของ S3:
+      "<bucket>/<key>"
     """
-    print(f"[copy_object] {src_key} -> {dst_key}", flush=True)
+    copy_source = f"{AWS_BUCKET}/{src_key}"
+    print(f"[copy_object] {copy_source} -> {dst_key}", flush=True)
     s3.copy_object(
         Bucket=AWS_BUCKET,
         Key=dst_key,
-        CopySource={
-            "Bucket": AWS_BUCKET,
-            "Key": src_key,
-        },
+        CopySource=copy_source,
     )
+
+
+def list_pending_objects() -> List[str]:
+    """
+    คืน list ของ key ทั้งหมดใต้ jobs/pending/
+    """
+    keys: List[str] = []
+    continuation_token: Optional[str] = None
+
+    while True:
+        if continuation_token:
+            resp = s3.list_objects_v2(
+                Bucket=AWS_BUCKET,
+                Prefix=JOBS_PENDING_PREFIX,
+                ContinuationToken=continuation_token,
+            )
+        else:
+            resp = s3.list_objects_v2(
+                Bucket=AWS_BUCKET,
+                Prefix=JOBS_PENDING_PREFIX,
+            )
+
+        contents = resp.get("Contents", [])
+        for obj in contents:
+            keys.append(obj["Key"])
+
+        if resp.get("IsTruncated"):
+            continuation_token = resp.get("NextContinuationToken")
+        else:
+            break
+
+    return keys
 
 
 def find_one_pending_job_key() -> Optional[str]:
     """
     หา job .json ตัวแรกใน jobs/pending/
+    - เลือกเฉพาะ key ที่ลงท้ายด้วย ".json"
+    - ถ้าไม่มี .json เลย -> None
     """
     print(f"[find_one_pending_job_key] prefix={JOBS_PENDING_PREFIX}", flush=True)
-    resp = s3.list_objects_v2(
-        Bucket=AWS_BUCKET,
-        Prefix=JOBS_PENDING_PREFIX,
-        MaxKeys=1,
-    )
-    contents = resp.get("Contents")
-    if not contents:
-        print("[find_one_pending_job_key] no pending jobs", flush=True)
+    all_keys = list_pending_objects()
+    json_keys = sorted(k for k in all_keys if k.endswith(".json"))
+
+    if not json_keys:
+        print("[find_one_pending_job_key] no pending job JSON", flush=True)
         return None
 
-    key = contents[0]["Key"]
+    key = json_keys[0]
     print(f"[find_one_pending_job_key] found {key}", flush=True)
     return key
 
@@ -119,7 +153,7 @@ def process_job(pending_key: str) -> None:
         job_id = os.path.splitext(os.path.basename(pending_key))[0]
         job["job_id"] = job_id
 
-    # รองรับได้ทั้ง 2 schema:
+    # รองรับทั้ง 2 schema:
     # v2 (ใหม่): input_key, output_key
     # v1 (เก่า): video_key, result_video_key
     input_key = job.get("input_key") or job.get("video_key")
@@ -128,14 +162,18 @@ def process_job(pending_key: str) -> None:
     if not input_key:
         raise RuntimeError("Job JSON missing 'input_key' / 'video_key'")
 
-    # ถ้าไม่มี output_key/result_video_key ให้สร้าง default path
+    # ถ้าไม่มี output_key/result_video_key -> ใช้ default
     if not output_key:
         output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
         job["output_key"] = output_key
-        print(f"[process_job] no output key in JSON, using default {output_key}", flush=True)
+        print(
+            f"[process_job] no output key in JSON, using default {output_key}",
+            flush=True,
+        )
 
     processing_key = pending_key.replace(JOBS_PENDING_PREFIX, JOBS_PROCESSING_PREFIX)
 
+    # mark processing
     job["status"] = "processing"
     job["updated_at"] = utc_now_iso()
     job.setdefault("error", None)
@@ -163,6 +201,7 @@ def process_job(pending_key: str) -> None:
         print("[process_job] moved JSON processing -> finished", flush=True)
 
     except Exception as exc:
+        # ถ้า error -> failed
         print(f"[process_job] ERROR: {exc}", flush=True)
 
         failed_key = processing_key.replace(
@@ -178,6 +217,7 @@ def process_job(pending_key: str) -> None:
         s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
         print("[process_job] moved JSON processing -> failed", flush=True)
 
+        # ให้ main เห็น error ด้วย
         raise
 
 
