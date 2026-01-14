@@ -6,6 +6,7 @@ pillow
 boto3
 python-dotenv
 imageio-ffmpeg
+imageio
 
 
 
