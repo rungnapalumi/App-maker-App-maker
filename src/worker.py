@@ -1,14 +1,12 @@
-# worker.py — AI People Reader Worker (S3 download/upload copy version)
+# worker.py — AI People Reader Worker (Johansson dot processor)
 #
-# Features:
+# Pipeline:
 #   - Poll jobs จาก jobs/pending/*.json
-#   - รองรับทั้ง 2 schema:
-#       v1: video_key, result_video_key
-#       v2: input_key, output_key
-#   - ถ้าไม่มี output_key/result_video_key -> ใช้ default jobs/output/<job_id>/result.mp4
-#   - ย้ายสถานะ: pending -> processing -> finished/failed
-#   - เลือกเฉพาะ .json จาก jobs/pending (ไม่อ่าน .mp4 เป็น JSON)
-#   - ใช้ download_fileobj + upload_fileobj แทน S3 CopyObject (ลดปัญหา Invalid copy source)
+#   - อ่าน JSON (schema ใหม่/เก่า)
+#   - โหลด input video จาก S3
+#   - ประมวลผลเป็น Johansson-style dot video (พื้นดำ + จุดข้อต่อ)
+#   - อัปโหลด result.mp4 ไปยัง output_key ใน S3
+#   - ย้าย JSON: pending -> processing -> finished/failed
 
 import json
 import os
@@ -16,9 +14,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 import io
+import tempfile
 
 import boto3
 from botocore.exceptions import ClientError
+
+import cv2
+import numpy as np
+import mediapipe as mp
 
 # ----------------------------------------------------------
 # Config / S3 client
@@ -39,10 +42,13 @@ JOBS_FINISHED_PREFIX = "jobs/finished/"
 JOBS_FAILED_PREFIX = "jobs/failed/"
 JOBS_OUTPUT_PREFIX = "jobs/output/"
 
-print("====== AI People Reader Worker ======", flush=True)
+print("====== AI People Reader Worker (Johansson) ======", flush=True)
 print(f"Using bucket: {AWS_BUCKET}", flush=True)
 print(f"Region     : {AWS_REGION}", flush=True)
 print(f"Poll every : {JOB_POLL_INTERVAL} seconds", flush=True)
+
+# MediaPipe pose setup (สร้างครั้งเดียวใช้ทั้ง worker)
+mp_pose = mp.solutions.pose
 
 
 # ----------------------------------------------------------
@@ -69,25 +75,6 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
         Body=body,
         ContentType="application/json",
     )
-
-
-def copy_object(src_key: str, dst_key: str) -> None:
-    """
-    Copy object ภายใน bucket เดียวกันด้วยการ
-    download จาก src_key แล้ว upload ไป dst_key
-    แทนการใช้ S3 CopyObject (เลี่ยงปัญหา Invalid copy source bucket name)
-    """
-    print(f"[copy_object] {src_key} -> {dst_key}", flush=True)
-
-    # ดาวน์โหลดเข้า memory buffer
-    buf = io.BytesIO()
-    s3.download_fileobj(AWS_BUCKET, src_key, buf)
-
-    # reset pointer กลับไปต้นไฟล์
-    buf.seek(0)
-
-    # อัปโหลดไป key ใหม่
-    s3.upload_fileobj(buf, AWS_BUCKET, dst_key)
 
 
 def list_pending_objects() -> List[str]:
@@ -141,6 +128,103 @@ def find_one_pending_job_key() -> Optional[str]:
 
 
 # ----------------------------------------------------------
+# Johansson dot processing
+# ----------------------------------------------------------
+
+def process_video_to_johansson(input_key: str, output_key: str) -> None:
+    """
+    ดาวน์โหลด input video จาก S3 -> ประมวลผลเป็น Johansson dots -> อัปโหลด output video กลับ S3
+    """
+    print(f"[johansson] start processing {input_key} -> {output_key}", flush=True)
+
+    # 1) Download input video to temp file
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_in:
+        tmp_in_path = tmp_in.name
+        print(f"[johansson] downloading to {tmp_in_path}", flush=True)
+        s3.download_fileobj(AWS_BUCKET, input_key, tmp_in)
+
+    # 2) Prepare temp output path
+    tmp_out_fd, tmp_out_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(tmp_out_fd)
+    print(f"[johansson] will write output to {tmp_out_path}", flush=True)
+
+    cap = cv2.VideoCapture(tmp_in_path)
+    if not cap.isOpened():
+        raise RuntimeError("Cannot open input video")
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0:
+        fps = 25.0
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 360)
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(tmp_out_path, fourcc, fps, (width, height))
+
+    print(f"[johansson] video info: {width}x{height} @ {fps} fps", flush=True)
+
+    # Pose estimator
+    with mp_pose.Pose(
+        static_image_mode=False,
+        model_complexity=1,
+        enable_segmentation=False,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    ) as pose:
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_idx += 1
+            if frame_idx % 50 == 0:
+                print(f"[johansson] processed {frame_idx} frames", flush=True)
+
+            # Run pose
+            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(image_rgb)
+
+            # พื้นดำล้วน
+            black = np.zeros_like(frame)
+
+            if results.pose_landmarks:
+                h, w, _ = frame.shape
+                for lm in results.pose_landmarks.landmark:
+                    if lm.visibility < 0.5:
+                        continue
+                    x = int(lm.x * w)
+                    y = int(lm.y * h)
+                    if 0 <= x < w and 0 <= y < h:
+                        # จุดสีขาว ขนาด 6 px (ปรับได้)
+                        cv2.circle(black, (x, y), 6, (255, 255, 255), -1)
+
+            out.write(black)
+
+    cap.release()
+    out.release()
+
+    # 3) Upload output video to S3
+    print(f"[johansson] uploading {tmp_out_path} to s3://{AWS_BUCKET}/{output_key}", flush=True)
+    with open(tmp_out_path, "rb") as f:
+        s3.upload_fileobj(f, AWS_BUCKET, output_key)
+
+    # 4) Cleanup temp files
+    try:
+        os.remove(tmp_in_path)
+    except OSError:
+        pass
+
+    try:
+        os.remove(tmp_out_path)
+    except OSError:
+        pass
+
+    print("[johansson] done", flush=True)
+
+
+# ----------------------------------------------------------
 # Core job processing
 # ----------------------------------------------------------
 
@@ -188,9 +272,9 @@ def process_job(pending_key: str) -> None:
     print("[process_job] moved JSON pending -> processing", flush=True)
 
     try:
-        # งานจริง: copy วิดีโอ input -> output
-        print(f"[process_job] copying video {input_key} -> {output_key}", flush=True)
-        copy_object(input_key, output_key)
+        # งานจริง: ทำ Johansson dots
+        print(f"[process_job] johansson video {input_key} -> {output_key}", flush=True)
+        process_video_to_johansson(input_key, output_key)
 
         finished_key = processing_key.replace(
             JOBS_PROCESSING_PREFIX, JOBS_FINISHED_PREFIX
