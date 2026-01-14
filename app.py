@@ -158,7 +158,7 @@ def list_jobs() -> List[Dict[str, Any]]:
             job["s3_key"] = key
             all_jobs.append(job)
 
-    # sort by created_at (latest first ถ้ามี)
+    # sort by created_at (จากเก่าไปใหม่)
     all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=False)
     return all_jobs
 
@@ -206,9 +206,9 @@ with col_left:
 with col_right:
     st.header("Jobs")
 
-    # ปุ่ม refresh แค่ไว้ให้ user รู้สึกว่ากดแล้วรีเฟรช
+    # ปุ่ม refresh ใช้ st.rerun() แทน experimental_rerun
     if st.button("Refresh job list"):
-        st.experimental_rerun()
+        st.rerun()
 
     jobs = list_jobs()
     if not jobs:
