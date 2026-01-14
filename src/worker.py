@@ -1,4 +1,4 @@
-# worker.py — AI People Reader Worker (final version)
+# worker.py — AI People Reader Worker (S3 download/upload copy version)
 #
 # Features:
 #   - Poll jobs จาก jobs/pending/*.json
@@ -7,13 +7,15 @@
 #       v2: input_key, output_key
 #   - ถ้าไม่มี output_key/result_video_key -> ใช้ default jobs/output/<job_id>/result.mp4
 #   - ย้ายสถานะ: pending -> processing -> finished/failed
-#   - เลือกเฉพาะ .json จาก jobs/pending (ไม่ไปอ่าน .mp4 เป็น JSON)
+#   - เลือกเฉพาะ .json จาก jobs/pending (ไม่อ่าน .mp4 เป็น JSON)
+#   - ใช้ download_fileobj + upload_fileobj แทน S3 CopyObject (ลดปัญหา Invalid copy source)
 
 import json
 import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
+import io
 
 import boto3
 from botocore.exceptions import ClientError
@@ -71,17 +73,21 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 def copy_object(src_key: str, dst_key: str) -> None:
     """
-    Copy object ภายใน bucket เดียวกัน
-    ใช้ CopySource เป็น string ตาม spec ของ S3:
-      "<bucket>/<key>"
+    Copy object ภายใน bucket เดียวกันด้วยการ
+    download จาก src_key แล้ว upload ไป dst_key
+    แทนการใช้ S3 CopyObject (เลี่ยงปัญหา Invalid copy source bucket name)
     """
-    copy_source = f"{AWS_BUCKET}/{src_key}"
-    print(f"[copy_object] {copy_source} -> {dst_key}", flush=True)
-    s3.copy_object(
-        Bucket=AWS_BUCKET,
-        Key=dst_key,
-        CopySource=copy_source,
-    )
+    print(f"[copy_object] {src_key} -> {dst_key}", flush=True)
+
+    # ดาวน์โหลดเข้า memory buffer
+    buf = io.BytesIO()
+    s3.download_fileobj(AWS_BUCKET, src_key, buf)
+
+    # reset pointer กลับไปต้นไฟล์
+    buf.seek(0)
+
+    # อัปโหลดไป key ใหม่
+    s3.upload_fileobj(buf, AWS_BUCKET, dst_key)
 
 
 def list_pending_objects() -> List[str]:
@@ -120,7 +126,6 @@ def find_one_pending_job_key() -> Optional[str]:
     """
     หา job .json ตัวแรกใน jobs/pending/
     - เลือกเฉพาะ key ที่ลงท้ายด้วย ".json"
-    - ถ้าไม่มี .json เลย -> None
     """
     print(f"[find_one_pending_job_key] prefix={JOBS_PENDING_PREFIX}", flush=True)
     all_keys = list_pending_objects()
