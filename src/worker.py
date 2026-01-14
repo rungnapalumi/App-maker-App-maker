@@ -1,9 +1,8 @@
-# worker.py — AI People Reader Worker (final version)
+# worker.py — AI People Reader Worker (compat version)
 #
-# ใช้คู่กับ app.py ใน repo เดียวกัน
-# - Poll jobs จาก jobs/pending/*.json
-# - Copy วิดีโอจาก input_key -> output_key
-# - อัปเดต status: pending -> processing -> finished/failed
+# รองรับได้ทั้ง 2 schema:
+#   v1: video_key, result_video_key
+#   v2: input_key, output_key
 
 import json
 import os
@@ -20,7 +19,7 @@ from botocore.exceptions import ClientError
 
 AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
-JOB_POLL_INTERVAL = float(os.environ.get("JOB_POLL_INTERVAL", "5"))  # seconds
+JOB_POLL_INTERVAL = float(os.environ.get("JOB_POLL_INTERVAL", "10"))  # seconds
 
 if not AWS_BUCKET:
     raise RuntimeError("Missing AWS_BUCKET / S3_BUCKET environment variable")
@@ -66,7 +65,7 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 def copy_object(src_key: str, dst_key: str) -> None:
     """
-    Copy object ใน bucket เดียวกันให้ถูก spec ของ S3
+    Copy object ใน bucket เดียวกันตาม spec ของ S3
     """
     print(f"[copy_object] {src_key} -> {dst_key}", flush=True)
     s3.copy_object(
@@ -114,19 +113,20 @@ def process_job(pending_key: str) -> None:
 
     job_id = job.get("job_id")
     if not job_id:
-        # derive from file name ถ้าไม่มี
         job_id = os.path.splitext(os.path.basename(pending_key))[0]
         job["job_id"] = job_id
 
-    input_key = job.get("input_key")
-    output_key = job.get("output_key")
+    # รองรับได้ทั้ง 2 schema:
+    # v2 (ใหม่): input_key, output_key
+    # v1 (เก่า): video_key, result_video_key
+    input_key = job.get("input_key") or job.get("video_key")
+    output_key = job.get("output_key") or job.get("result_video_key")
 
     if not input_key:
-        raise RuntimeError("Job JSON missing 'input_key'")
+        raise RuntimeError("Job JSON missing 'input_key' / 'video_key'")
     if not output_key:
-        raise RuntimeError("Job JSON missing 'output_key'")
+        raise RuntimeError("Job JSON missing 'output_key' / 'result_video_key'")
 
-    # 1) mark processing -> เขียนไปที่ jobs/processing/
     processing_key = pending_key.replace(JOBS_PENDING_PREFIX, JOBS_PROCESSING_PREFIX)
 
     job["status"] = "processing"
@@ -134,16 +134,14 @@ def process_job(pending_key: str) -> None:
     job.setdefault("error", None)
 
     s3_put_json(processing_key, job)
-    # ลบ pending json
     s3.delete_object(Bucket=AWS_BUCKET, Key=pending_key)
     print("[process_job] moved JSON pending -> processing", flush=True)
 
     try:
-        # 2) งานจริง: copy วิดีโอ input -> output
+        # งานจริง: copy วิดีโอ input -> output
         print(f"[process_job] copying video {input_key} -> {output_key}", flush=True)
         copy_object(input_key, output_key)
 
-        # 3) สำเร็จ -> finished
         finished_key = processing_key.replace(
             JOBS_PROCESSING_PREFIX, JOBS_FINISHED_PREFIX
         )
@@ -158,7 +156,6 @@ def process_job(pending_key: str) -> None:
         print("[process_job] moved JSON processing -> finished", flush=True)
 
     except Exception as exc:
-        # 4) เกิด error -> failed
         print(f"[process_job] ERROR: {exc}", flush=True)
 
         failed_key = processing_key.replace(
@@ -174,7 +171,6 @@ def process_job(pending_key: str) -> None:
         s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
         print("[process_job] moved JSON processing -> failed", flush=True)
 
-        # ถ้าอยากเห็น stacktrace ใน log ก็ raise ต่อ
         raise
 
 
