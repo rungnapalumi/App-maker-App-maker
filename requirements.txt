@@ -1,12 +1,13 @@
 streamlit
 opencv-python-headless
-mediapipe-rpi
+mediapipe>=0.10.14
 numpy
 pillow
 boto3
 python-dotenv
 imageio-ffmpeg
 imageio
+
 
 
 
