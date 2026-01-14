@@ -1,8 +1,10 @@
-# worker.py — AI People Reader Worker (compat version)
+# worker.py — AI People Reader Worker (compat + default output path)
 #
 # รองรับได้ทั้ง 2 schema:
-#   v1: video_key, result_video_key
 #   v2: input_key, output_key
+#   v1: video_key, result_video_key
+# ถ้าไม่มี output_key/result_video_key จะสร้าง
+#   jobs/output/<job_id>/result.mp4 ให้เองอัตโนมัติ
 
 import json
 import os
@@ -30,6 +32,7 @@ JOBS_PENDING_PREFIX = "jobs/pending/"
 JOBS_PROCESSING_PREFIX = "jobs/processing/"
 JOBS_FINISHED_PREFIX = "jobs/finished/"
 JOBS_FAILED_PREFIX = "jobs/failed/"
+JOBS_OUTPUT_PREFIX = "jobs/output/"
 
 print("====== AI People Reader Worker ======", flush=True)
 print(f"Using bucket: {AWS_BUCKET}", flush=True)
@@ -124,8 +127,12 @@ def process_job(pending_key: str) -> None:
 
     if not input_key:
         raise RuntimeError("Job JSON missing 'input_key' / 'video_key'")
+
+    # ถ้าไม่มี output_key/result_video_key ให้สร้าง default path
     if not output_key:
-        raise RuntimeError("Job JSON missing 'output_key' / 'result_video_key'")
+        output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
+        job["output_key"] = output_key
+        print(f"[process_job] no output key in JSON, using default {output_key}", flush=True)
 
     processing_key = pending_key.replace(JOBS_PENDING_PREFIX, JOBS_PROCESSING_PREFIX)
 
