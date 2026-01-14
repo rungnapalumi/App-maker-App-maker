@@ -1,189 +1,272 @@
-import os
+# worker.py — AI People Reader Worker
+#
+# หน้าที่:
+#   - poll หา "jobs/pending/*.json" ใน S3
+#   - ดึง json job ขึ้นมา แล้ว mark ว่า processing
+#   - ทำงาน (ตัวอย่างนี้: copy วิดีโอจาก video_key -> result_video_key)
+#   - ถ้าสำเร็จ: ย้าย job ไป "jobs/finished/"
+#   - ถ้าล้มเหลว: ย้าย job ไป "jobs/failed/" พร้อมเขียน error ลงใน json
+#
+# NOTE:
+#   - โครงสร้าง job JSON ที่ EXPECT:
+#       {
+#           "job_id": "20260113_132520__abcd1",
+#           "status": "pending",
+#           "video_key": "uploads/xxx.mp4",
+#           "result_video_key": "results/xxx_processed.mp4",
+#           "created_at": "...",
+#           "updated_at": "..."
+#       }
+#
+#   - ถ้า app.py ใช้ชื่อ field ต่างจากนี้
+#     ให้แก้ชื่อ field ใน process_job() ให้ตรง
+#
+
 import json
+import os
 import time
-import logging
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 import boto3
 from botocore.exceptions import ClientError
 
-# -------------------------------------------------
-# Basic logging
-# -------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+# ----------------------------------------------------------
+# Config / S3 client
+# ----------------------------------------------------------
 
-# -------------------------------------------------
-# Environment
-# -------------------------------------------------
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-S3_BUCKET = os.getenv("S3_BUCKET") or os.getenv("AWS_BUCKET")
-POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
+AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
+JOB_POLL_INTERVAL = float(os.environ.get("JOB_POLL_INTERVAL", "5"))  # วินาที
 
-PENDING_PREFIX = "jobs/pending/"
-OUTPUT_PREFIX = "jobs/output/"
-DONE_PREFIX = "jobs/done/"
-FAILED_PREFIX = "jobs/failed/"
-
-if not S3_BUCKET:
-    raise RuntimeError("S3_BUCKET (or AWS_BUCKET) env var is required")
+if not AWS_BUCKET:
+    raise RuntimeError("Missing AWS_BUCKET / S3_BUCKET environment variable")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-
-# -------------------------------------------------
-# Helper functions
-# -------------------------------------------------
-def list_pending_jobs():
-    """List pending job JSON files in jobs/pending/"""
-    try:
-        resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=PENDING_PREFIX)
-    except ClientError as e:
-        logging.error("Error listing pending jobs: %s", e)
-        return []
-
-    keys = []
-    for obj in resp.get("Contents", []):
-        key = obj["Key"]
-        # เอาเฉพาะไฟล์ .json ไม่เอาโฟลเดอร์
-        if key.endswith(".json") and not key.endswith("/"):
-            keys.append(key)
-    return keys
+print("====== AI People Reader Worker ======", flush=True)
+print(f"Using bucket: {AWS_BUCKET}", flush=True)
+print(f"Region     : {AWS_REGION}", flush=True)
+print(f"Poll every : {JOB_POLL_INTERVAL} seconds", flush=True)
 
 
-def load_json(key: str):
-    """Download and parse JSON from S3"""
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-    data = obj["Body"].read().decode("utf-8")
-    return json.loads(data)
+# ----------------------------------------------------------
+# Helper: timestamp
+# ----------------------------------------------------------
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def save_json(data: dict, key: str):
-    """Upload JSON to S3"""
+# ----------------------------------------------------------
+# Helper: S3 JSON I/O
+# ----------------------------------------------------------
+
+def s3_get_json(key: str) -> Dict[str, Any]:
+    """
+    โหลด JSON จาก S3 แล้ว parse เป็น dict
+    """
+    print(f"[s3_get_json] key={key}", flush=True)
+    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+    body = obj["Body"].read()
+    return json.loads(body.decode("utf-8"))
+
+
+def s3_put_json(key: str, data: Dict[str, Any]) -> None:
+    """
+    เซฟ dict เป็น JSON ลง S3
+    """
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key=key,
-        Body=body,
-        ContentType="application/json",
-    )
+    print(f"[s3_put_json] key={key} size={len(body)} bytes", flush=True)
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
 
 
-def move_object(src_key: str, dst_key: str):
-    """Move object inside the same bucket (copy + delete)"""
-    logging.info("Moving %s -> %s", src_key, dst_key)
+# ----------------------------------------------------------
+# Helper: copy / move objects ใน S3
+# ----------------------------------------------------------
+
+def copy_object(src_key: str, dst_key: str) -> None:
+    """
+    copy object ใน bucket เดียวกัน
+    ใช้รูปแบบ CopySource แบบ dict ให้ถูกต้องตาม S3 spec
+    """
+    print(f"[copy_object] {src_key} -> {dst_key}", flush=True)
     s3.copy_object(
-        Bucket=S3_BUCKET,
-        CopySource={"Bucket": S3_BUCKET, "Key": src_key},
+        Bucket=AWS_BUCKET,
         Key=dst_key,
-    )
-    s3.delete_object(Bucket=S3_BUCKET, Key=src_key)
-
-
-def copy_video(src_key: str, dst_key: str):
-    """
-    คัดลอกไฟล์วิดีโอจาก src_key -> dst_key ภายใน bucket เดียวกัน
-    *** จุดนี้แหละที่เมื่อก่อนพัง เพราะส่ง CopySource ไม่ครบ bucket ***
-    """
-    logging.info(
-        "Copying video s3://%s/%s -> s3://%s/%s",
-        S3_BUCKET,
-        src_key,
-        S3_BUCKET,
-        dst_key,
-    )
-    s3.copy_object(
-        Bucket=S3_BUCKET,
-        CopySource={"Bucket": S3_BUCKET, "Key": src_key},
-        Key=dst_key,
+        CopySource={
+            "Bucket": AWS_BUCKET,
+            "Key": src_key,
+        },
     )
 
 
-# -------------------------------------------------
-# Job processing
-# -------------------------------------------------
-def process_job(job_key: str):
+def move_object(src_key: str, dst_key: str) -> None:
     """
-    อ่าน job JSON จาก pending, คัดลอกไฟล์วิดีโอไปโฟลเดอร์ output,
-    เขียนไฟล์ผลลัพธ์ แล้วย้าย JSON ไป done หรือ failed
+    move object ใน bucket เดียวกัน (copy + delete)
     """
-    job = load_json(job_key)
-    job_id = job.get("job_id") or os.path.basename(job_key).replace(".json", "")
-    mode = job.get("mode", "dots")
-    video_key = job.get("video_key")
+    print(f"[move_object] {src_key} -> {dst_key}", flush=True)
+    # copy ก่อน
+    copy_object(src_key, dst_key)
+    # ลบต้นทาง
+    print(f"[move_object] delete source {src_key}", flush=True)
+    s3.delete_object(Bucket=AWS_BUCKET, Key=src_key)
 
-    logging.info("Processing job %s (key=%s)", job_id, job_key)
-    logging.info("Mode=%s video_key=%s", mode, video_key)
+
+def copy_video(video_key: str, result_video_key: str) -> None:
+    """
+    ตัวอย่าง simple work: แค่ copy วิดีโอจาก video_key -> result_video_key
+    (ตอนหลัง Rung อยากเอาไปใส่ขั้นตอนประมวลผลจริง เช่น clear, overlay ฯลฯ
+     ก็เอา logic มาแทนส่วนนี้ได้เลย)
+    """
+    print(f"[copy_video] {video_key} -> {result_video_key}", flush=True)
+    copy_object(video_key, result_video_key)
+
+
+# ----------------------------------------------------------
+# Helper: หา pending job
+# ----------------------------------------------------------
+
+PENDING_PREFIX = "jobs/pending/"
+PROCESSING_PREFIX = "jobs/processing/"
+FINISHED_PREFIX = "jobs/finished/"
+FAILED_PREFIX = "jobs/failed/"
+
+
+def find_one_pending_job_key() -> Optional[str]:
+    """
+    หา job แรกใน jobs/pending/ (ถ้าไม่มี return None)
+    """
+    print(f"[find_one_pending_job_key] scanning prefix={PENDING_PREFIX}", flush=True)
+    resp = s3.list_objects_v2(
+        Bucket=AWS_BUCKET,
+        Prefix=PENDING_PREFIX,
+        MaxKeys=1,
+    )
+    contents = resp.get("Contents")
+    if not contents:
+        print("[find_one_pending_job_key] no pending jobs", flush=True)
+        return None
+
+    # เอา key แรก
+    key = contents[0]["Key"]
+    print(f"[find_one_pending_job_key] found job key={key}", flush=True)
+    return key
+
+
+# ----------------------------------------------------------
+# Core: process one job
+# ----------------------------------------------------------
+
+def process_job(pending_key: str) -> None:
+    """
+    ประมวลผล job 1 ตัว
+    `pending_key` คือ key ของ json ที่อยู่ใน jobs/pending/
+    """
+
+    print(f"[process_job] start pending_key={pending_key}", flush=True)
+
+    # อ่าน job JSON
+    job_data = s3_get_json(pending_key)
+
+    job_id = job_data.get("job_id")
+    if not job_id:
+        # ถ้าไม่มี job_id ให้ derive จากชื่อไฟล์
+        job_id = os.path.splitext(os.path.basename(pending_key))[0]
+        job_data["job_id"] = job_id
+
+    # ดึง field หลักตาม schema
+    # ถ้า app.py ใช้ชื่ออื่น ให้แก้ชื่อตรงนี้
+    video_key = job_data.get("video_key")
+    result_video_key = job_data.get("result_video_key")
 
     if not video_key:
-        raise RuntimeError(f"Job {job_id} has no 'video_key' in JSON")
+        raise RuntimeError("Job JSON missing `video_key`")
 
-    # ที่เก็บวิดีโอผลลัพธ์ (ตอนนี้ยังแค่ copy เฉย ๆ)
-    result_video_key = f"{OUTPUT_PREFIX}{job_id}/result.mp4"
+    if not result_video_key:
+        # default path ถ้าไม่ได้ส่งมา
+        result_video_key = f"results/{job_id}.mp4"
+        job_data["result_video_key"] = result_video_key
 
-    # 1) คัดลอกวิดีโอจาก pending/input -> output
-    copy_video(video_key, result_video_key)
+    # ------------------------------------------------------
+    # 1) mark เป็น processing (ย้าย json ไป jobs/processing)
+    # ------------------------------------------------------
+    processing_key = pending_key.replace(PENDING_PREFIX, PROCESSING_PREFIX)
 
-    # 2) เขียนผลลัพธ์ JSON ง่าย ๆ ไว้ก่อน
-    result = {
-        "status": "done",
-        "job_id": job_id,
-        "mode": mode,
-        "input_video_key": video_key,
-        "output_video_key": result_video_key,
-    }
+    job_data["status"] = "processing"
+    job_data["updated_at"] = utc_now_iso()
 
-    output_json_key = f"{OUTPUT_PREFIX}{job_id}.json"
-    save_json(result, output_json_key)
+    # เขียนไปที่ processing/ แล้วค่อยลบ pending/ (move)
+    s3_put_json(processing_key, job_data)
+    print(f"[process_job] move JSON pending -> processing", flush=True)
+    s3.delete_object(Bucket=AWS_BUCKET, Key=pending_key)
 
-    # 3) ย้าย job JSON จาก pending -> done
-    done_key = f"{DONE_PREFIX}{os.path.basename(job_key)}"
-    move_object(job_key, done_key)
+    try:
+        # --------------------------------------------------
+        # 2) ทำงานหลัก — ตอนนี้คือ copy วิดีโอ
+        # --------------------------------------------------
+        copy_video(video_key, result_video_key)
 
-    logging.info(
-        "Job %s finished. Output JSON at s3://%s/%s",
-        job_id,
-        S3_BUCKET,
-        output_json_key,
-    )
+        # --------------------------------------------------
+        # 3) mark finished
+        # --------------------------------------------------
+        finished_key = processing_key.replace(PROCESSING_PREFIX, FINISHED_PREFIX)
+        job_data["status"] = "finished"
+        job_data["finished_at"] = utc_now_iso()
+        job_data["updated_at"] = job_data["finished_at"]
+        job_data["error"] = None
+
+        s3_put_json(finished_key, job_data)
+        print(f"[process_job] move JSON processing -> finished", flush=True)
+        s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
+
+    except Exception as exc:
+        # --------------------------------------------------
+        # 4) ถ้า error -> failed
+        # --------------------------------------------------
+        print(f"[process_job] ERROR: {exc}", flush=True)
+
+        failed_key = processing_key.replace(PROCESSING_PREFIX, FAILED_PREFIX)
+
+        job_data["status"] = "failed"
+        job_data["error"] = str(exc)
+        job_data["failed_at"] = utc_now_iso()
+        job_data["updated_at"] = job_data["failed_at"]
+
+        s3_put_json(failed_key, job_data)
+        print(f"[process_job] move JSON processing -> failed", flush=True)
+
+        # ลบ processing json ตัวเก่า
+        s3.delete_object(Bucket=AWS_BUCKET, Key=processing_key)
+
+        # raise ซ้ำให้เห็นใน logs
+        raise
 
 
-# -------------------------------------------------
+# ----------------------------------------------------------
 # Main loop
-# -------------------------------------------------
-def main():
-    logging.info(
-        "Worker starting. bucket=%s region=%s poll_interval=%ss",
-        S3_BUCKET,
-        AWS_REGION,
-        POLL_INTERVAL,
-    )
+# ----------------------------------------------------------
 
+def main() -> None:
+    print("[main] worker started", flush=True)
     while True:
-        pending_jobs = list_pending_jobs()
+        try:
+            job_key = find_one_pending_job_key()
+            if not job_key:
+                time.sleep(JOB_POLL_INTERVAL)
+                continue
 
-        if not pending_jobs:
-            logging.info("No pending jobs. Sleeping %s seconds...", POLL_INTERVAL)
-            time.sleep(POLL_INTERVAL)
-            continue
+            process_job(job_key)
 
-        for job_key in pending_jobs:
-            try:
-                process_job(job_key)
-            except Exception as e:
-                logging.exception("Job failed for %s: %s", job_key, e)
-                # ย้ายไฟล์ job JSON ไปโฟลเดอร์ failed
-                failed_key = f"{FAILED_PREFIX}{os.path.basename(job_key)}"
-                try:
-                    move_object(job_key, failed_key)
-                except Exception:
-                    logging.exception(
-                        "Also failed to move %s to failed/; leaving in pending/",
-                        job_key,
-                    )
+        except ClientError as ce:
+            # error จาก S3 / AWS
+            print(f"[main] AWS ClientError: {ce}", flush=True)
+            time.sleep(JOB_POLL_INTERVAL)
 
-        # เสร็จหนึ่งรอบแล้ว loop ต่อเลย
+        except Exception as e:
+            # error อื่น ๆ
+            print(f"[main] Unexpected error: {e}", flush=True)
+            time.sleep(JOB_POLL_INTERVAL)
 
 
 if __name__ == "__main__":
