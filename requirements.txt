@@ -1,6 +1,6 @@
 streamlit
 opencv-python-headless
-mediapipe>=0.10.14
+mediapipe<0.10
 numpy
 pillow
 boto3
