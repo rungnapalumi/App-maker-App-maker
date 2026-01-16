@@ -119,6 +119,9 @@ def list_jobs() -> List[Dict[str, Any]]:
     """
     ดึง job จากทุก prefix (pending/processing/finished/failed)
     แล้วรวมเป็น list เดียว
+
+    NOTE: ใช้ prefix เป็นตัวกำหนด status เสมอ
+          (ไม่เชื่อ field "status" ใน JSON เพราะ worker ไม่ได้อัปเดต)
     """
     all_jobs: List[Dict[str, Any]] = []
 
@@ -154,7 +157,8 @@ def list_jobs() -> List[Dict[str, Any]]:
                 st.warning(f"Cannot read job {key}: {ce}")
                 continue
 
-            job.setdefault("status", default_status)
+            # ใช้ prefix เป็นตัวตัดสินใจสถานะเสมอ
+            job["status"] = default_status
             job["s3_key"] = key
             all_jobs.append(job)
 
