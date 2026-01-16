@@ -145,6 +145,13 @@ def update_status(job: dict, status: str, error: str | None = None) -> dict:
 
 
 def process_dots_video(input_key: str, output_key: str) -> None:
+    """
+    สร้างวิดีโอ Johansson dot:
+      - อ่านวิดีโอจาก S3
+      - ใช้ MediaPipe Pose หา joint
+      - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
+      - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
+    """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
         raise RuntimeError(
             "Johansson dots mode requires OpenCV, NumPy, and MediaPipe to be installed"
@@ -160,9 +167,19 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         cap.release()
         raise RuntimeError("Could not open input video")
 
+    # ใช้ metadata จากวิดีโอเป็นขนาดมาตรฐาน
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+
+    # กันกรณี metadata พัง (เช่น width/height = 0)
+    if width <= 0 or height <= 0:
+        ok, frame0 = cap.read()
+        if not ok:
+            cap.release()
+            raise RuntimeError("Cannot read any frame from input video")
+        height, width = frame0.shape[:2]
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
@@ -179,6 +196,8 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         min_tracking_confidence=0.5,
     )
 
+    RADIUS = 5  # ขนาดจุดเท่ากันทุกเฟรม
+
     try:
         with pose:
             while True:
@@ -186,21 +205,32 @@ def process_dots_video(input_key: str, output_key: str) -> None:
                 if not ok:
                     break
 
+                # บังคับทุกเฟรมให้ขนาดเท่ากับ (width, height)
+                frame = cv2.resize(frame, (width, height))
+
+                # Pose detection
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb)  # type: ignore[arg-type]
 
-                # สร้าง black frame ขนาดเท่ากัน
-                black = np.zeros_like(frame)
+                # สร้างพื้นหลังดำขนาดเดียวกันทุกเฟรม
+                black = np.zeros((height, width, 3), dtype=np.uint8)
 
                 if results.pose_landmarks:
-                    h, w, _ = frame.shape
+                    h, w, _ = black.shape
                     for lm in results.pose_landmarks.landmark:
                         if getattr(lm, "visibility", 1.0) < 0.5:
                             continue
                         x = int(lm.x * w)
                         y = int(lm.y * h)
                         if 0 <= x < w and 0 <= y < h:
-                            cv2.circle(black, (x, y), 5, (255, 255, 255), -1)
+                            cv2.circle(
+                                black,
+                                (x, y),
+                                RADIUS,
+                                (255, 255, 255),
+                                -1,
+                                lineType=cv2.LINE_AA,
+                            )
 
                 writer.write(black)
 
