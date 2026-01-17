@@ -140,7 +140,7 @@ def collect_all_jobs() -> List[Dict[str, Any]]:
 
 def get_finished_job(job_id: str) -> Optional[dict]:
     """
-    อ่าน JSON ของ job ที่เสร็จแล้วจาก S3
+    อ่าน JSON ของ job ที่เสร็จแล้วจาก S3 (โฟลเดอร์ finished)
     ถ้าไม่เจอหรือ error ให้คืน None
     """
     key = f"{JOBS_FINISHED_PREFIX}/{job_id}.json"
@@ -267,25 +267,36 @@ if st.button("Download"):
     if not job_id_for_download:
         st.error("Please enter job ID.")
     else:
+        output_key: Optional[str] = None
+
+        # 1) พยายามอ่าน JSON จาก jobs/finished/ (เวอร์ชันใหม่)
         job = get_finished_job(job_id_for_download)
 
-        if not job:
-            st.error("Result not found or still processing.")
-        elif job.get("status") != "finished":
-            st.error(f"Job status is '{job.get('status')}', not finished yet.")
-        else:
+        if job and job.get("status") == "finished":
             output_key = job.get("output_key")
 
-            if not output_key:
-                st.error("Job JSON has no output_key. ลองสร้างงานใหม่อีกครั้งนะคะ")
-            else:
-                try:
-                    url = s3.generate_presigned_url(
-                        "get_object",
-                        Params={"Bucket": AWS_BUCKET, "Key": output_key},
-                        ExpiresIn=3600,  # ลิงก์ใช้ได้ 1 ชั่วโมง
-                    )
-                    st.success("Download ready (link valid 1 hour):")
-                    st.markdown(f"[Download processed video]({url})")
-                except Exception as exc:
-                    st.error(f"Error generating download link: {exc}")
+        # 2) ถ้ายังไม่มี ให้ลอง fallback หาไฟล์ตรง ๆ ตาม pattern เดิม
+        if not output_key:
+            fallback_key = f"{JOBS_OUTPUT_PREFIX}/{job_id_for_download}/result.mp4"
+            try:
+                s3.head_object(Bucket=AWS_BUCKET, Key=fallback_key)
+                output_key = fallback_key
+            except ClientError:
+                output_key = None
+
+        if not output_key:
+            st.error(
+                "Result not found or still processing.\n\n"
+                "ถ้าเป็นงานเก่าก่อนปรับระบบ อาจต้องรันวิดีโอนั้นใหม่อีกครั้งนะคะ 💛"
+            )
+        else:
+            try:
+                url = s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": AWS_BUCKET, "Key": output_key},
+                    ExpiresIn=3600,  # ลิงก์ใช้ได้ 1 ชั่วโมง
+                )
+                st.success("Download ready (link valid 1 hour):")
+                st.markdown(f"[Download processed video]({url})")
+            except Exception as exc:
+                st.error(f"Error generating download link: {exc}")
