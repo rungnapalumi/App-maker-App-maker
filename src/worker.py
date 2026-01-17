@@ -4,6 +4,7 @@ import time
 import logging
 import tempfile
 from datetime import datetime, timezone
+from typing import Dict, Any, Optional
 
 import boto3
 
@@ -53,7 +54,7 @@ OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
 
 
 # ---------------------------------------------------------------------------
-# Small S3 helpers
+# Small helpers
 # ---------------------------------------------------------------------------
 
 
@@ -61,14 +62,14 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def s3_get_json(key: str) -> dict:
+def s3_get_json(key: str) -> Dict[str, Any]:
     logger.info("[s3_get_json] key=%s", key)
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def s3_put_json(key: str, payload: dict) -> None:
+def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
     body_str = json.dumps(payload)
     logger.info("[s3_put_json] key=%s size=%d bytes", key, len(body_str))
     body = body_str.encode("utf-8")
@@ -106,7 +107,7 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
 
 
 def list_pending_json_keys():
-    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
+    """Return keys of job JSONs under jobs/pending/"""
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
@@ -115,7 +116,7 @@ def list_pending_json_keys():
                 yield key
 
 
-def find_one_pending_job_key() -> str | None:
+def find_one_pending_job_key() -> Optional[str]:
     for key in list_pending_json_keys():
         logger.info("[find_one_pending_job_key] found %s", key)
         return key
@@ -123,15 +124,15 @@ def find_one_pending_job_key() -> str | None:
     return None
 
 
-def move_json(old_key: str, new_key: str, payload: dict) -> None:
-    # เขียน payload ไป new_key แล้วลบ old_key
+def move_json(old_key: str, new_key: str, payload: Dict[str, Any]) -> None:
+    """Write payload to new_key and delete old_key."""
     s3_put_json(new_key, payload)
     if old_key != new_key:
         logger.info("[s3_delete] key=%s", old_key)
         s3.delete_object(Bucket=AWS_BUCKET, Key=old_key)
 
 
-def update_status(job: dict, status: str, error: str | None = None) -> dict:
+def update_status(job: Dict[str, Any], status: str, error: Optional[str] = None) -> Dict[str, Any]:
     job["status"] = status
     job["updated_at"] = utc_now_iso()
     if error is not None:
@@ -140,17 +141,68 @@ def update_status(job: dict, status: str, error: str | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# QuickTime-friendly re-encode helper
+# ---------------------------------------------------------------------------
+
+
+def quicktime_safe_h264(in_path: str) -> str:
+    """
+    พยายาม re-encode เป็น H.264 (yuv420p) ที่ QuickTime ชอบ
+    ถ้า moviepy หรือ ffmpeg ใช้ไม่ได้ -> return in_path เดิม
+    """
+    try:
+        from moviepy.editor import VideoFileClip  # type: ignore
+    except Exception as e:
+        logger.warning("[qt-fix] moviepy not available (%s). Use raw file.", e)
+        return in_path
+
+    out_path = tempfile.mktemp(suffix=".mp4")
+
+    try:
+        clip = VideoFileClip(in_path)
+        fps = clip.fps or 25
+
+        logger.info("[qt-fix] Re-encoding to H.264 for QuickTime...")
+        clip.write_videofile(
+            out_path,
+            codec="libx264",
+            audio=False,
+            fps=fps,
+            preset="medium",
+            threads=1,
+            temp_audiofile=None,
+            remove_temp=True,
+            verbose=False,
+            logger=None,
+        )
+        clip.close()
+        logger.info("[qt-fix] Re-encode success: %s", out_path)
+        return out_path
+    except Exception as e:
+        logger.warning("[qt-fix] Re-encode failed (%s). Use raw file.", e)
+        return in_path
+
+
+# ---------------------------------------------------------------------------
 # Dots (Johansson) processing
 # ---------------------------------------------------------------------------
+
+
+def _make_even(x: int) -> int:
+    """ให้ความยาวเป็นเลขคู่ (บาง codec ต้องการ even width/height)"""
+    if x % 2 == 0:
+        return x
+    return x - 1 if x > 1 else x + 1
 
 
 def process_dots_video(input_key: str, output_key: str) -> None:
     """
     สร้างวิดีโอ Johansson dot:
       - อ่านวิดีโอจาก S3
-      - ใช้ MediaPipe Pose หา joint
+      - ใช้ MediaPipe Pose หา joint (single-person model แต่ใช้ได้ทั้งโหมด 1/2 คน)
       - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
-      - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
+      - บังคับให้ขนาดเฟรมเป็นเลขคู่ และเท่ากันทุกเฟรม
+      - หลังจากนั้นพยายาม re-encode เป็น H.264 QuickTime-friendly
     """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
         raise RuntimeError(
@@ -158,31 +210,34 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         )
 
     input_path = download_to_temp(input_key, suffix=".mp4")
-    out_path = tempfile.mktemp(suffix=".mp4")
+    raw_out_path = tempfile.mktemp(suffix=".mp4")
 
-    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, out_path)
+    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, raw_out_path)
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
         cap.release()
         raise RuntimeError("Could not open input video")
 
-    # ใช้ metadata จากวิดีโอเป็นขนาดมาตรฐาน
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    # กันกรณี metadata พัง (เช่น width/height = 0)
+    # กันกรณี metadata พัง
     if width <= 0 or height <= 0:
         ok, frame0 = cap.read()
         if not ok:
             cap.release()
             raise RuntimeError("Cannot read any frame from input video")
         height, width = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    # บังคับให้เป็นเลขคู่ เผื่อ H.264 จะงอแง
+    width_even = _make_even(width)
+    height_even = _make_even(height)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+    writer = cv2.VideoWriter(raw_out_path, fourcc, fps, (width_even, height_even))
     if not writer.isOpened():
         cap.release()
         writer.release()
@@ -196,7 +251,7 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         min_tracking_confidence=0.5,
     )
 
-    RADIUS = 5  # ขนาดจุดเท่ากันทุกเฟรม
+    RADIUS = 5
 
     try:
         with pose:
@@ -205,15 +260,12 @@ def process_dots_video(input_key: str, output_key: str) -> None:
                 if not ok:
                     break
 
-                # บังคับทุกเฟรมให้ขนาดเท่ากับ (width, height)
-                frame = cv2.resize(frame, (width, height))
+                frame = cv2.resize(frame, (width_even, height_even))
 
-                # Pose detection
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb)  # type: ignore[arg-type]
 
-                # สร้างพื้นหลังดำขนาดเดียวกันทุกเฟรม
-                black = np.zeros((height, width, 3), dtype=np.uint8)
+                black = np.zeros((height_even, width_even, 3), dtype=np.uint8)
 
                 if results.pose_landmarks:
                     h, w, _ = black.shape
@@ -235,46 +287,21 @@ def process_dots_video(input_key: str, output_key: str) -> None:
                 writer.write(black)
 
     finally:
-        # ปิด resource จาก OpenCV ก่อน
         cap.release()
         writer.release()
 
-        qt_safe_path = None
-        try:
-            # แปลงไฟล์ให้เป็น H.264 ซึ่ง QuickTime เปิดได้แน่นอน
-            from moviepy.editor import VideoFileClip
+    # ----- QuickTime-friendly re-encode -----
+    final_path = quicktime_safe_h264(raw_out_path)
 
-            qt_safe_path = out_path.replace(".mp4", "_qt.mp4")
-            logger.info("[dots] Converting to QuickTime-safe H.264: %s -> %s", out_path, qt_safe_path)
-
-            clip = VideoFileClip(out_path)
-            clip.write_videofile(
-                qt_safe_path,
-                codec="libx264",
-                audio=False,
-                fps=fps,
-                verbose=False,
-                logger=None,
-            )
-            clip.close()
-
-            upload_from_path(qt_safe_path, output_key)
-
-        except Exception as exc:
-            # ถ้าแปลงไม่สำเร็จ ให้ใช้ไฟล์เดิม (อย่างน้อยเปิดใน browser / VLC ได้)
-            logger.warning(
-                "[dots] H.264 conversion failed (%s). Uploading raw MP4 instead.", exc
-            )
-            upload_from_path(out_path, output_key)
-
-        finally:
-            # cleanup ไฟล์ชั่วคราวทั้งหมด
-            for path in (input_path, out_path, qt_safe_path):
-                if path and os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
+    try:
+        upload_from_path(final_path, output_key)
+    finally:
+        for path in (input_path, raw_out_path, final_path):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +313,7 @@ def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
 
     job_id = raw_job.get("job_id")
-    mode = raw_job.get("mode", "passthrough")
+    mode = raw_job.get("mode", "passthrough") or "passthrough"
     input_key = raw_job.get("input_key")
 
     if not job_id:
@@ -314,7 +341,8 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        if mode == "dots":
+        # รองรับทุก mode ที่ขึ้นต้นด้วย "dots" (เช่น "dots", "dots_1p", "dots_2p")
+        if str(mode).startswith("dots"):
             process_dots_video(input_key, output_key)
         else:
             # default: passthrough / copy เฉย ๆ
