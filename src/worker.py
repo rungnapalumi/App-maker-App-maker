@@ -1,332 +1,360 @@
-import os
+# src/worker.py
+"""
+Background worker สำหรับประมวลผลวิดีโอบน S3
+
+โครงหลัก:
+- Poll หา jobs/pending/*.json จาก S3
+- อ่าน job JSON → ย้ายไป processing → ประมวลผลตาม mode
+- เซฟไฟล์ผลลัพธ์ (result.mp4 หรือไฟล์อื่น ๆ) ไปที่ jobs/output/<job_id>/
+- อัปเดต job JSON ไปที่ jobs/finished/ หรือ jobs/failed/
+
+รองรับ mode ตอนนี้:
+- "dots"      → วิดีโอจุดแบบ Johansson จาก Mediapipe Pose
+- "clear"     → copy วิดีโอต้นฉบับเป็น result.mp4
+- "skeleton"  → วิดีโอเส้นโครงกระดูก (ใช้ Pose connections)
+(ภายหลังจะเพิ่ม "presentation" ได้)
+"""
+
 import json
-import time
 import logging
+import os
 import tempfile
+import time
+import traceback
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 import boto3
+from botocore.exceptions import ClientError
 
-# Optional heavy libs – เรารองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
+# พยายาม import stack สำหรับวิดีโอ
 try:
-    import cv2  # type: ignore
+    import cv2
 except Exception:  # ImportError หรือ error อื่น ๆ
-    cv2 = None  # type: ignore
+    cv2 = None
 
 try:
-    import numpy as np  # type: ignore
+    import mediapipe as mp
 except Exception:
-    np = None  # type: ignore
+    mp = None
 
 try:
-    import mediapipe as mp  # type: ignore
-    MP_HAS_SOLUTIONS = hasattr(mp, "solutions")
+    import numpy as np
 except Exception:
-    mp = None  # type: ignore
-    MP_HAS_SOLUTIONS = False
+    np = None
 
-# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Config & logger
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 
-AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
+S3_BUCKET = os.getenv("S3_BUCKET") or os.getenv("AWS_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
-if not AWS_BUCKET:
-    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
+if not S3_BUCKET:
+    raise RuntimeError("Missing S3_BUCKET (or AWS_BUCKET) environment variable")
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+    format="%(asctime)s [%(levelname)s] [%(threadName)s] %(name)s - %(message)s",
 )
 logger = logging.getLogger("worker")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-JOBS_PREFIX = "jobs"
-PENDING_PREFIX = f"{JOBS_PREFIX}/pending"
-PROCESSING_PREFIX = f"{JOBS_PREFIX}/processing"
-FINISHED_PREFIX = f"{JOBS_PREFIX}/finished"
-FAILED_PREFIX = f"{JOBS_PREFIX}/failed"
-OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
+JOBS_PENDING_PREFIX = "jobs/pending/"
+JOBS_PROCESSING_PREFIX = "jobs/processing/"
+JOBS_FINISHED_PREFIX = "jobs/finished/"
+JOBS_FAILED_PREFIX = "jobs/failed/"
+JOBS_OUTPUT_PREFIX = "jobs/output/"
 
 
-# ---------------------------------------------------------------------------
-# Small S3 helpers
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Utils
+# ---------------------------------------------------------------------
 
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def s3_get_json(key: str) -> dict:
-    logger.info("[s3_get_json] key=%s", key)
-    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+def s3_get_json(key: str) -> Dict[str, Any]:
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def s3_put_json(key: str, payload: dict) -> None:
-    body_str = json.dumps(payload)
-    logger.info("[s3_put_json] key=%s size=%d bytes", key, len(body_str))
-    body = body_str.encode("utf-8")
-    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
-
-
-def download_to_temp(key: str, suffix: str = ".mp4") -> str:
-    fd, path = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    logger.info("[s3_download] %s -> %s", key, path)
-    with open(path, "wb") as f:
-        s3.download_fileobj(AWS_BUCKET, key, f)
-    return path
-
-
-def upload_from_path(path: str, key: str, content_type: str = "video/mp4") -> None:
-    logger.info("[s3_upload] %s -> %s", path, key)
-    with open(path, "rb") as f:
-        s3.upload_fileobj(f, AWS_BUCKET, key, ExtraArgs={"ContentType": content_type})
+def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    s3.put_object(
+        Bucket=S3_BUCKET,
+        Key=key,
+        Body=body,
+        ContentType="application/json",
+    )
 
 
 def copy_video_in_s3(input_key: str, output_key: str) -> None:
-    logger.info("[copy_object] %s -> %s", input_key, output_key)
+    """
+    ใช้ S3 copy ภายใน bucket เดียวกัน (ไม่ต้องโหลดขึ้นลง)
+    """
+    logger.info(f"Copy video in S3: {input_key} → {output_key}")
     s3.copy_object(
-        Bucket=AWS_BUCKET,
-        CopySource={"Bucket": AWS_BUCKET, "Key": input_key},
+        Bucket=S3_BUCKET,
+        CopySource={"Bucket": S3_BUCKET, "Key": input_key},
         Key=output_key,
         ContentType="video/mp4",
     )
 
 
-# ---------------------------------------------------------------------------
-# Job lifecycle helpers
-# ---------------------------------------------------------------------------
-
-
-def list_pending_json_keys():
-    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
-        for item in page.get("Contents", []):
-            key = item["Key"]
-            if key.endswith(".json"):
-                yield key
-
-
-def find_one_pending_job_key() -> str | None:
-    for key in list_pending_json_keys():
-        logger.info("[find_one_pending_job_key] found %s", key)
-        return key
-    logger.debug("[find_one_pending_job_key] no pending jobs")
-    return None
-
-
-def move_json(old_key: str, new_key: str, payload: dict) -> None:
-    # เขียน payload ไป new_key แล้วลบ old_key
-    s3_put_json(new_key, payload)
-    if old_key != new_key:
-        logger.info("[s3_delete] key=%s", old_key)
-        s3.delete_object(Bucket=AWS_BUCKET, Key=old_key)
-
-
-def update_status(job: dict, status: str, error: str | None = None) -> dict:
-    job["status"] = status
-    job["updated_at"] = utc_now_iso()
-    if error is not None:
-        job["error"] = error
-    return job
-
-
-# ---------------------------------------------------------------------------
-# Dots (Johansson) processing
-# ---------------------------------------------------------------------------
-
-
-def process_dots_video(input_key: str, output_key: str) -> None:
+def ensure_cv_stack():
     """
-    สร้างวิดีโอ Johansson dot:
-      - อ่านวิดีโอจาก S3
-      - ใช้ MediaPipe Pose หา joint
-      - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
-      - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
+    ถ้า stack วิดีโอ import ไม่ได้ ให้ error ชัด ๆ
     """
-    if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
+    if cv2 is None or mp is None or np is None:
         raise RuntimeError(
-            "Johansson dots mode requires OpenCV, NumPy, and MediaPipe to be installed"
+            "OpenCV / Mediapipe / NumPy not available. "
+            "Please check requirements.txt and that packages are installed."
         )
 
-    input_path = download_to_temp(input_key, suffix=".mp4")
-    out_path = tempfile.mktemp(suffix=".mp4")
 
-    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, out_path)
+# ---------------------------------------------------------------------
+# Video processing: dots / skeleton
+# ---------------------------------------------------------------------
 
-    cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
+
+def render_pose_video(
+    input_path: str,
+    output_path: str,
+    style: str = "dots",
+) -> None:
+    """
+    ใช้ Mediapipe Pose ทำวิดีโอ:
+    - style="dots"     → เฟรมดำ + จุดขาวตาม joint
+    - style="skeleton" → เฟรมดำ + จุด + เส้นเชื่อม joint
+    """
+    ensure_cv_stack()
+
+    mp_pose = mp.solutions.pose
+
+    cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
-        cap.release()
-        raise RuntimeError("Could not open input video")
+        raise RuntimeError(f"Cannot open video: {input_path}")
 
-    # ใช้ metadata จากวิดีโอเป็นขนาดมาตรฐาน
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-
-    # กันกรณี metadata พัง (เช่น width/height = 0)
-    if width <= 0 or height <= 0:
-        ok, frame0 = cap.read()
-        if not ok:
-            cap.release()
-            raise RuntimeError("Cannot read any frame from input video")
-        height, width = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-    if not writer.isOpened():
-        cap.release()
-        writer.release()
-        raise RuntimeError("Could not open VideoWriter for output")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
-    pose = mp.solutions.pose.Pose(  # type: ignore[attr-defined]
+    logger.info(
+        f"Processing video with mediapipe pose: style={style}, fps={fps}, size=({w}x{h})"
+    )
+
+    with mp_pose.Pose(
         static_image_mode=False,
         model_complexity=1,
         enable_segmentation=False,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
-    )
+    ) as pose:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    RADIUS = 5  # ขนาดจุดเท่ากันทุกเฟรม
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = pose.process(rgb)
 
-    try:
-        with pose:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
-                    break
+            dots_frame = np.zeros_like(frame)  # background ดำ
+            if result.pose_landmarks:
+                h_f, w_f, _ = frame.shape
 
-                # บังคับทุกเฟรมให้ขนาดเท่ากับ (width, height)
-                frame = cv2.resize(frame, (width, height))
+                # วาดจุด
+                for lm in result.pose_landmarks.landmark:
+                    if lm.visibility < 0.5:
+                        continue
+                    x = int(lm.x * w_f)
+                    y = int(lm.y * h_f)
+                    cv2.circle(dots_frame, (x, y), 6, (255, 255, 255), -1)
 
-                # Pose detection
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = pose.process(rgb)  # type: ignore[arg-type]
-
-                # สร้างพื้นหลังดำขนาดเดียวกันทุกเฟรม
-                black = np.zeros((height, width, 3), dtype=np.uint8)
-
-                if results.pose_landmarks:
-                    h, w, _ = black.shape
-                    for lm in results.pose_landmarks.landmark:
-                        if getattr(lm, "visibility", 1.0) < 0.5:
+                # วาดเส้น ถ้า style = skeleton
+                if style == "skeleton":
+                    lm_list = result.pose_landmarks.landmark
+                    for start_idx, end_idx in mp_pose.POSE_CONNECTIONS:
+                        s = lm_list[start_idx]
+                        e = lm_list[end_idx]
+                        if s.visibility < 0.5 or e.visibility < 0.5:
                             continue
-                        x = int(lm.x * w)
-                        y = int(lm.y * h)
-                        if 0 <= x < w and 0 <= y < h:
-                            cv2.circle(
-                                black,
-                                (x, y),
-                                RADIUS,
-                                (255, 255, 255),
-                                -1,
-                                lineType=cv2.LINE_AA,
-                            )
+                        x1, y1 = int(s.x * w_f), int(s.y * h_f)
+                        x2, y2 = int(e.x * w_f), int(e.y * h_f)
+                        cv2.line(dots_frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
-                writer.write(black)
+            out.write(dots_frame)
 
-    finally:
-        cap.release()
-        writer.release()
-        try:
-            upload_from_path(out_path, output_key)
-        finally:
-            for path in (input_path, out_path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+    cap.release()
+    out.release()
+    logger.info("Finished render_pose_video")
 
 
-# ---------------------------------------------------------------------------
-# Job processor
-# ---------------------------------------------------------------------------
+def process_dots_job(job: Dict[str, Any], input_key: str, output_key: str) -> None:
+    """
+    ดึงไฟล์จาก S3 → ทำ dot → อัปโหลดกลับ
+    """
+    logger.info(f"[{job['job_id']}] process_dots_job")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, "input.mp4")
+        output_path = os.path.join(tmpdir, "result.mp4")
+
+        # download input
+        s3.download_file(S3_BUCKET, input_key, input_path)
+
+        # process
+        render_pose_video(input_path, output_path, style="dots")
+
+        # upload output
+        s3.upload_file(
+            output_path,
+            S3_BUCKET,
+            output_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
 
 
-def process_job(job_json_key: str) -> None:
-    raw_job = s3_get_json(job_json_key)
+def process_skeleton_job(job: Dict[str, Any], input_key: str, output_key: str) -> None:
+    """
+    ดึงไฟล์จาก S3 → ทำ skeleton → อัปโหลดกลับ
+    """
+    logger.info(f"[{job['job_id']}] process_skeleton_job")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, "input.mp4")
+        output_path = os.path.join(tmpdir, "result.mp4")
 
-    job_id = raw_job.get("job_id")
-    mode = raw_job.get("mode", "passthrough")
-    input_key = raw_job.get("input_key")
+        s3.download_file(S3_BUCKET, input_key, input_path)
 
-    if not job_id:
-        raise ValueError("Job JSON missing 'job_id'")
-    if not input_key:
-        raise ValueError("Job JSON missing 'input_key'")
+        render_pose_video(input_path, output_path, style="skeleton")
 
-    # ถ้า app ไม่ใส่ output_key มา ใช้ default path เดิม
-    output_key = raw_job.get("output_key") or f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
+        s3.upload_file(
+            output_path,
+            S3_BUCKET,
+            output_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
 
-    logger.info(
-        "[process_job] job_id=%s mode=%s input_key=%s output_key=%s",
-        job_id,
-        mode,
-        input_key,
-        output_key,
-    )
 
-    # ย้าย JSON ไป processing
-    job = dict(raw_job)
-    job = update_status(job, "processing")
-    job["output_key"] = output_key
+def process_clear_job(job: Dict[str, Any], input_key: str, output_key: str) -> None:
+    """
+    โหมด clear: ตอนนี้ copy วิดีโอต้นฉบับเป็น result.mp4 เฉย ๆ
+    """
+    logger.info(f"[{job['job_id']}] process_clear_job (copy video)")
+    copy_video_in_s3(input_key=input_key, output_key=output_key)
 
-    processing_key = f"{PROCESSING_PREFIX}/{job_id}.json"
-    move_json(job_json_key, processing_key, job)
+
+# ---------------------------------------------------------------------
+# Job management
+# ---------------------------------------------------------------------
+
+
+def find_one_pending_job_key() -> Optional[str]:
+    """
+    หา pending job 1 อันจาก S3 (jobs/pending/*.json)
+    ตอนนี้หยิบตัวแรกที่เจอ
+    """
+    resp = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=JOBS_PENDING_PREFIX)
+    contents = resp.get("Contents")
+    if not contents:
+        return None
+
+    # เอาเฉพาะ .json
+    keys = [o["Key"] for o in contents if o["Key"].endswith(".json")]
+    if not keys:
+        return None
+
+    # sort ตามชื่อไฟล์ (job_id มี timestamp อยู่แล้ว)
+    keys.sort()
+    return keys[0]
+
+
+def process_job(job_key: str) -> None:
+    """
+    main flow ของการประมวลผล job เดียว
+    """
+    logger.info(f"Start process_job: {job_key}")
+
+    # อ่าน job JSON
+    job = s3_get_json(job_key)
+    job_id = job.get("job_id") or os.path.splitext(os.path.basename(job_key))[0]
+
+    # เตรียม key ตามสถานะ
+    processing_key = f"{JOBS_PROCESSING_PREFIX}{job_id}.json"
+    finished_key = f"{JOBS_FINISHED_PREFIX}{job_id}.json"
+    failed_key = f"{JOBS_FAILED_PREFIX}{job_id}.json"
+
+    # เปลี่ยนจาก pending → processing
+    job["job_id"] = job_id
+    job["status"] = "processing"
+    job["updated_at_utc"] = utc_now_iso()
+
+    # เขียน processing แล้วลบ pending
+    s3_put_json(processing_key, job)
+    s3.delete_object(Bucket=S3_BUCKET, Key=job_key)
+
+    input_key = job.get("input_key")
+    output_key = job.get("output_key")
+    mode = job.get("mode", "dots")
+
+    if not input_key or not output_key:
+        raise ValueError("Job JSON missing 'input_key' or 'output_key'")
 
     try:
         if mode == "dots":
-            process_dots_video(input_key, output_key)
+            process_dots_job(job, input_key, output_key)
+        elif mode == "clear":
+            process_clear_job(job, input_key, output_key)
+        elif mode == "skeleton":
+            process_skeleton_job(job, input_key, output_key)
         else:
-            # default: passthrough / copy เฉย ๆ
-            copy_video_in_s3(input_key, output_key)
-
-        job = update_status(job, "finished", error=None)
-        finished_key = f"{FINISHED_PREFIX}/{job_id}.json"
-        move_json(processing_key, finished_key, job)
-        logger.info("[process_job] job_id=%s finished", job_id)
+            raise ValueError(f"Unknown mode: {mode}")
 
     except Exception as exc:
-        logger.exception("[process_job] job_id=%s FAILED: %s", job_id, exc)
-        job = update_status(job, "failed", error=str(exc))
-        failed_key = f"{FAILED_PREFIX}/{job_id}.json"
-        move_json(processing_key, failed_key, job)
+        # เกิด error → failed
+        logger.exception("Error while processing job")
+        job["status"] = "failed"
+        job["error"] = f"{type(exc).__name__}: {exc}"
+        job["traceback"] = traceback.format_exc()
+        job["updated_at_utc"] = utc_now_iso()
+        s3_put_json(failed_key, job)
+        # ลบ processing JSON
+        s3.delete_object(Bucket=S3_BUCKET, Key=processing_key)
+        return
+
+    # ถ้าทุกอย่างปกติ → finished
+    job["status"] = "finished"
+    job["error"] = None
+    job["updated_at_utc"] = utc_now_iso()
+    s3_put_json(finished_key, job)
+    s3.delete_object(Bucket=S3_BUCKET, Key=processing_key)
+    logger.info(f"[{job_id}] Finished job successfully")
 
 
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:
-    logger.info("====== AI People Reader Worker (Johansson) ======")
-    logger.info("Using bucket: %s", AWS_BUCKET)
-    logger.info("Region       : %s", AWS_REGION)
-    logger.info("Poll every   : %s seconds", POLL_INTERVAL)
-    logger.info("MP available : %s", bool(mp and MP_HAS_SOLUTIONS))
-    logger.info("cv2 available: %s", cv2 is not None)
-    logger.info("numpy avail. : %s", np is not None)
-
+def main_loop() -> None:
+    logger.info(f"Worker started. Bucket={S3_BUCKET}, Region={AWS_REGION}")
     while True:
         try:
             job_key = find_one_pending_job_key()
-            if job_key:
-                process_job(job_key)
-            else:
+            if not job_key:
                 time.sleep(POLL_INTERVAL)
-        except Exception as exc:
-            logger.exception("[main] Unexpected error: %s", exc)
+                continue
+
+            logger.info(f"Found pending job: {job_key}")
+            process_job(job_key)
+
+        except Exception:
+            logger.exception("Unexpected error in main_loop")
             time.sleep(POLL_INTERVAL)
 
 
 if __name__ == "__main__":
-    main()
+    main_loop()
