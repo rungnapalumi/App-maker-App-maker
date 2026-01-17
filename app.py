@@ -5,7 +5,7 @@
 #   2) สร้าง job JSON ไปที่ S3 (โฟลเดอร์ jobs/pending/)
 #   3) worker.py จะอ่าน JSON + วิดีโอจาก S3 แล้วประมวลผล
 #   4) app ดึงสถานะจาก jobs/(pending|processing|finished|failed)
-#   5) เมื่อเสร็จแล้ว สามารถกด Download เพื่อโหลด result.mp4 ได้
+#   5) เมื่อเสร็จแล้ว กด Download เพื่อโหลด result.mp4 ได้ (ผ่าน Streamlit)
 
 import os
 import io
@@ -56,12 +56,22 @@ def new_job_id() -> str:
 
 
 def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "video/mp4") -> None:
-    s3.upload_fileobj(io.BytesIO(data), AWS_BUCKET, key, ExtraArgs={"ContentType": content_type})
+    s3.upload_fileobj(
+        io.BytesIO(data),
+        AWS_BUCKET,
+        key,
+        ExtraArgs={"ContentType": content_type},
+    )
 
 
 def s3_put_json(key: str, payload: dict) -> None:
     body = json.dumps(payload).encode("utf-8")
-    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
+    s3.put_object(
+        Bucket=AWS_BUCKET,
+        Key=key,
+        Body=body,
+        ContentType="application/json",
+    )
 
 
 def s3_get_json(key: str) -> Optional[dict]:
@@ -238,7 +248,7 @@ with right:
     st.subheader("② Job List & Download")
 
     if st.button("🔁 Refresh job list"):
-        # ปุ่มทำให้สคริปต์ rerun อัตโนมัติอยู่แล้ว ไม่ต้องเรียก experimental_rerun
+        # การกดปุ่มจะทำให้สคริปต์ rerun อยู่แล้ว
         pass
 
     jobs = collect_all_jobs()
@@ -261,6 +271,10 @@ st.header("⬇️ Download processed video")
 
 job_id_for_download = st.text_input("Enter job ID", "")
 
+# ตัวแปรสำหรับเก็บ bytes ของวิดีโอ (ถ้าหาเจอ)
+video_bytes: Optional[bytes] = None
+download_filename: str = "result.mp4"
+
 if st.button("Download"):
     job_id_for_download = job_id_for_download.strip()
 
@@ -274,6 +288,9 @@ if st.button("Download"):
 
         if job and job.get("status") == "finished":
             output_key = job.get("output_key")
+            if not output_key:
+                # กันกรณี JSON เก่าที่ไม่มี output_key
+                output_key = f"{JOBS_OUTPUT_PREFIX}/{job_id_for_download}/result.mp4"
 
         # 2) ถ้ายังไม่มี ให้ลอง fallback หาไฟล์ตรง ๆ ตาม pattern เดิม
         if not output_key:
@@ -291,12 +308,19 @@ if st.button("Download"):
             )
         else:
             try:
-                url = s3.generate_presigned_url(
-                    "get_object",
-                    Params={"Bucket": AWS_BUCKET, "Key": output_key},
-                    ExpiresIn=3600,  # ลิงก์ใช้ได้ 1 ชั่วโมง
-                )
-                st.success("Download ready (link valid 1 hour):")
-                st.markdown(f"[Download processed video]({url})")
+                obj = s3.get_object(Bucket=AWS_BUCKET, Key=output_key)
+                video_bytes = obj["Body"].read()
+                download_filename = f"{job_id_for_download}_dots.mp4"
+                st.success("Video is ready. กดปุ่มด้านล่างเพื่อดาวน์โหลดนะคะ 👇")
             except Exception as exc:
-                st.error(f"Error generating download link: {exc}")
+                st.error(f"Error reading video from S3: {exc}")
+                video_bytes = None
+
+# ถ้าเรามี video_bytes แล้ว ค่อยโชว์ปุ่มดาวน์โหลด
+if video_bytes:
+    st.download_button(
+        label="Download processed video",
+        data=video_bytes,
+        file_name=download_filename,
+        mime="video/mp4",
+    )
