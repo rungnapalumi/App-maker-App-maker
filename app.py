@@ -1,12 +1,11 @@
-# app.py — AI People Reader Job Manager (App-maker-App-maker)
+# app.py — AI People Reader Job Manager (Johansson / dots / clear / skeleton)
 #
-# หน้าที่:
-#   - ให้ผู้ใช้ upload วิดีโอ
-#   - เลือก mode ว่าจะให้ worker ทำ Johansson dots หรือ copy วิดีโอ
-#   - สร้าง job JSON ไปไว้ที่ jobs/pending/<job_id>.json
-#   - ให้โหลด result ที่ jobs/output/<job_id>/result.mp4
-#
-# NOTE: โค้ดนี้ออกแบบให้เข้าคู่กับ worker.py เวอร์ชันที่ Rung ส่งมา (process_dots_video + passthrough)
+# หน้าที่หลัก:
+#   - ให้ผู้ใช้ upload วิดีโอ + เลือก mode
+#   - สร้าง job JSON ตาม schema เดียวกับ worker.py
+#   - เซฟ input video + job JSON ลง S3
+#   - แสดงรายการ jobs จากทุกสถานะ (pending / processing / finished / failed)
+#   - ให้เลือก job แล้วดาวน์โหลด result.mp4 ถ้าไฟล์มีจริงใน S3
 
 import os
 import json
@@ -31,12 +30,11 @@ if not AWS_BUCKET:
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-JOBS_PREFIX = "jobs"
-PENDING_PREFIX = f"{JOBS_PREFIX}/pending"
-PROCESSING_PREFIX = f"{JOBS_PREFIX}/processing"
-FINISHED_PREFIX = f"{JOBS_PREFIX}/finished"
-FAILED_PREFIX = f"{JOBS_PREFIX}/failed"
-OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
+JOBS_PENDING_PREFIX = "jobs/pending/"
+JOBS_PROCESSING_PREFIX = "jobs/processing/"
+JOBS_FINISHED_PREFIX = "jobs/finished/"
+JOBS_FAILED_PREFIX = "jobs/failed/"
+JOBS_OUTPUT_PREFIX = "jobs/output/"
 
 st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 
@@ -46,16 +44,19 @@ st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 # ----------------------------------------------------------
 
 def utc_now_iso() -> str:
+    """คืนค่าเวลาปัจจุบันแบบ ISO (UTC)"""
     return datetime.now(timezone.utc).isoformat()
 
 
 def new_job_id() -> str:
+    """สร้าง job_id ใหม่ เช่น 20260114_140637__6d6c6"""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:5]
     return f"{ts}__{rand}"
 
 
 def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/octet-stream") -> None:
+    """อัปโหลดไฟล์ binary ขึ้น S3"""
     s3.put_object(
         Bucket=AWS_BUCKET,
         Key=key,
@@ -65,6 +66,7 @@ def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/o
 
 
 def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
+    """เซฟ JSON ลง S3"""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     s3.put_object(
         Bucket=AWS_BUCKET,
@@ -75,57 +77,59 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 
 def s3_get_json(key: str) -> Dict[str, Any]:
+    """ดึง JSON จาก S3"""
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def create_job(file_bytes: bytes, filename: str, mode: str, user_note: str = "") -> Dict[str, Any]:
+def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
     """
     สร้าง job ใหม่:
-      - input video:  jobs/pending/<job_id>/input/input.mp4
-      - output video: jobs/output/<job_id>/result.mp4
-      - job json:     jobs/pending/<job_id>.json
+      - เซฟ input video ไปที่ jobs/pending/<job_id>/input/input.mp4
+      - สร้าง JSON และเซฟที่ jobs/pending/<job_id>.json
     """
     job_id = new_job_id()
 
-    input_key = f"{PENDING_PREFIX}/{job_id}/input/input.mp4"
-    output_key = f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
-    job_json_key = f"{PENDING_PREFIX}/{job_id}.json"
+    input_key = f"{JOBS_PENDING_PREFIX}{job_id}/input/input.mp4"
+    output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
 
-    # upload video
+    # Upload video
     upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
 
     now = utc_now_iso()
     job = {
         "job_id": job_id,
         "status": "pending",
-        "mode": mode,  # ส่งไปให้ worker ตัดสินใจ
+        "mode": mode,
         "input_key": input_key,
         "output_key": output_key,
         "created_at": now,
         "updated_at": now,
         "error": None,
-        "user_note": user_note or "",
-        "original_filename": filename,
     }
 
+    job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
     s3_put_json(job_json_key, job)
+
     return job
 
 
 def list_jobs() -> List[Dict[str, Any]]:
     """
-    รวม job จาก pending/processing/finished/failed
-    ใช้ prefix เป็นตัวบอกสถานะ (ไม่พึ่งพา field status ใน JSON อย่างเดียว)
+    ดึง job จากทุก prefix (pending/processing/finished/failed)
+    แล้วรวมเป็น list เดียว
+
+    NOTE: ใช้ prefix เป็นตัวกำหนด status เสมอ
+          (ไม่เชื่อ field "status" ใน JSON เพราะ worker ไม่ได้อัปเดต)
     """
     all_jobs: List[Dict[str, Any]] = []
 
     prefix_status_pairs = [
-        (PENDING_PREFIX, "pending"),
-        (PROCESSING_PREFIX, "processing"),
-        (FINISHED_PREFIX, "finished"),
-        (FAILED_PREFIX, "failed"),
+        (JOBS_PENDING_PREFIX, "pending"),
+        (JOBS_PROCESSING_PREFIX, "processing"),
+        (JOBS_FINISHED_PREFIX, "finished"),
+        (JOBS_FAILED_PREFIX, "failed"),
     ]
 
     for prefix, default_status in prefix_status_pairs:
@@ -153,20 +157,22 @@ def list_jobs() -> List[Dict[str, Any]]:
                 st.warning(f"Cannot read job {key}: {ce}")
                 continue
 
-            job["status"] = default_status  # แหล่งความจริงเรื่อง status
+            # ใช้ prefix เป็นตัวตัดสินใจสถานะเสมอ
+            job["status"] = default_status
             job["s3_key"] = key
             all_jobs.append(job)
 
-    # sort ตามเวลาสร้าง (จากเก่าไปใหม่)
+    # sort by created_at (จากเก่าไปใหม่)
     all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=False)
     return all_jobs
 
 
 def download_output_video(job_id: str) -> bytes:
     """
-    ดึงไฟล์ result.mp4 จาก jobs/output/<job_id>/result.mp4
+    ดึง result video จาก jobs/output/<job_id>/result.mp4
+    ถ้าไม่มีไฟล์ จะโยน ClientError (ให้ไปจับด้าน UI)
     """
-    key = f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
+    key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     return obj["Body"].read()
 
@@ -175,70 +181,42 @@ def download_output_video(job_id: str) -> bytes:
 # UI
 # ----------------------------------------------------------
 
-st.title("🎬 AI People Reader - Job Manager (App-maker-App-maker)")
+st.title("AI People Reader - Job Manager")
 
 col_left, col_right = st.columns([1, 2])
 
 # ---------- LEFT: Create job ----------
 with col_left:
-    st.header("① Create New Job")
+    st.header("Create New Job")
 
-    # ให้คุณครูเลือกโหมดอ่านง่ายบนจอ
-    mode_label = st.selectbox(
-        "Mode",
-        [
-            "Johansson dots – 1 person (แนะนำ)",
-            "Johansson dots – 2 persons (ยังใช้ algorithm เดิม)",
-            "Copy video (no processing)",
-        ],
-        index=0,
-    )
-
-    # map label -> mode ที่ worker เข้าใจ
-    if mode_label.startswith("Johansson dots"):
-        # ตอนนี้ worker มีแค่ mode="dots" ตัวเดียว
-        # เราเลยให้ทั้ง single/multi ใช้ mode="dots" เหมือนกัน
-        # (ต่างกันแค่ label บน UI สำหรับการสื่อสารกับคุณครู)
-        mode = "dots"
-    else:
-        # โหมด copy วิดีโอ
-        mode = "passthrough"
+    mode = st.selectbox("Mode", ["dots", "clear", "skeleton"], index=0)
 
     uploaded_file = st.file_uploader(
         "Upload video file",
-        type=["mp4", "mov", "m4v", "avi", "mkv", "mpeg4"],
+        type=["mp4", "mov", "m4v"],
         accept_multiple_files=False,
     )
 
-    user_note = st.text_input("Note (optional)", "")
-
-
-    if st.button("Create job", type="primary"):
+    if st.button("Create job"):
         if not uploaded_file:
             st.warning("Please upload a video file first.")
         else:
             file_bytes = uploaded_file.read()
-            job = create_job(
-                file_bytes=file_bytes,
-                filename=uploaded_file.name,
-                mode=mode,
-                user_note=user_note,
-            )
+            job = create_job(file_bytes, mode)
             st.success(f"Created job: {job['job_id']}")
-            with st.expander("Job JSON (frontend)", expanded=False):
-                st.json(job)
-
+            st.json(job)
 
 # ---------- RIGHT: Job list + download ----------
 with col_right:
-    st.header("② Job List & Download")
+    st.header("Jobs")
 
-    if st.button("🔄 Refresh job list"):
+    # ปุ่ม refresh ใช้ st.rerun() แทน experimental_rerun
+    if st.button("Refresh job list"):
         st.rerun()
 
     jobs = list_jobs()
     if not jobs:
-        st.info("ยังไม่พบงานใด ๆ ลองสร้างงานทางด้านซ้าย")
+        st.info("No jobs yet.")
     else:
         df = pd.DataFrame(
             [
@@ -249,49 +227,45 @@ with col_right:
                     "created_at": j.get("created_at"),
                     "updated_at": j.get("updated_at"),
                     "error": j.get("error"),
-                    "note": j.get("user_note", ""),
-                    "file": j.get("original_filename", ""),
                 }
                 for j in jobs
             ]
         )
         st.dataframe(df, use_container_width=True)
 
-        st.subheader("⬇ Download processed video")
+        # ------------------------------------------
+        # Download result section
+        # ------------------------------------------
+        st.subheader("Download result video ↪")
 
         job_ids_all = [j["job_id"] for j in jobs]
-        selected_job_id = st.selectbox("Select job ID", job_ids_all)
 
-        if st.button("Prepare download"):
-            selected_job = next(
-                (j for j in jobs if j["job_id"] == selected_job_id),
-                None,
+        if not job_ids_all:
+            st.caption("No jobs to download.")
+        else:
+            selected_job_id = st.selectbox(
+                "Select job (will download if result.mp4 exists)",
+                job_ids_all,
             )
 
-            try:
-                data = download_output_video(selected_job_id)
-            except ClientError as ce:
-                code = ce.response.get("Error", {}).get("Code")
-                if code == "NoSuchKey":
-                    st.error(
-                        "Result video for this job is not ready yet "
-                        "(result.mp4 not found in S3). Please wait and refresh."
+            if st.button("Prepare download"):
+                try:
+                    data = download_output_video(selected_job_id)
+                except ClientError as ce:
+                    # NoSuchKey = ยังไม่มี result.mp4
+                    err_code = ce.response.get("Error", {}).get("Code")
+                    if err_code == "NoSuchKey":
+                        st.error(
+                            "Result video for this job is not ready yet "
+                            "(result.mp4 not found in S3). "
+                            "Please wait a bit and refresh the job list."
+                        )
+                    else:
+                        st.error(f"Cannot download result: {ce}")
+                else:
+                    st.download_button(
+                        label="Download result.mp4",
+                        data=data,
+                        file_name=f"{selected_job_id}_result.mp4",
+                        mime="video/mp4",
                     )
-                else:
-                    st.error(f"Cannot download result: {ce}")
-            else:
-                # ตั้งชื่อไฟล์ให้ดูรู้เรื่อง
-                if selected_job:
-                    base = selected_job.get("original_filename") or selected_job_id
-                    base = os.path.splitext(os.path.basename(base))[0]
-                    mode_str = selected_job.get("mode", "dots")
-                    download_name = f"{base}_{mode_str}.mp4"
-                else:
-                    download_name = f"{selected_job_id}_result.mp4"
-
-                st.download_button(
-                    label=f"Download {download_name}",
-                    data=data,
-                    file_name=download_name,
-                    mime="video/mp4",
-                )
