@@ -144,13 +144,18 @@ def update_status(job: dict, status: str, error: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def process_dots_video(input_key: str, output_key: str) -> None:
+def process_dots_video(input_key: str, output_key: str, multi_person: bool = False) -> None:
     """
     สร้างวิดีโอ Johansson dot:
       - อ่านวิดีโอจาก S3
       - ใช้ MediaPipe Pose หา joint
       - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
       - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
+
+    NOTE:
+      ตอนนี้ mediapipe.solutions.pose เป็น single-person pose
+      ดังนั้น multi_person=True ยังใช้ logic เดียวกับ single อยู่
+      (โครงสร้างเผื่ออนาคตเปลี่ยนไปใช้โมเดลแบบหลายคน)
     """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
         raise RuntimeError(
@@ -160,7 +165,12 @@ def process_dots_video(input_key: str, output_key: str) -> None:
     input_path = download_to_temp(input_key, suffix=".mp4")
     out_path = tempfile.mktemp(suffix=".mp4")
 
-    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, out_path)
+    logger.info(
+        "[dots] starting Johansson processing input=%s out=%s multi_person=%s",
+        input_path,
+        out_path,
+        multi_person,
+    )
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
@@ -181,6 +191,7 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         height, width = frame0.shape[:2]
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
 
+    # *** สำคัญ: encoding เหมือนเวอร์ชันที่ QuickTime เปิดได้ ***
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
     if not writer.isOpened():
@@ -217,6 +228,9 @@ def process_dots_video(input_key: str, output_key: str) -> None:
 
                 if results.pose_landmarks:
                     h, w, _ = black.shape
+
+                    # ตอนนี้ยังได้ landmark ชุดเดียว (single person)
+                    # multi_person flag เผื่อไว้สำหรับอนาคต
                     for lm in results.pose_landmarks.landmark:
                         if getattr(lm, "visibility", 1.0) < 0.5:
                             continue
@@ -284,8 +298,11 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        if mode == "dots":
-            process_dots_video(input_key, output_key)
+        # รองรับทั้งชื่อ mode แบบเก่าและแบบใหม่
+        if mode in ("dots", "dots_1p", "dots_single"):
+            process_dots_video(input_key, output_key, multi_person=False)
+        elif mode in ("dots_2p", "dots_multi"):
+            process_dots_video(input_key, output_key, multi_person=True)
         else:
             # default: passthrough / copy เฉย ๆ
             copy_video_in_s3(input_key, output_key)
