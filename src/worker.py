@@ -4,7 +4,6 @@ import time
 import logging
 import tempfile
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
 
 import boto3
 
@@ -54,7 +53,7 @@ OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
 
 
 # ---------------------------------------------------------------------------
-# Small helpers
+# Small S3 helpers
 # ---------------------------------------------------------------------------
 
 
@@ -62,14 +61,14 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def s3_get_json(key: str) -> Dict[str, Any]:
+def s3_get_json(key: str) -> dict:
     logger.info("[s3_get_json] key=%s", key)
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
+def s3_put_json(key: str, payload: dict) -> None:
     body_str = json.dumps(payload)
     logger.info("[s3_put_json] key=%s size=%d bytes", key, len(body_str))
     body = body_str.encode("utf-8")
@@ -107,7 +106,7 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
 
 
 def list_pending_json_keys():
-    """Return keys of job JSONs under jobs/pending/"""
+    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
@@ -116,7 +115,7 @@ def list_pending_json_keys():
                 yield key
 
 
-def find_one_pending_job_key() -> Optional[str]:
+def find_one_pending_job_key() -> str | None:
     for key in list_pending_json_keys():
         logger.info("[find_one_pending_job_key] found %s", key)
         return key
@@ -124,15 +123,15 @@ def find_one_pending_job_key() -> Optional[str]:
     return None
 
 
-def move_json(old_key: str, new_key: str, payload: Dict[str, Any]) -> None:
-    """Write payload to new_key and delete old_key."""
+def move_json(old_key: str, new_key: str, payload: dict) -> None:
+    # เขียน payload ไป new_key แล้วลบ old_key
     s3_put_json(new_key, payload)
     if old_key != new_key:
         logger.info("[s3_delete] key=%s", old_key)
         s3.delete_object(Bucket=AWS_BUCKET, Key=old_key)
 
 
-def update_status(job: Dict[str, Any], status: str, error: Optional[str] = None) -> Dict[str, Any]:
+def update_status(job: dict, status: str, error: str | None = None) -> dict:
     job["status"] = status
     job["updated_at"] = utc_now_iso()
     if error is not None:
@@ -141,68 +140,20 @@ def update_status(job: Dict[str, Any], status: str, error: Optional[str] = None)
 
 
 # ---------------------------------------------------------------------------
-# QuickTime-friendly re-encode helper
-# ---------------------------------------------------------------------------
-
-
-def quicktime_safe_h264(in_path: str) -> str:
-    """
-    พยายาม re-encode เป็น H.264 (yuv420p) ที่ QuickTime ชอบ
-    ถ้า moviepy หรือ ffmpeg ใช้ไม่ได้ -> return in_path เดิม
-    """
-    try:
-        from moviepy.editor import VideoFileClip  # type: ignore
-    except Exception as e:
-        logger.warning("[qt-fix] moviepy not available (%s). Use raw file.", e)
-        return in_path
-
-    out_path = tempfile.mktemp(suffix=".mp4")
-
-    try:
-        clip = VideoFileClip(in_path)
-        fps = clip.fps or 25
-
-        logger.info("[qt-fix] Re-encoding to H.264 for QuickTime...")
-        clip.write_videofile(
-            out_path,
-            codec="libx264",
-            audio=False,
-            fps=fps,
-            preset="medium",
-            threads=1,
-            temp_audiofile=None,
-            remove_temp=True,
-            verbose=False,
-            logger=None,
-        )
-        clip.close()
-        logger.info("[qt-fix] Re-encode success: %s", out_path)
-        return out_path
-    except Exception as e:
-        logger.warning("[qt-fix] Re-encode failed (%s). Use raw file.", e)
-        return in_path
-
-
-# ---------------------------------------------------------------------------
 # Dots (Johansson) processing
+#   – ใช้ encoding pipeline แบบเดิม (OpenCV + mp4v)
+#   – people_mode เลือกได้ "single" หรือ "two" (ตอนนี้ logic คล้ายกัน
+#     แต่เผื่อไว้ขยายในอนาคต)
 # ---------------------------------------------------------------------------
 
 
-def _make_even(x: int) -> int:
-    """ให้ความยาวเป็นเลขคู่ (บาง codec ต้องการ even width/height)"""
-    if x % 2 == 0:
-        return x
-    return x - 1 if x > 1 else x + 1
-
-
-def process_dots_video(input_key: str, output_key: str) -> None:
+def process_dots_video(input_key: str, output_key: str, people_mode: str = "single") -> None:
     """
     สร้างวิดีโอ Johansson dot:
       - อ่านวิดีโอจาก S3
-      - ใช้ MediaPipe Pose หา joint (single-person model แต่ใช้ได้ทั้งโหมด 1/2 คน)
+      - ใช้ MediaPipe Pose หา joint
       - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
-      - บังคับให้ขนาดเฟรมเป็นเลขคู่ และเท่ากันทุกเฟรม
-      - หลังจากนั้นพยายาม re-encode เป็น H.264 QuickTime-friendly
+      - ใช้ VideoWriter แบบเดียวกับเวอร์ชัน single-person ที่เคยเล่นได้
     """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
         raise RuntimeError(
@@ -210,34 +161,37 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         )
 
     input_path = download_to_temp(input_key, suffix=".mp4")
-    raw_out_path = tempfile.mktemp(suffix=".mp4")
+    out_path = tempfile.mktemp(suffix=".mp4")
 
-    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, raw_out_path)
+    logger.info(
+        "[dots] starting Johansson processing input=%s out=%s people_mode=%s",
+        input_path,
+        out_path,
+        people_mode,
+    )
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
         cap.release()
         raise RuntimeError("Could not open input video")
 
+    # ใช้ metadata จากวิดีโอเป็นขนาดมาตรฐาน
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    # กันกรณี metadata พัง
+    # กันกรณี metadata พัง (เช่น width/height = 0)
     if width <= 0 or height <= 0:
         ok, frame0 = cap.read()
         if not ok:
             cap.release()
             raise RuntimeError("Cannot read any frame from input video")
         height, width = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
 
-    # บังคับให้เป็นเลขคู่ เผื่อ H.264 จะงอแง
-    width_even = _make_even(width)
-    height_even = _make_even(height)
-
+    # *** ส่วน encoding ใช้แบบเดิมที่เคยเล่นได้ ***
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(raw_out_path, fourcc, fps, (width_even, height_even))
+    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
     if not writer.isOpened():
         cap.release()
         writer.release()
@@ -251,7 +205,7 @@ def process_dots_video(input_key: str, output_key: str) -> None:
         min_tracking_confidence=0.5,
     )
 
-    RADIUS = 5
+    RADIUS = 5  # ขนาดจุดเท่ากันทุกเฟรม
 
     try:
         with pose:
@@ -260,15 +214,22 @@ def process_dots_video(input_key: str, output_key: str) -> None:
                 if not ok:
                     break
 
-                frame = cv2.resize(frame, (width_even, height_even))
+                # บังคับทุกเฟรมให้ขนาดเท่ากับ (width, height)
+                frame = cv2.resize(frame, (width, height))
 
+                # Pose detection
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb)  # type: ignore[arg-type]
 
-                black = np.zeros((height_even, width_even, 3), dtype=np.uint8)
+                # สร้างพื้นหลังดำขนาดเดียวกันทุกเฟรม
+                black = np.zeros((height, width, 3), dtype=np.uint8)
 
                 if results.pose_landmarks:
                     h, w, _ = black.shape
+
+                    # --- single & two-person ตอนนี้ใช้ logic เดียวกัน ---
+                    # MediaPipe Pose ปกติจะ detect ได้เด่นสุด 1 คน
+                    # ถ้าภายหลังมี multi-person logic เราค่อยแตก branch ตรงนี้เพิ่ม
                     for lm in results.pose_landmarks.landmark:
                         if getattr(lm, "visibility", 1.0) < 0.5:
                             continue
@@ -289,19 +250,14 @@ def process_dots_video(input_key: str, output_key: str) -> None:
     finally:
         cap.release()
         writer.release()
-
-    # ----- QuickTime-friendly re-encode -----
-    final_path = quicktime_safe_h264(raw_out_path)
-
-    try:
-        upload_from_path(final_path, output_key)
-    finally:
-        for path in (input_path, raw_out_path, final_path):
-            try:
-                if os.path.exists(path):
+        try:
+            upload_from_path(out_path, output_key)
+        finally:
+            for path in (input_path, out_path):
+                try:
                     os.remove(path)
-            except OSError:
-                pass
+                except OSError:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +269,7 @@ def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
 
     job_id = raw_job.get("job_id")
-    mode = raw_job.get("mode", "passthrough") or "passthrough"
+    mode = raw_job.get("mode", "dots_single")
     input_key = raw_job.get("input_key")
 
     if not job_id:
@@ -341,9 +297,13 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        # รองรับทุก mode ที่ขึ้นต้นด้วย "dots" (เช่น "dots", "dots_1p", "dots_2p")
-        if str(mode).startswith("dots"):
-            process_dots_video(input_key, output_key)
+        # รองรับชื่อ mode หลายแบบ เพื่อไม่ให้ของเดิมพัง
+        if mode in ("dots", "dots_single", "Johansson_dots_single"):
+            process_dots_video(input_key, output_key, people_mode="single")
+
+        elif mode in ("dots_two", "dots_2p", "Johansson_dots_two"):
+            process_dots_video(input_key, output_key, people_mode="two")
+
         else:
             # default: passthrough / copy เฉย ๆ
             copy_video_in_s3(input_key, output_key)
