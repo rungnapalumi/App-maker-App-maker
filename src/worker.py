@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import boto3
 
-# Optional heavy libs – รองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
+# Optional heavy libs – เรารองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
 try:
     import cv2  # type: ignore
 except Exception:  # ImportError หรือ error อื่น ๆ
@@ -106,7 +106,7 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
 
 
 def list_pending_json_keys():
-    """คืน key ของ job JSON ที่อยู่ใน jobs/pending/"""
+    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
@@ -124,7 +124,7 @@ def find_one_pending_job_key() -> str | None:
 
 
 def move_json(old_key: str, new_key: str, payload: dict) -> None:
-    """เขียน payload ไป new_key แล้วลบ old_key"""
+    # เขียน payload ไป new_key แล้วลบ old_key
     s3_put_json(new_key, payload)
     if old_key != new_key:
         logger.info("[s3_delete] key=%s", old_key)
@@ -235,16 +235,46 @@ def process_dots_video(input_key: str, output_key: str) -> None:
                 writer.write(black)
 
     finally:
+        # ปิด resource จาก OpenCV ก่อน
         cap.release()
         writer.release()
+
+        qt_safe_path = None
         try:
+            # แปลงไฟล์ให้เป็น H.264 ซึ่ง QuickTime เปิดได้แน่นอน
+            from moviepy.editor import VideoFileClip
+
+            qt_safe_path = out_path.replace(".mp4", "_qt.mp4")
+            logger.info("[dots] Converting to QuickTime-safe H.264: %s -> %s", out_path, qt_safe_path)
+
+            clip = VideoFileClip(out_path)
+            clip.write_videofile(
+                qt_safe_path,
+                codec="libx264",
+                audio=False,
+                fps=fps,
+                verbose=False,
+                logger=None,
+            )
+            clip.close()
+
+            upload_from_path(qt_safe_path, output_key)
+
+        except Exception as exc:
+            # ถ้าแปลงไม่สำเร็จ ให้ใช้ไฟล์เดิม (อย่างน้อยเปิดใน browser / VLC ได้)
+            logger.warning(
+                "[dots] H.264 conversion failed (%s). Uploading raw MP4 instead.", exc
+            )
             upload_from_path(out_path, output_key)
+
         finally:
-            for path in (input_path, out_path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            # cleanup ไฟล์ชั่วคราวทั้งหมด
+            for path in (input_path, out_path, qt_safe_path):
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +286,7 @@ def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
 
     job_id = raw_job.get("job_id")
-    # ถ้า app ไม่ส่ง mode มา ให้ default เป็น 'dots'
-    mode = raw_job.get("mode", "dots")
+    mode = raw_job.get("mode", "passthrough")
     input_key = raw_job.get("input_key")
 
     if not job_id:
@@ -285,13 +314,10 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        # รองรับทั้ง single / 2 persons:
-        # ถ้า mode เริ่มต้นด้วย "dots" (เช่น "dots", "dots_single", "dots_2persons")
-        # ใช้ algorithm Johansson ตัวเดียวกัน
-        if isinstance(mode, str) and mode.startswith("dots"):
+        if mode == "dots":
             process_dots_video(input_key, output_key)
         else:
-            # default: copy วิดีโอตรง ๆ
+            # default: passthrough / copy เฉย ๆ
             copy_video_in_s3(input_key, output_key)
 
         job = update_status(job, "finished", error=None)
