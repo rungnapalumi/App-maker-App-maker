@@ -1,0 +1,7 @@
+boto3
+python-docx
+opencv-python-headless
+numpy
+mediapipe
+moviepy
+pytz
