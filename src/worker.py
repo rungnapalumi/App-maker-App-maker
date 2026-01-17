@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import boto3
 
-# Optional heavy libs – เรารองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
+# Optional heavy libs – รองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
 try:
     import cv2  # type: ignore
 except Exception:  # ImportError หรือ error อื่น ๆ
@@ -106,7 +106,7 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
 
 
 def list_pending_json_keys():
-    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
+    """คืน key ของ job JSON ที่อยู่ใน jobs/pending/"""
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
@@ -124,7 +124,7 @@ def find_one_pending_job_key() -> str | None:
 
 
 def move_json(old_key: str, new_key: str, payload: dict) -> None:
-    # เขียน payload ไป new_key แล้วลบ old_key
+    """เขียน payload ไป new_key แล้วลบ old_key"""
     s3_put_json(new_key, payload)
     if old_key != new_key:
         logger.info("[s3_delete] key=%s", old_key)
@@ -256,7 +256,8 @@ def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
 
     job_id = raw_job.get("job_id")
-    mode = raw_job.get("mode", "passthrough")
+    # ถ้า app ไม่ส่ง mode มา ให้ default เป็น 'dots'
+    mode = raw_job.get("mode", "dots")
     input_key = raw_job.get("input_key")
 
     if not job_id:
@@ -284,10 +285,13 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        if mode == "dots":
+        # รองรับทั้ง single / 2 persons:
+        # ถ้า mode เริ่มต้นด้วย "dots" (เช่น "dots", "dots_single", "dots_2persons")
+        # ใช้ algorithm Johansson ตัวเดียวกัน
+        if isinstance(mode, str) and mode.startswith("dots"):
             process_dots_video(input_key, output_key)
         else:
-            # default: passthrough / copy เฉย ๆ
+            # default: copy วิดีโอตรง ๆ
             copy_video_in_s3(input_key, output_key)
 
         job = update_status(job, "finished", error=None)
