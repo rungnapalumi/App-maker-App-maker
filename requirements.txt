@@ -6,6 +6,11 @@ pillow
 boto3
 python-dotenv
 
+# สำหรับ worker (video processing)
+python-docx
+moviepy
+pytz
+
 
 
 
