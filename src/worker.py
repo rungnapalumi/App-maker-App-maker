@@ -141,19 +141,16 @@ def update_status(job: dict, status: str, error: str | None = None) -> dict:
 
 # ---------------------------------------------------------------------------
 # Dots (Johansson) processing
-#   – ใช้ encoding pipeline แบบเดิม (OpenCV + mp4v)
-#   – people_mode เลือกได้ "single" หรือ "two" (ตอนนี้ logic คล้ายกัน
-#     แต่เผื่อไว้ขยายในอนาคต)
 # ---------------------------------------------------------------------------
 
 
-def process_dots_video(input_key: str, output_key: str, people_mode: str = "single") -> None:
+def process_dots_video(input_key: str, output_key: str) -> None:
     """
     สร้างวิดีโอ Johansson dot:
       - อ่านวิดีโอจาก S3
       - ใช้ MediaPipe Pose หา joint
       - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
-      - ใช้ VideoWriter แบบเดียวกับเวอร์ชัน single-person ที่เคยเล่นได้
+      - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
     """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
         raise RuntimeError(
@@ -163,12 +160,7 @@ def process_dots_video(input_key: str, output_key: str, people_mode: str = "sing
     input_path = download_to_temp(input_key, suffix=".mp4")
     out_path = tempfile.mktemp(suffix=".mp4")
 
-    logger.info(
-        "[dots] starting Johansson processing input=%s out=%s people_mode=%s",
-        input_path,
-        out_path,
-        people_mode,
-    )
+    logger.info("[dots] starting Johansson processing input=%s out=%s", input_path, out_path)
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
@@ -189,7 +181,6 @@ def process_dots_video(input_key: str, output_key: str, people_mode: str = "sing
         height, width = frame0.shape[:2]
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
 
-    # *** ส่วน encoding ใช้แบบเดิมที่เคยเล่นได้ ***
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
     if not writer.isOpened():
@@ -226,10 +217,6 @@ def process_dots_video(input_key: str, output_key: str, people_mode: str = "sing
 
                 if results.pose_landmarks:
                     h, w, _ = black.shape
-
-                    # --- single & two-person ตอนนี้ใช้ logic เดียวกัน ---
-                    # MediaPipe Pose ปกติจะ detect ได้เด่นสุด 1 คน
-                    # ถ้าภายหลังมี multi-person logic เราค่อยแตก branch ตรงนี้เพิ่ม
                     for lm in results.pose_landmarks.landmark:
                         if getattr(lm, "visibility", 1.0) < 0.5:
                             continue
@@ -269,7 +256,7 @@ def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
 
     job_id = raw_job.get("job_id")
-    mode = raw_job.get("mode", "dots_single")
+    mode = raw_job.get("mode", "passthrough")
     input_key = raw_job.get("input_key")
 
     if not job_id:
@@ -297,13 +284,8 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        # รองรับชื่อ mode หลายแบบ เพื่อไม่ให้ของเดิมพัง
-        if mode in ("dots", "dots_single", "Johansson_dots_single"):
-            process_dots_video(input_key, output_key, people_mode="single")
-
-        elif mode in ("dots_two", "dots_2p", "Johansson_dots_two"):
-            process_dots_video(input_key, output_key, people_mode="two")
-
+        if mode == "dots":
+            process_dots_video(input_key, output_key)
         else:
             # default: passthrough / copy เฉย ๆ
             copy_video_in_s3(input_key, output_key)
