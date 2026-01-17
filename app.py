@@ -210,7 +210,8 @@ with col_left:
         accept_multiple_files=False,
     )
 
-    user_note = st.text_input("Note (optional, สำหรับ Rung/คุณครู)", "")
+    user_note = st.text_input("Note (optional)", "")
+
 
     if st.button("Create job", type="primary"):
         if not uploaded_file:
