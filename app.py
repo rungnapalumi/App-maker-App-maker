@@ -1,26 +1,19 @@
-# app.py — AI People Reader Job Manager (Johansson / dots / clear / skeleton)
-#
-# หน้าที่หลัก:
-#   - ให้ผู้ใช้ upload วิดีโอ + เลือก mode
-#   - สร้าง job JSON ตาม schema เดียวกับ worker.py
-#   - เซฟ input video + job JSON ลง S3
-#   - แสดงรายการ jobs จากทุกสถานะ (pending / processing / finished / failed)
-#   - ให้เลือก job แล้วดาวน์โหลด result.mp4 ถ้าไฟล์มีจริงใน S3
+# app.py — AI People Reader Job Manager (Johansson dots)
 
 import os
+import io
 import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import boto3
-import pandas as pd
-import streamlit as st
 from botocore.exceptions import ClientError
+import streamlit as st
 
-# ----------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Config
-# ----------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
@@ -30,33 +23,30 @@ if not AWS_BUCKET:
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-JOBS_PENDING_PREFIX = "jobs/pending/"
-JOBS_PROCESSING_PREFIX = "jobs/processing/"
-JOBS_FINISHED_PREFIX = "jobs/finished/"
-JOBS_FAILED_PREFIX = "jobs/failed/"
-JOBS_OUTPUT_PREFIX = "jobs/output/"
+JOBS_PREFIX = "jobs"
+PENDING_PREFIX = f"{JOBS_PREFIX}/pending"
+PROCESSING_PREFIX = f"{JOBS_PREFIX}/processing"
+FINISHED_PREFIX = f"{JOBS_PREFIX}/finished"
+FAILED_PREFIX = f"{JOBS_PREFIX}/failed"
+OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
 
-st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
 
-# ----------------------------------------------------------
-# Helper functions
-# ----------------------------------------------------------
 
 def utc_now_iso() -> str:
-    """คืนค่าเวลาปัจจุบันแบบ ISO (UTC)"""
     return datetime.now(timezone.utc).isoformat()
 
 
 def new_job_id() -> str:
-    """สร้าง job_id ใหม่ เช่น 20260114_140637__6d6c6"""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:5]
     return f"{ts}__{rand}"
 
 
-def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/octet-stream") -> None:
-    """อัปโหลดไฟล์ binary ขึ้น S3"""
+def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "video/mp4") -> None:
     s3.put_object(
         Bucket=AWS_BUCKET,
         Key=key,
@@ -66,8 +56,7 @@ def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/o
 
 
 def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
-    """เซฟ JSON ลง S3"""
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(payload).encode("utf-8")
     s3.put_object(
         Bucket=AWS_BUCKET,
         Key=key,
@@ -77,195 +66,195 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 
 def s3_get_json(key: str) -> Dict[str, Any]:
-    """ดึง JSON จาก S3"""
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
-    """
-    สร้าง job ใหม่:
-      - เซฟ input video ไปที่ jobs/pending/<job_id>/input/input.mp4
-      - สร้าง JSON และเซฟที่ jobs/pending/<job_id>.json
-    """
-    job_id = new_job_id()
-
-    input_key = f"{JOBS_PENDING_PREFIX}{job_id}/input/input.mp4"
-    output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
-
-    # Upload video
-    upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
-
-    now = utc_now_iso()
-    job = {
-        "job_id": job_id,
-        "status": "pending",
-        "mode": mode,
-        "input_key": input_key,
-        "output_key": output_key,
-        "created_at": now,
-        "updated_at": now,
-        "error": None,
-    }
-
-    job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
-    s3_put_json(job_json_key, job)
-
-    return job
-
-
 def list_jobs() -> List[Dict[str, Any]]:
     """
-    ดึง job จากทุก prefix (pending/processing/finished/failed)
-    แล้วรวมเป็น list เดียว
-
-    NOTE: ใช้ prefix เป็นตัวกำหนด status เสมอ
-          (ไม่เชื่อ field "status" ใน JSON เพราะ worker ไม่ได้อัปเดต)
+    รวม jobs จาก pending / processing / finished / failed
+    แล้วเรียงตาม created_at_utc จากใหม่ไปเก่า
     """
-    all_jobs: List[Dict[str, Any]] = []
+    jobs: List[Dict[str, Any]] = []
 
-    prefix_status_pairs = [
-        (JOBS_PENDING_PREFIX, "pending"),
-        (JOBS_PROCESSING_PREFIX, "processing"),
-        (JOBS_FINISHED_PREFIX, "finished"),
-        (JOBS_FAILED_PREFIX, "failed"),
-    ]
+    def load_prefix(prefix: str) -> None:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=prefix):
+            for item in page.get("Contents", []):
+                key = item["Key"]
+                if not key.endswith(".json"):
+                    continue
+                try:
+                    job = s3_get_json(key)
+                    jobs.append(job)
+                except Exception:
+                    # ถ้าอ่านไม่ได้ก็ข้ามไป
+                    continue
 
-    for prefix, default_status in prefix_status_pairs:
-        try:
-            resp = s3.list_objects_v2(
-                Bucket=AWS_BUCKET,
-                Prefix=prefix,
-            )
-        except ClientError as ce:
-            st.error(f"Error listing {prefix}: {ce}")
-            continue
+    for prefix in (PENDING_PREFIX, PROCESSING_PREFIX, FINISHED_PREFIX, FAILED_PREFIX):
+        load_prefix(prefix)
 
-        contents = resp.get("Contents")
-        if not contents:
-            continue
+    def sort_key(j: Dict[str, Any]) -> str:
+        return j.get("created_at_utc", "")
 
-        for obj in contents:
-            key = obj["Key"]
-            if not key.endswith(".json"):
-                continue
-
-            try:
-                job = s3_get_json(key)
-            except ClientError as ce:
-                st.warning(f"Cannot read job {key}: {ce}")
-                continue
-
-            # ใช้ prefix เป็นตัวตัดสินใจสถานะเสมอ
-            job["status"] = default_status
-            job["s3_key"] = key
-            all_jobs.append(job)
-
-    # sort by created_at (จากเก่าไปใหม่)
-    all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=False)
-    return all_jobs
+    jobs.sort(key=sort_key, reverse=True)
+    return jobs
 
 
-def download_output_video(job_id: str) -> bytes:
-    """
-    ดึง result video จาก jobs/output/<job_id>/result.mp4
-    ถ้าไม่มีไฟล์ จะโยน ClientError (ให้ไปจับด้าน UI)
-    """
-    key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
-    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
-    return obj["Body"].read()
+def generate_presigned_url(key: str, expires_in: int = 3600) -> str:
+    try:
+        return s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": AWS_BUCKET, "Key": key},
+            ExpiresIn=expires_in,
+        )
+    except ClientError:
+        return ""
 
 
-# ----------------------------------------------------------
-# UI
-# ----------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Streamlit UI
+# ---------------------------------------------------------------------------
 
-st.title("AI People Reader - Job Manager")
+st.set_page_config(
+    page_title="AI People Reader - Job Manager (App-maker-App-maker)",
+    layout="wide",
+)
+
+st.title("🎬 AI People Reader - Job Manager (App-maker-App-maker)")
 
 col_left, col_right = st.columns([1, 2])
 
-# ---------- LEFT: Create job ----------
-with col_left:
-    st.header("Create New Job")
+# ---------------------------------------------------------------------------
+# ① Create New Job
+# ---------------------------------------------------------------------------
 
-    mode = st.selectbox("Mode", ["dots", "clear", "skeleton"], index=0)
+with col_left:
+    st.markdown("## ① Create New Job")
+
+    MODE_OPTIONS = {
+        "Johansson dots – 1 person (แนะนำ)": "dots",
+        "Johansson dots – 2 persons (ทดลอง)": "dots_2p",
+    }
+
+    mode_label = st.selectbox("Mode", list(MODE_OPTIONS.keys()))
+    mode_value = MODE_OPTIONS[mode_label]
 
     uploaded_file = st.file_uploader(
         "Upload video file",
-        type=["mp4", "mov", "m4v"],
-        accept_multiple_files=False,
+        type=["mp4", "mov", "m4v", "mpeg4"],
+        help="Limit ~1GB per file",
     )
 
-    if st.button("Create job"):
-        if not uploaded_file:
-            st.warning("Please upload a video file first.")
+    user_note = st.text_input("Note (optional)")
+
+    create_btn = st.button("Create job", type="primary")
+
+    if create_btn:
+        if uploaded_file is None:
+            st.error("กรุณาอัปโหลดไฟล์วิดีโอก่อน")
         else:
-            file_bytes = uploaded_file.read()
-            job = create_job(file_bytes, mode)
-            st.success(f"Created job: {job['job_id']}")
-            st.json(job)
+            try:
+                file_bytes = uploaded_file.read()
+                job_id = new_job_id()
 
-# ---------- RIGHT: Job list + download ----------
+                # จัดเก็บ input video
+                input_key = f"{PENDING_PREFIX}/{job_id}/input.mp4"
+                upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
+
+                # สามารถปรับเป็นชื่อไฟล์อื่นได้ถ้าต้องการ
+                output_key = f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
+
+                now_iso = utc_now_iso()
+                job = {
+                    "job_id": job_id,
+                    "status": "pending",
+                    "mode": mode_value,
+                    "input_key": input_key,
+                    "output_key": output_key,
+                    "created_at_utc": now_iso,
+                    "updated_at_utc": now_iso,
+                    "error": None,
+                    "user_note": user_note or "",
+                    "original_filename": uploaded_file.name,
+                }
+
+                job_json_key = f"{PENDING_PREFIX}/{job_id}.json"
+                s3_put_json(job_json_key, job)
+
+                st.success(
+                    f"สร้างงานเรียบร้อยแล้ว 🎉\n\n"
+                    f"**Job ID:** `{job_id}`\n\n"
+                    f"กรุณาจด Job ID นี้ไว้เพื่อใช้เช็คสถานะและดาวน์โหลดผลลัพธ์"
+                )
+            except Exception as exc:
+                st.error(f"เกิดข้อผิดพลาดขณะสร้างงาน: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# ② Job List & Download
+# ---------------------------------------------------------------------------
+
 with col_right:
-    st.header("Jobs")
+    st.markdown("## ② Job List & Download")
 
-    # ปุ่ม refresh ใช้ st.rerun() แทน experimental_rerun
-    if st.button("Refresh job list"):
-        st.rerun()
+    if st.button("🔄 Refresh job list"):
+        st.experimental_rerun()
 
     jobs = list_jobs()
+
     if not jobs:
-        st.info("No jobs yet.")
+        st.info("ยังไม่มีงานในระบบ")
     else:
-        df = pd.DataFrame(
-            [
+        import pandas as pd
+
+        rows = []
+        for j in jobs:
+            rows.append(
                 {
                     "job_id": j.get("job_id"),
                     "status": j.get("status"),
                     "mode": j.get("mode"),
-                    "created_at": j.get("created_at"),
-                    "updated_at": j.get("updated_at"),
+                    "created_at": j.get("created_at_utc"),
+                    "updated_at": j.get("updated_at_utc"),
                     "error": j.get("error"),
+                    "note": j.get("user_note"),
+                    "file": j.get("original_filename"),
                 }
-                for j in jobs
-            ]
-        )
-        st.dataframe(df, use_container_width=True)
-
-        # ------------------------------------------
-        # Download result section
-        # ------------------------------------------
-        st.subheader("Download result video ↪")
-
-        job_ids_all = [j["job_id"] for j in jobs]
-
-        if not job_ids_all:
-            st.caption("No jobs to download.")
-        else:
-            selected_job_id = st.selectbox(
-                "Select job (will download if result.mp4 exists)",
-                job_ids_all,
             )
 
-            if st.button("Prepare download"):
-                try:
-                    data = download_output_video(selected_job_id)
-                except ClientError as ce:
-                    # NoSuchKey = ยังไม่มี result.mp4
-                    err_code = ce.response.get("Error", {}).get("Code")
-                    if err_code == "NoSuchKey":
-                        st.error(
-                            "Result video for this job is not ready yet "
-                            "(result.mp4 not found in S3). "
-                            "Please wait a bit and refresh the job list."
-                        )
-                    else:
-                        st.error(f"Cannot download result: {ce}")
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.markdown("---")
+    st.markdown("### ⬇️ Download processed video")
+
+    job_id_for_dl = st.text_input("Enter Job ID to download result")
+
+    if st.button("Download processed video"):
+        if not job_id_for_dl.strip():
+            st.error("กรุณาใส่ Job ID")
+        else:
+            job_json_key = f"{FINISHED_PREFIX}/{job_id_for_dl.strip()}.json"
+            try:
+                job = s3_get_json(job_json_key)
+            except ClientError:
+                st.error("ไม่พบงานสถานะ finished สำหรับ Job ID นี้")
+            except Exception as exc:
+                st.error(f"อ่านข้อมูลงานไม่สำเร็จ: {exc}")
+            else:
+                output_key = job.get("output_key")
+                if not output_key:
+                    st.error("งานนี้ไม่มี output_key ใน JSON")
                 else:
-                    st.download_button(
-                        label="Download result.mp4",
-                        data=data,
-                        file_name=f"{selected_job_id}_result.mp4",
-                        mime="video/mp4",
-                    )
+                    url = generate_presigned_url(output_key)
+                    if not url:
+                        st.error("ไม่สามารถสร้างลิงก์ดาวน์โหลดได้")
+                    else:
+                        st.success("กดลิงก์ด้านล่างเพื่อดาวน์โหลดวิดีโอที่ประมวลผลแล้ว:")
+                        st.markdown(f"[🎥 Download processed video]({url})")
