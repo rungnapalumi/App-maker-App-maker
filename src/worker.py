@@ -1,365 +1,281 @@
-# worker.py — AI People Reader Worker (dots + skeleton OVERLAY on original video + keep audio via MoviePy)
-# ✅ mode=dots: Johansson dots on BLACK background
-# ✅ mode=skeleton: skeleton OVERLAY on ORIGINAL video (not black)
-# ✅ keep_audio: attach original audio AFTER processing (MoviePy)
-# ✅ dot_px: 1–20 via params.dot_px
-# ✅ If skeleton detection is too low -> FAIL clearly (prevents "looks like input" confusion)
+# app.py — AI People Reader Job Manager (dots / skeleton + keep audio + dot size)
+# ✅ Upload video to S3
+# ✅ Create job JSON under jobs/pending/<job_id>.json (worker polls this)
+# ✅ mode: dots / skeleton
+# ✅ params:
+#     - keep_audio: True/False
+#     - dot_px: 1–20 (used for dots; harmless for skeleton)
+# ✅ List jobs from pending/processing/finished/failed
+# ✅ Download result video from jobs/output/<job_id>/result.mp4
 
 import os
+import io
 import json
-import time
-import logging
-import tempfile
+import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 import boto3
-import cv2
-import numpy as np
-import mediapipe as mp
-from moviepy.editor import VideoFileClip
+import pandas as pd
+import streamlit as st
+from botocore.exceptions import ClientError
 
-# ---------------------------------------------------------------------------
-# Config & logger
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------
 
-AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
+AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
 
 if not AWS_BUCKET:
-    raise RuntimeError("Missing AWS_BUCKET / S3_BUCKET")
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("worker")
+    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-PENDING_PREFIX = "jobs/pending"
-PROCESSING_PREFIX = "jobs/processing"
-FINISHED_PREFIX = "jobs/finished"
-FAILED_PREFIX = "jobs/failed"
-OUTPUT_PREFIX = "jobs/output"
+PENDING_PREFIX = "jobs/pending/"
+PROCESSING_PREFIX = "jobs/processing/"
+FINISHED_PREFIX = "jobs/finished/"
+FAILED_PREFIX = "jobs/failed/"
+OUTPUT_PREFIX = "jobs/output/"
+INPUT_PREFIX = "jobs/input/"  # store raw uploads here (clean separation from pending json)
 
-mp_pose = mp.solutions.pose
-mp_draw = mp.solutions.drawing_utils
+st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 
-
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+def new_job_id() -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    rand = uuid.uuid4().hex[:5]
+    return f"{ts}__{rand}"
 
-def s3_get_json(key: str) -> dict:
+def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
+
+def s3_get_json(key: str) -> Dict[str, Any]:
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
 
-
-def s3_put_json(key: str, payload: dict) -> None:
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=key,
-        Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        ContentType="application/json",
-    )
-
-
-def download_temp(key: str, suffix: str = ".mp4") -> str:
-    fd, path = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    with open(path, "wb") as f:
-        s3.download_fileobj(AWS_BUCKET, key, f)
-    return path
-
-
-def upload_video(path: str, key: str) -> None:
-    with open(path, "rb") as f:
-        s3.upload_fileobj(f, AWS_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"})
-
-
-# ---------------------------------------------------------------------------
-# Audio (MoviePy – reliable on Render)
-# ---------------------------------------------------------------------------
-
-def attach_audio_moviepy(silent_video_path: str, original_video_path: str, out_path: str) -> None:
-    """
-    Take processed video (no audio) and attach original audio track.
-    MoviePy uses imageio-ffmpeg under the hood (works well on Render).
-    """
-    silent_clip = VideoFileClip(silent_video_path)
-    original_clip = VideoFileClip(original_video_path)
-
-    if original_clip.audio is None:
-        silent_clip.close()
-        original_clip.close()
-        raise RuntimeError("Original video has NO audio track (cannot keep_audio=True)")
-
-    final_clip = silent_clip.set_audio(original_clip.audio)
-
-    final_clip.write_videofile(
-        out_path,
-        codec="libx264",
-        audio_codec="aac",
-        fps=silent_clip.fps,
-        verbose=False,
-        logger=None,
-    )
-
-    silent_clip.close()
-    original_clip.close()
-    final_clip.close()
-
-
-# ---------------------------------------------------------------------------
-# Video processors (silent first)
-# ---------------------------------------------------------------------------
-
-def _open_video_and_meta(input_path: str):
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open input video")
-
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-
-    # Fallback if metadata broken
-    if w <= 0 or h <= 0:
-        ok, frame0 = cap.read()
-        if not ok:
-            cap.release()
-            raise RuntimeError("Cannot read any frame from input video")
-        h, w = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-    return cap, w, h, fps
-
-
-def render_dots_silent(input_path: str, out_path: str, dot_px: int) -> None:
-    cap, w, h, fps = _open_video_and_meta(input_path)
-
-    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-    if not writer.isOpened():
-        cap.release()
-        writer.release()
-        raise RuntimeError("Could not open VideoWriter for output")
-
-    dot_px = max(1, min(20, int(dot_px)))
-
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
-    with pose:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-
-            frame = cv2.resize(frame, (w, h))
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = pose.process(rgb)
-
-            canvas = np.zeros((h, w, 3), dtype=np.uint8)
-
-            if res.pose_landmarks:
-                for lm in res.pose_landmarks.landmark:
-                    if getattr(lm, "visibility", 1.0) < 0.5:
-                        continue
-                    x = int(lm.x * w)
-                    y = int(lm.y * h)
-                    if 0 <= x < w and 0 <= y < h:
-                        cv2.circle(canvas, (x, y), dot_px, (255, 255, 255), -1, lineType=cv2.LINE_AA)
-
-            writer.write(canvas)
-
-    cap.release()
-    writer.release()
-
-
-def render_skeleton_overlay_silent(input_path: str, out_path: str) -> None:
-    """
-    Skeleton OVERLAY on the original video (so teacher sees body + skeleton).
-    If pose detection is too low, FAIL clearly so you don't get "looks like input".
-    """
-    logger.info("[skeleton] START overlay render")
-
-    cap, w, h, fps = _open_video_and_meta(input_path)
-
-    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-    if not writer.isOpened():
-        cap.release()
-        writer.release()
-        raise RuntimeError("Could not open VideoWriter for output")
-
-    # Make overlay very visible (white, thick)
-    landmark_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=4, circle_radius=3)
-    connection_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=4, circle_radius=2)
-
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
-    total_frames = 0
-    detected_frames = 0
-
-    with pose:
-        while True:
-            ok, frame = cap.read()
-            if not ok:
-                break
-            total_frames += 1
-
-            frame = cv2.resize(frame, (w, h))
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = pose.process(rgb)
-
-            canvas = frame.copy()  # ✅ overlay on original
-
-            if res.pose_landmarks:
-                detected_frames += 1
-                mp_draw.draw_landmarks(
-                    canvas,
-                    res.pose_landmarks,
-                    mp_pose.POSE_CONNECTIONS,
-                    landmark_drawing_spec=landmark_spec,
-                    connection_drawing_spec=connection_spec,
-                )
-
-            writer.write(canvas)
-
-    cap.release()
-    writer.release()
-
-    ratio = (detected_frames / total_frames) if total_frames else 0.0
-    logger.info("[skeleton] detected %d/%d (%.1f%%)", detected_frames, total_frames, ratio * 100.0)
-
-    # If detection is too low, output would look like input -> fail loudly
-    if total_frames == 0 or ratio < 0.10:
-        raise RuntimeError(
-            f"Skeleton overlay not detected enough (pose found in {detected_frames}/{total_frames} frames). "
-            "Try: full body visible, better lighting, less motion blur, camera not too far."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Job handling
-# ---------------------------------------------------------------------------
-
-def find_pending_job_key() -> str | None:
-    r = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX)
-    for o in r.get("Contents", []):
-        if o["Key"].endswith(".json"):
-            return o["Key"]
-    return None
-
-
-def move_job_json(old_key: str, new_key: str, payload: dict) -> None:
-    s3_put_json(new_key, payload)
-    s3.delete_object(Bucket=AWS_BUCKET, Key=old_key)
-
-
-def process_job(job_json_key: str) -> None:
-    job = s3_get_json(job_json_key)
-
-    job_id = job.get("job_id")
-    mode = job.get("mode", "dots")
-    input_key = job.get("input_key")
-
-    if not job_id:
-        raise RuntimeError("Job JSON missing job_id")
-    if not input_key:
-        raise RuntimeError("Job JSON missing input_key")
-
-    params = job.get("params", {})
-    if not isinstance(params, dict):
-        params = {}
-
-    dot_px = max(1, min(20, int(params.get("dot_px", 5))))
-    keep_audio = bool(params.get("keep_audio", True))
-
-    output_key = job.get("output_key") or f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
-
-    logger.info("[job] id=%s mode=%s keep_audio=%s dot_px=%s", job_id, mode, keep_audio, dot_px)
-
-    # Move to processing
-    job["status"] = "processing"
-    job["updated_at"] = utc_now_iso()
-    job["output_key"] = output_key
-
-    processing_key = f"{PROCESSING_PREFIX}/{job_id}.json"
-    move_job_json(job_json_key, processing_key, job)
-
-    input_path = None
-    silent_path = None
-    final_path = None
-
-    try:
-        input_path = download_temp(input_key)
-        silent_path = tempfile.mktemp(suffix=".mp4")
-        final_path = tempfile.mktemp(suffix=".mp4")
-
-        if mode == "dots":
-            render_dots_silent(input_path, silent_path, dot_px)
-        elif mode == "skeleton":
-            render_skeleton_overlay_silent(input_path, silent_path)
-        else:
-            raise RuntimeError(f"Unsupported mode: {mode}")
-
-        if keep_audio:
-            attach_audio_moviepy(silent_path, input_path, final_path)
-            upload_video(final_path, output_key)
-        else:
-            upload_video(silent_path, output_key)
-
-        job["status"] = "finished"
-        job["updated_at"] = utc_now_iso()
-        move_job_json(processing_key, f"{FINISHED_PREFIX}/{job_id}.json", job)
-        logger.info("[job] finished id=%s", job_id)
-
-    except Exception as e:
-        logger.exception("[job] FAILED id=%s", job_id)
-        job["status"] = "failed"
-        job["error"] = str(e)
-        job["updated_at"] = utc_now_iso()
-        move_job_json(processing_key, f"{FAILED_PREFIX}/{job_id}.json", job)
-
-    finally:
-        for p in (input_path, silent_path, final_path):
-            try:
-                if p and os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
-
-
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    logger.info("=== AI People Reader Worker START (dots + skeleton overlay + audio) ===")
+def upload_bytes_to_s3(data: bytes, key: str, content_type: str) -> None:
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType=content_type)
+
+def list_json_keys(prefix: str) -> List[str]:
+    keys: List[str] = []
+    token: Optional[str] = None
     while True:
+        kwargs = {"Bucket": AWS_BUCKET, "Prefix": prefix, "MaxKeys": 1000}
+        if token:
+            kwargs["ContinuationToken"] = token
+        resp = s3.list_objects_v2(**kwargs)
+        for item in resp.get("Contents", []):
+            k = item["Key"]
+            if k.endswith(".json"):
+                keys.append(k)
+        if resp.get("IsTruncated"):
+            token = resp.get("NextContinuationToken")
+        else:
+            break
+    return keys
+
+def safe_head_exists(key: str) -> bool:
+    try:
+        s3.head_object(Bucket=AWS_BUCKET, Key=key)
+        return True
+    except ClientError:
+        return False
+
+def download_s3_bytes(key: str) -> bytes:
+    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+    return obj["Body"].read()
+
+def create_job(
+    file_bytes: bytes,
+    filename: str,
+    mode: str,
+    keep_audio: bool,
+    dot_px: int,
+) -> Dict[str, Any]:
+    job_id = new_job_id()
+
+    # Store original input file under jobs/input/<job_id>/input.mp4 (or preserve ext)
+    ext = os.path.splitext(filename)[1].lower().strip(".")
+    if ext not in ("mp4", "mov", "m4v"):
+        ext = "mp4"
+    input_key = f"{INPUT_PREFIX}{job_id}/input.{ext}"
+
+    # Worker will write output here:
+    output_key = f"{OUTPUT_PREFIX}{job_id}/result.mp4"
+
+    upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
+
+    now = utc_now_iso()
+    job = {
+        "job_id": job_id,
+        "status": "pending",
+        "mode": mode,  # IMPORTANT: must be "dots" or "skeleton" (exact)
+        "input_key": input_key,
+        "output_key": output_key,
+        "params": {
+            "keep_audio": bool(keep_audio),
+            "dot_px": int(dot_px),
+        },
+        "created_at": now,
+        "updated_at": now,
+        "error": None,
+    }
+
+    job_json_key = f"{PENDING_PREFIX}{job_id}.json"
+    s3_put_json(job_json_key, job)
+    return job
+
+def load_all_jobs() -> List[Dict[str, Any]]:
+    jobs: List[Dict[str, Any]] = []
+
+    buckets = [
+        (PENDING_PREFIX, "pending"),
+        (PROCESSING_PREFIX, "processing"),
+        (FINISHED_PREFIX, "finished"),
+        (FAILED_PREFIX, "failed"),
+    ]
+
+    for prefix, status in buckets:
         try:
-            job_key = find_pending_job_key()
-            if job_key:
-                process_job(job_key)
-            else:
-                time.sleep(POLL_INTERVAL)
-        except Exception:
-            logger.exception("Worker loop error")
-            time.sleep(POLL_INTERVAL)
+            keys = list_json_keys(prefix)
+        except ClientError as e:
+            st.error(f"Cannot list {prefix}: {e}")
+            continue
 
+        for k in keys:
+            try:
+                j = s3_get_json(k)
+                j["status"] = status  # force status from prefix
+                j["job_json_key"] = k
+                jobs.append(j)
+            except ClientError:
+                continue
 
-if __name__ == "__main__":
-    main()
+    # newest first
+    jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return jobs
+
+# ---------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------
+
+st.title("🎬 AI People Reader — Job Manager")
+
+with st.expander("S3 / Environment (read-only)", expanded=False):
+    st.write(f"**Bucket:** {AWS_BUCKET}")
+    st.write(f"**Region:** {AWS_REGION}")
+    st.caption("If jobs don’t move to processing, the worker may not be running or cannot access this bucket.")
+
+left, right = st.columns([1, 2])
+
+# ---------------- LEFT: Create job ----------------
+with left:
+    st.subheader("Create New Job")
+
+    mode = st.selectbox(
+        "Mode",
+        options=["dots", "skeleton"],
+        index=0,
+        help="dots = Johansson dots (black background). skeleton = overlay skeleton on the original video.",
+    )
+
+    keep_audio = st.checkbox(
+        "Keep audio (recommended for teaching)",
+        value=True,
+        help="Attach original audio back after processing.",
+    )
+
+    dot_px = st.slider(
+        "Dot size (px)",
+        min_value=1,
+        max_value=20,
+        value=5,
+        step=1,
+        help="Used in dots mode. (Skeleton mode ignores this.)",
+        disabled=(mode != "dots"),
+    )
+
+    up = st.file_uploader(
+        "Upload video",
+        type=["mp4", "mov", "m4v"],
+        accept_multiple_files=False,
+    )
+
+    if st.button("🚀 Create job", use_container_width=True):
+        if not up:
+            st.warning("Please upload a video file first.")
+        else:
+            try:
+                data = up.read()
+                job = create_job(
+                    file_bytes=data,
+                    filename=up.name,
+                    mode=mode,
+                    keep_audio=keep_audio,
+                    dot_px=dot_px,
+                )
+                st.success(f"Created job: {job['job_id']}")
+                st.json(job)
+            except ClientError as e:
+                st.error(f"Create job failed: {e}")
+
+# ---------------- RIGHT: Job list + download ----------------
+with right:
+    st.subheader("Jobs")
+
+    cols = st.columns([1, 1, 1, 1])
+    with cols[0]:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+
+    jobs = load_all_jobs()
+
+    if not jobs:
+        st.info("No jobs yet.")
+    else:
+        df = pd.DataFrame([{
+            "job_id": j.get("job_id"),
+            "status": j.get("status"),
+            "mode": j.get("mode"),
+            "keep_audio": (j.get("params") or {}).get("keep_audio"),
+            "dot_px": (j.get("params") or {}).get("dot_px"),
+            "created_at": j.get("created_at"),
+            "updated_at": j.get("updated_at"),
+            "error": j.get("error"),
+        } for j in jobs])
+
+        st.dataframe(df, use_container_width=True, height=360)
+
+        st.markdown("---")
+        st.subheader("Download result")
+
+        job_ids = [j.get("job_id") for j in jobs if j.get("job_id")]
+        selected = st.selectbox("Select job_id", job_ids)
+
+        result_key = f"{OUTPUT_PREFIX}{selected}/result.mp4"
+        exists = safe_head_exists(result_key)
+
+        if exists:
+            if st.button("Prepare download", use_container_width=True):
+                try:
+                    b = download_s3_bytes(result_key)
+                    st.download_button(
+                        "⬇️ Download result.mp4",
+                        data=b,
+                        file_name=f"{selected}_result.mp4",
+                        mime="video/mp4",
+                        use_container_width=True,
+                    )
+                except ClientError as e:
+                    st.error(f"Download failed: {e}")
+        else:
+            st.warning("Result not found yet (jobs/output/<job_id>/result.mp4). Wait and Refresh.")
+            st.caption(f"Expected key: {result_key}")
