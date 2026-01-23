@@ -1,33 +1,22 @@
-# worker.py — AI People Reader Worker (Johansson dots, audio-safe)
+# worker.py — AI People Reader Worker
+# Supports:
+#   - mode=dots (Johansson dots, selectable dot size)
+#   - mode=skeleton (MediaPipe Pose skeleton)
+#   - keep_audio=True/False (MoviePy audio attach)
+#   - Safe for Render (no system ffmpeg required)
 
 import os
 import json
 import time
 import logging
 import tempfile
-import subprocess
 from datetime import datetime, timezone
 
 import boto3
-
-# Optional heavy libs
-try:
-    import cv2  # type: ignore
-except Exception:
-    cv2 = None  # type: ignore
-
-try:
-    import numpy as np  # type: ignore
-except Exception:
-    np = None  # type: ignore
-
-try:
-    import mediapipe as mp  # type: ignore
-    MP_HAS_SOLUTIONS = hasattr(mp, "solutions")
-except Exception:
-    mp = None  # type: ignore
-    MP_HAS_SOLUTIONS = False
-
+import cv2
+import numpy as np
+import mediapipe as mp
+from moviepy.editor import VideoFileClip
 
 # ---------------------------------------------------------------------------
 # Config & logger
@@ -38,7 +27,7 @@ AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
 if not AWS_BUCKET:
-    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET)")
+    raise RuntimeError("Missing AWS_BUCKET / S3_BUCKET")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,55 +43,17 @@ FINISHED_PREFIX = "jobs/finished"
 FAILED_PREFIX = "jobs/failed"
 OUTPUT_PREFIX = "jobs/output"
 
+mp_pose = mp.solutions.pose
+mp_draw = mp.solutions.drawing_utils
+
 
 # ---------------------------------------------------------------------------
-# Utils
+# Helpers
 # ---------------------------------------------------------------------------
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
-def _bin_exists(name: str) -> bool:
-    try:
-        return subprocess.run(
-            [name, "-version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode == 0
-    except Exception:
-        return False
-
-
-def ffmpeg_exists() -> bool:
-    return _bin_exists("ffmpeg")
-
-
-def ffprobe_exists() -> bool:
-    return _bin_exists("ffprobe")
-
-
-def has_audio(path: str) -> bool:
-    if not ffprobe_exists():
-        logger.warning("ffprobe not found; assuming audio exists")
-        return True
-
-    cmd = [
-        "ffprobe", "-v", "error",
-        "-select_streams", "a",
-        "-show_entries", "stream=index",
-        "-of", "csv=p=0",
-        path,
-    ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    result = bool((r.stdout or "").strip())
-    logger.info("[ffprobe] audio=%s file=%s", result, path)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# S3 helpers
-# ---------------------------------------------------------------------------
 
 def s3_get_json(key: str) -> dict:
     return json.loads(
@@ -129,79 +80,63 @@ def download_temp(key: str) -> str:
 
 def upload_video(path: str, key: str) -> None:
     with open(path, "rb") as f:
-        s3.upload_fileobj(f, AWS_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"})
+        s3.upload_fileobj(
+            f, AWS_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"}
+        )
 
 
 # ---------------------------------------------------------------------------
-# ffmpeg audio pipeline (GUARANTEED)
+# Audio (MoviePy – guaranteed on Render)
 # ---------------------------------------------------------------------------
 
-def extract_audio(original: str, audio_out: str) -> None:
-    if not ffmpeg_exists():
-        raise RuntimeError("ffmpeg not installed")
+def attach_audio_moviepy(
+    silent_video_path: str,
+    original_video_path: str,
+    out_path: str,
+):
+    silent_clip = VideoFileClip(silent_video_path)
+    original_clip = VideoFileClip(original_video_path)
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", original,
-        "-vn",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        audio_out,
-    ]
-    logger.info("[ffmpeg] extract audio")
-    subprocess.run(cmd, check=True)
+    if original_clip.audio is None:
+        raise RuntimeError("Original video has NO audio track")
 
+    final_clip = silent_clip.set_audio(original_clip.audio)
 
-def mux_audio(video: str, audio: str, out: str) -> None:
-    if not ffmpeg_exists():
-        raise RuntimeError("ffmpeg not installed")
+    final_clip.write_videofile(
+        out_path,
+        codec="libx264",
+        audio_codec="aac",
+        fps=silent_clip.fps,
+        verbose=False,
+        logger=None,
+    )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video,
-        "-i", audio,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "18",
-        "-c:a", "aac",
-        "-shortest",
-        "-movflags", "+faststart",
-        out,
-    ]
-    logger.info("[ffmpeg] mux audio")
-    subprocess.run(cmd, check=True)
+    silent_clip.close()
+    original_clip.close()
+    final_clip.close()
 
 
 # ---------------------------------------------------------------------------
-# Dots processing
+# Video processors (silent first)
 # ---------------------------------------------------------------------------
 
-def process_dots(input_key: str, output_key: str, dot_px: int, keep_audio: bool):
-    if cv2 is None or np is None or not MP_HAS_SOLUTIONS:
-        raise RuntimeError("OpenCV / NumPy / MediaPipe missing")
-
-    input_path = download_temp(input_key)
-    silent_out = tempfile.mktemp(suffix=".mp4")
-    final_out = tempfile.mktemp(suffix=".mp4")
-
+def render_dots_silent(input_path: str, out_path: str, dot_px: int):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
-        raise RuntimeError("Cannot open video")
+        raise RuntimeError("Cannot open input video")
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
     writer = cv2.VideoWriter(
-        silent_out,
+        out_path,
         cv2.VideoWriter_fourcc(*"mp4v"),
         fps,
         (w, h),
     )
 
-    pose = mp.solutions.pose.Pose()
+    pose = mp_pose.Pose()
 
     with pose:
         while True:
@@ -227,31 +162,51 @@ def process_dots(input_key: str, output_key: str, dot_px: int, keep_audio: bool)
     cap.release()
     writer.release()
 
-    # ---------- AUDIO PIPELINE ----------
-    if keep_audio:
-        logger.info("[audio] keep_audio=True")
 
-        if not has_audio(input_path):
-            raise RuntimeError("Original video has NO audio stream")
+def render_skeleton_silent(input_path: str, out_path: str):
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise RuntimeError("Cannot open input video")
 
-        audio_path = tempfile.mktemp(suffix=".m4a")
-        extract_audio(input_path, audio_path)
-        mux_audio(silent_out, audio_path, final_out)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-        if not has_audio(final_out):
-            raise RuntimeError("Audio mux FAILED — output still silent")
+    writer = cv2.VideoWriter(
+        out_path,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (w, h),
+    )
 
-        upload_video(final_out, output_key)
-    else:
-        upload_video(silent_out, output_key)
+    pose = mp_pose.Pose()
 
-    for p in (input_path, silent_out, final_out):
-        if p and os.path.exists(p):
-            os.remove(p)
+    with pose:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res = pose.process(rgb)
+
+            canvas = frame.copy()
+
+            if res.pose_landmarks:
+                mp_draw.draw_landmarks(
+                    canvas,
+                    res.pose_landmarks,
+                    mp_pose.POSE_CONNECTIONS,
+                )
+
+            writer.write(canvas)
+
+    cap.release()
+    writer.release()
 
 
 # ---------------------------------------------------------------------------
-# Job handling
+# Job processing
 # ---------------------------------------------------------------------------
 
 def find_pending_job():
@@ -270,9 +225,11 @@ def move_job(old: str, new: str, payload: dict):
 def process_job(job_key: str):
     job = s3_get_json(job_key)
     job_id = job["job_id"]
+    mode = job.get("mode", "dots")
 
     params = job.get("params", {})
     dot_px = int(params.get("dot_px", 5))
+    dot_px = max(1, min(20, dot_px))
     keep_audio = bool(params.get("keep_audio", True))
 
     input_key = job["input_key"]
@@ -284,11 +241,32 @@ def process_job(job_key: str):
     processing_key = f"{PROCESSING_PREFIX}/{job_id}.json"
     move_job(job_key, processing_key, job)
 
+    input_path = None
+    silent_path = None
+    final_path = None
+
     try:
-        process_dots(input_key, output_key, dot_px, keep_audio)
+        input_path = download_temp(input_key)
+        silent_path = tempfile.mktemp(suffix=".mp4")
+        final_path = tempfile.mktemp(suffix=".mp4")
+
+        if mode == "dots":
+            render_dots_silent(input_path, silent_path, dot_px)
+        elif mode == "skeleton":
+            render_skeleton_silent(input_path, silent_path)
+        else:
+            raise RuntimeError(f"Unsupported mode: {mode}")
+
+        if keep_audio:
+            attach_audio_moviepy(silent_path, input_path, final_path)
+            upload_video(final_path, output_key)
+        else:
+            upload_video(silent_path, output_key)
+
         job["status"] = "finished"
         job["updated_at"] = utc_now_iso()
         move_job(processing_key, f"{FINISHED_PREFIX}/{job_id}.json", job)
+
     except Exception as e:
         logger.exception("JOB FAILED")
         job["status"] = "failed"
@@ -296,14 +274,21 @@ def process_job(job_key: str):
         job["updated_at"] = utc_now_iso()
         move_job(processing_key, f"{FAILED_PREFIX}/{job_id}.json", job)
 
+    finally:
+        for p in (input_path, silent_path, final_path):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
-    logger.info("=== AI People Reader Worker START ===")
-    logger.info("ffmpeg=%s ffprobe=%s", ffmpeg_exists(), ffprobe_exists())
+    logger.info("=== AI People Reader Worker START (dots + skeleton + audio) ===")
 
     while True:
         try:
@@ -312,7 +297,7 @@ def main():
                 process_job(job_key)
             else:
                 time.sleep(POLL_INTERVAL)
-        except Exception as e:
+        except Exception:
             logger.exception("Worker loop error")
             time.sleep(POLL_INTERVAL)
 
