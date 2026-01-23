@@ -1,9 +1,9 @@
-# worker.py — AI People Reader Worker (dots + skeleton + keep audio via MoviePy)
-# ✅ mode=dots: Johansson dots on black background
-# ✅ mode=skeleton: skeleton on black background (very visible)
+# worker.py — AI People Reader Worker (dots + skeleton OVERLAY on original video + keep audio via MoviePy)
+# ✅ mode=dots: Johansson dots on BLACK background
+# ✅ mode=skeleton: skeleton OVERLAY on ORIGINAL video (not black)
 # ✅ keep_audio: attach original audio AFTER processing (MoviePy)
 # ✅ dot_px: 1–20 via params.dot_px
-# ✅ If skeleton detection is too low -> FAIL clearly (prevents "same as input" illusion)
+# ✅ If skeleton detection is too low -> FAIL clearly (prevents "looks like input" confusion)
 
 import os
 import json
@@ -29,10 +29,7 @@ POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 if not AWS_BUCKET:
     raise RuntimeError("Missing AWS_BUCKET / S3_BUCKET")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("worker")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -56,9 +53,8 @@ def utc_now_iso() -> str:
 
 
 def s3_get_json(key: str) -> dict:
-    return json.loads(
-        s3.get_object(Bucket=AWS_BUCKET, Key=key)["Body"].read().decode("utf-8")
-    )
+    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 def s3_put_json(key: str, payload: dict) -> None:
@@ -70,8 +66,8 @@ def s3_put_json(key: str, payload: dict) -> None:
     )
 
 
-def download_temp(key: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".mp4")
+def download_temp(key: str, suffix: str = ".mp4") -> str:
+    fd, path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     with open(path, "wb") as f:
         s3.download_fileobj(AWS_BUCKET, key, f)
@@ -80,27 +76,25 @@ def download_temp(key: str) -> str:
 
 def upload_video(path: str, key: str) -> None:
     with open(path, "rb") as f:
-        s3.upload_fileobj(
-            f, AWS_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"}
-        )
+        s3.upload_fileobj(f, AWS_BUCKET, key, ExtraArgs={"ContentType": "video/mp4"})
 
 
 # ---------------------------------------------------------------------------
-# Audio (MoviePy – works on Render)
+# Audio (MoviePy – reliable on Render)
 # ---------------------------------------------------------------------------
 
-def attach_audio_moviepy(
-    silent_video_path: str,
-    original_video_path: str,
-    out_path: str,
-):
+def attach_audio_moviepy(silent_video_path: str, original_video_path: str, out_path: str) -> None:
+    """
+    Take processed video (no audio) and attach original audio track.
+    MoviePy uses imageio-ffmpeg under the hood (works well on Render).
+    """
     silent_clip = VideoFileClip(silent_video_path)
     original_clip = VideoFileClip(original_video_path)
 
     if original_clip.audio is None:
         silent_clip.close()
         original_clip.close()
-        raise RuntimeError("Original video has NO audio track")
+        raise RuntimeError("Original video has NO audio track (cannot keep_audio=True)")
 
     final_clip = silent_clip.set_audio(original_clip.audio)
 
@@ -122,7 +116,7 @@ def attach_audio_moviepy(
 # Video processors (silent first)
 # ---------------------------------------------------------------------------
 
-def render_dots_silent(input_path: str, out_path: str, dot_px: int):
+def _open_video_and_meta(input_path: str):
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise RuntimeError("Cannot open input video")
@@ -131,7 +125,7 @@ def render_dots_silent(input_path: str, out_path: str, dot_px: int):
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    # fallback if metadata broken
+    # Fallback if metadata broken
     if w <= 0 or h <= 0:
         ok, frame0 = cap.read()
         if not ok:
@@ -140,16 +134,19 @@ def render_dots_silent(input_path: str, out_path: str, dot_px: int):
         h, w = frame0.shape[:2]
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    writer = cv2.VideoWriter(
-        out_path,
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (w, h),
-    )
+    return cap, w, h, fps
+
+
+def render_dots_silent(input_path: str, out_path: str, dot_px: int) -> None:
+    cap, w, h, fps = _open_video_and_meta(input_path)
+
+    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     if not writer.isOpened():
         cap.release()
         writer.release()
         raise RuntimeError("Could not open VideoWriter for output")
+
+    dot_px = max(1, min(20, int(dot_px)))
 
     pose = mp_pose.Pose(
         static_image_mode=False,
@@ -158,9 +155,6 @@ def render_dots_silent(input_path: str, out_path: str, dot_px: int):
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
     )
-
-    dot_px = int(dot_px)
-    dot_px = max(1, min(20, dot_px))
 
     with pose:
         while True:
@@ -181,7 +175,7 @@ def render_dots_silent(input_path: str, out_path: str, dot_px: int):
                     x = int(lm.x * w)
                     y = int(lm.y * h)
                     if 0 <= x < w and 0 <= y < h:
-                        cv2.circle(canvas, (x, y), dot_px, (255, 255, 255), -1)
+                        cv2.circle(canvas, (x, y), dot_px, (255, 255, 255), -1, lineType=cv2.LINE_AA)
 
             writer.write(canvas)
 
@@ -189,43 +183,24 @@ def render_dots_silent(input_path: str, out_path: str, dot_px: int):
     writer.release()
 
 
-def render_skeleton_silent(input_path: str, out_path: str):
+def render_skeleton_overlay_silent(input_path: str, out_path: str) -> None:
     """
-    Skeleton on BLACK background to ensure it's obviously processed
-    and cannot look like the original video.
-    If pose detection is too low, we fail the job clearly.
+    Skeleton OVERLAY on the original video (so teacher sees body + skeleton).
+    If pose detection is too low, FAIL clearly so you don't get "looks like input".
     """
-    cap = cv2.VideoCapture(input_path)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open input video")
+    logger.info("[skeleton] START overlay render")
 
-    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    cap, w, h, fps = _open_video_and_meta(input_path)
 
-    # fallback if metadata broken
-    if w <= 0 or h <= 0:
-        ok, frame0 = cap.read()
-        if not ok:
-            cap.release()
-            raise RuntimeError("Cannot read any frame from input video")
-        h, w = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-    writer = cv2.VideoWriter(
-        out_path,
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (w, h),
-    )
+    writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     if not writer.isOpened():
         cap.release()
         writer.release()
         raise RuntimeError("Could not open VideoWriter for output")
 
-    # Make skeleton very visible (white & thick)
-    landmark_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=3, circle_radius=3)
-    connection_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=3, circle_radius=2)
+    # Make overlay very visible (white, thick)
+    landmark_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=4, circle_radius=3)
+    connection_spec = mp_draw.DrawingSpec(color=(255, 255, 255), thickness=4, circle_radius=2)
 
     pose = mp_pose.Pose(
         static_image_mode=False,
@@ -249,7 +224,7 @@ def render_skeleton_silent(input_path: str, out_path: str):
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             res = pose.process(rgb)
 
-            canvas = np.zeros((h, w, 3), dtype=np.uint8)
+            canvas = frame.copy()  # ✅ overlay on original
 
             if res.pose_landmarks:
                 detected_frames += 1
@@ -266,21 +241,22 @@ def render_skeleton_silent(input_path: str, out_path: str):
     cap.release()
     writer.release()
 
-    if total_frames > 0:
-        ratio = detected_frames / total_frames
-        logger.info("[skeleton] pose detected %s/%s (%.1f%%)", detected_frames, total_frames, ratio * 100.0)
-        if ratio < 0.15:
-            raise RuntimeError(
-                f"Skeleton not detected enough (pose found in {detected_frames}/{total_frames} frames). "
-                "Try: full body in frame, better lighting, less motion blur, camera not too far."
-            )
+    ratio = (detected_frames / total_frames) if total_frames else 0.0
+    logger.info("[skeleton] detected %d/%d (%.1f%%)", detected_frames, total_frames, ratio * 100.0)
+
+    # If detection is too low, output would look like input -> fail loudly
+    if total_frames == 0 or ratio < 0.10:
+        raise RuntimeError(
+            f"Skeleton overlay not detected enough (pose found in {detected_frames}/{total_frames} frames). "
+            "Try: full body visible, better lighting, less motion blur, camera not too far."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Job handling
 # ---------------------------------------------------------------------------
 
-def find_pending_job():
+def find_pending_job_key() -> str | None:
     r = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX)
     for o in r.get("Contents", []):
         if o["Key"].endswith(".json"):
@@ -288,41 +264,41 @@ def find_pending_job():
     return None
 
 
-def move_job(old: str, new: str, payload: dict):
-    s3_put_json(new, payload)
-    s3.delete_object(Bucket=AWS_BUCKET, Key=old)
+def move_job_json(old_key: str, new_key: str, payload: dict) -> None:
+    s3_put_json(new_key, payload)
+    s3.delete_object(Bucket=AWS_BUCKET, Key=old_key)
 
 
-def process_job(job_key: str):
-    job = s3_get_json(job_key)
+def process_job(job_json_key: str) -> None:
+    job = s3_get_json(job_json_key)
+
     job_id = job.get("job_id")
     mode = job.get("mode", "dots")
+    input_key = job.get("input_key")
 
     if not job_id:
         raise RuntimeError("Job JSON missing job_id")
-
-    params = job.get("params", {}) if isinstance(job.get("params", {}), dict) else {}
-    dot_px = int(params.get("dot_px", 5))
-    dot_px = max(1, min(20, dot_px))
-    keep_audio = bool(params.get("keep_audio", True))
-
-    input_key = job.get("input_key")
     if not input_key:
         raise RuntimeError("Job JSON missing input_key")
 
+    params = job.get("params", {})
+    if not isinstance(params, dict):
+        params = {}
+
+    dot_px = max(1, min(20, int(params.get("dot_px", 5))))
+    keep_audio = bool(params.get("keep_audio", True))
+
     output_key = job.get("output_key") or f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
 
-    logger.info(
-        "[job] id=%s mode=%s keep_audio=%s dot_px=%s input=%s output=%s",
-        job_id, mode, keep_audio, dot_px, input_key, output_key
-    )
+    logger.info("[job] id=%s mode=%s keep_audio=%s dot_px=%s", job_id, mode, keep_audio, dot_px)
 
+    # Move to processing
     job["status"] = "processing"
     job["updated_at"] = utc_now_iso()
     job["output_key"] = output_key
 
     processing_key = f"{PROCESSING_PREFIX}/{job_id}.json"
-    move_job(job_key, processing_key, job)
+    move_job_json(job_json_key, processing_key, job)
 
     input_path = None
     silent_path = None
@@ -336,12 +312,11 @@ def process_job(job_key: str):
         if mode == "dots":
             render_dots_silent(input_path, silent_path, dot_px)
         elif mode == "skeleton":
-            render_skeleton_silent(input_path, silent_path)
+            render_skeleton_overlay_silent(input_path, silent_path)
         else:
             raise RuntimeError(f"Unsupported mode: {mode}")
 
         if keep_audio:
-            logger.info("[job] attaching audio (MoviePy)")
             attach_audio_moviepy(silent_path, input_path, final_path)
             upload_video(final_path, output_key)
         else:
@@ -349,7 +324,7 @@ def process_job(job_key: str):
 
         job["status"] = "finished"
         job["updated_at"] = utc_now_iso()
-        move_job(processing_key, f"{FINISHED_PREFIX}/{job_id}.json", job)
+        move_job_json(processing_key, f"{FINISHED_PREFIX}/{job_id}.json", job)
         logger.info("[job] finished id=%s", job_id)
 
     except Exception as e:
@@ -357,7 +332,7 @@ def process_job(job_key: str):
         job["status"] = "failed"
         job["error"] = str(e)
         job["updated_at"] = utc_now_iso()
-        move_job(processing_key, f"{FAILED_PREFIX}/{job_id}.json", job)
+        move_job_json(processing_key, f"{FAILED_PREFIX}/{job_id}.json", job)
 
     finally:
         for p in (input_path, silent_path, final_path):
@@ -372,11 +347,11 @@ def process_job(job_key: str):
 # Main loop
 # ---------------------------------------------------------------------------
 
-def main():
-    logger.info("=== AI People Reader Worker START (dots + skeleton + audio) ===")
+def main() -> None:
+    logger.info("=== AI People Reader Worker START (dots + skeleton overlay + audio) ===")
     while True:
         try:
-            job_key = find_pending_job()
+            job_key = find_pending_job_key()
             if job_key:
                 process_job(job_key)
             else:
