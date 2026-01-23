@@ -3,14 +3,15 @@ import json
 import time
 import logging
 import tempfile
+import subprocess
 from datetime import datetime, timezone
 
 import boto3
 
-# Optional heavy libs – เรารองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
+# Optional heavy libs – รองรับกรณี import ไม่ได้ ด้วยการ fail job สวย ๆ
 try:
     import cv2  # type: ignore
-except Exception:  # ImportError หรือ error อื่น ๆ
+except Exception:
     cv2 = None  # type: ignore
 
 try:
@@ -55,7 +56,6 @@ OUTPUT_PREFIX = f"{JOBS_PREFIX}/output"
 # ---------------------------------------------------------------------------
 # Small S3 helpers
 # ---------------------------------------------------------------------------
-
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -104,9 +104,7 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
 # Job lifecycle helpers
 # ---------------------------------------------------------------------------
 
-
 def list_pending_json_keys():
-    # คืน key ของ job JSON ที่อยู่ใน jobs/pending/
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
@@ -124,7 +122,6 @@ def find_one_pending_job_key() -> str | None:
 
 
 def move_json(old_key: str, new_key: str, payload: dict) -> None:
-    # เขียน payload ไป new_key แล้วลบ old_key
     s3_put_json(new_key, payload)
     if old_key != new_key:
         logger.info("[s3_delete] key=%s", old_key)
@@ -140,35 +137,81 @@ def update_status(job: dict, status: str, error: str | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Audio helper (ffmpeg)
+# ---------------------------------------------------------------------------
+
+def _ffmpeg_exists() -> bool:
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def attach_audio_ffmpeg(video_no_audio_path: str, original_path: str, out_path: str) -> None:
+    """
+    เอา video stream จากไฟล์ overlay + เอา audio stream จากไฟล์ต้นฉบับ
+    """
+    if not _ffmpeg_exists():
+        raise RuntimeError("ffmpeg not found. Cannot keep audio. (Install ffmpeg or set keep_audio=False)")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_no_audio_path,
+        "-i", original_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-shortest",
+        out_path,
+    ]
+    logger.info("[ffmpeg] attach audio: %s", " ".join(cmd))
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+
+
+# ---------------------------------------------------------------------------
 # Dots (Johansson) processing
 # ---------------------------------------------------------------------------
 
-
-def process_dots_video(input_key: str, output_key: str, multi_person: bool = False) -> None:
+def process_dots_video(
+    input_key: str,
+    output_key: str,
+    multi_person: bool = False,
+    dot_px: int = 5,
+    keep_audio: bool = True,
+) -> None:
     """
     สร้างวิดีโอ Johansson dot:
       - อ่านวิดีโอจาก S3
       - ใช้ MediaPipe Pose หา joint
-      - วาดจุดสีขาว radius=5 px ลงบนพื้นหลังดำ
-      - size ทุกเฟรมถูกบังคับให้เท่ากับ (width, height) เดียวกัน
-
-    NOTE:
-      ตอนนี้ mediapipe.solutions.pose เป็น single-person pose
-      ดังนั้น multi_person=True ยังใช้ logic เดียวกับ single อยู่
-      (โครงสร้างเผื่ออนาคตเปลี่ยนไปใช้โมเดลแบบหลายคน)
+      - วาดจุดสีขาวลงบนพื้นหลังดำ
+      - dot_px: 1–20
+      - keep_audio: True/False (ใช้ ffmpeg ดึงเสียงจากต้นฉบับกลับเข้าไฟล์ output)
     """
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
-        raise RuntimeError(
-            "Johansson dots mode requires OpenCV, NumPy, and MediaPipe to be installed"
-        )
+        raise RuntimeError("Johansson dots mode requires OpenCV, NumPy, and MediaPipe to be installed")
+
+    dot_px = int(dot_px)
+    dot_px = max(1, min(20, dot_px))
 
     input_path = download_to_temp(input_key, suffix=".mp4")
-    out_path = tempfile.mktemp(suffix=".mp4")
+
+    # เราจะ render แบบ silent ก่อนเสมอ (cv2 ไม่มี audio)
+    out_silent = tempfile.mktemp(suffix=".mp4")
+    out_final = tempfile.mktemp(suffix=".mp4")
 
     logger.info(
-        "[dots] starting Johansson processing input=%s out=%s multi_person=%s",
+        "[dots] start input=%s out_silent=%s dot_px=%s keep_audio=%s multi_person=%s",
         input_path,
-        out_path,
+        out_silent,
+        dot_px,
+        keep_audio,
         multi_person,
     )
 
@@ -177,23 +220,20 @@ def process_dots_video(input_key: str, output_key: str, multi_person: bool = Fal
         cap.release()
         raise RuntimeError("Could not open input video")
 
-    # ใช้ metadata จากวิดีโอเป็นขนาดมาตรฐาน
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-    # กันกรณี metadata พัง (เช่น width/height = 0)
     if width <= 0 or height <= 0:
         ok, frame0 = cap.read()
         if not ok:
             cap.release()
             raise RuntimeError("Cannot read any frame from input video")
         height, width = frame0.shape[:2]
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # ย้อนกลับไปเฟรมแรก
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    # *** สำคัญ: encoding เหมือนเวอร์ชันที่ QuickTime เปิดได้ ***
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+    writer = cv2.VideoWriter(out_silent, fourcc, fps, (width, height))
     if not writer.isOpened():
         cap.release()
         writer.release()
@@ -207,8 +247,6 @@ def process_dots_video(input_key: str, output_key: str, multi_person: bool = Fal
         min_tracking_confidence=0.5,
     )
 
-    RADIUS = 5  # ขนาดจุดเท่ากันทุกเฟรม
-
     try:
         with pose:
             while True:
@@ -216,21 +254,14 @@ def process_dots_video(input_key: str, output_key: str, multi_person: bool = Fal
                 if not ok:
                     break
 
-                # บังคับทุกเฟรมให้ขนาดเท่ากับ (width, height)
                 frame = cv2.resize(frame, (width, height))
-
-                # Pose detection
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb)  # type: ignore[arg-type]
 
-                # สร้างพื้นหลังดำขนาดเดียวกันทุกเฟรม
                 black = np.zeros((height, width, 3), dtype=np.uint8)
 
                 if results.pose_landmarks:
                     h, w, _ = black.shape
-
-                    # ตอนนี้ยังได้ landmark ชุดเดียว (single person)
-                    # multi_person flag เผื่อไว้สำหรับอนาคต
                     for lm in results.pose_landmarks.landmark:
                         if getattr(lm, "visibility", 1.0) < 0.5:
                             continue
@@ -240,7 +271,7 @@ def process_dots_video(input_key: str, output_key: str, multi_person: bool = Fal
                             cv2.circle(
                                 black,
                                 (x, y),
-                                RADIUS,
+                                dot_px,  # ✅ ให้เลือก 1–20 px
                                 (255, 255, 255),
                                 -1,
                                 lineType=cv2.LINE_AA,
@@ -251,20 +282,26 @@ def process_dots_video(input_key: str, output_key: str, multi_person: bool = Fal
     finally:
         cap.release()
         writer.release()
-        try:
-            upload_from_path(out_path, output_key)
-        finally:
-            for path in (input_path, out_path):
-                try:
+
+    # ✅ ถ้าต้องการเสียง: ใช้ ffmpeg เอาเสียงจาก input_path มาใส่ out_silent
+    try:
+        if keep_audio:
+            attach_audio_ffmpeg(out_silent, input_path, out_final)
+            upload_from_path(out_final, output_key)
+        else:
+            upload_from_path(out_silent, output_key)
+    finally:
+        for path in (input_path, out_silent, out_final):
+            try:
+                if path and os.path.exists(path):
                     os.remove(path)
-                except OSError:
-                    pass
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
 # Job processor
 # ---------------------------------------------------------------------------
-
 
 def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
@@ -278,18 +315,24 @@ def process_job(job_json_key: str) -> None:
     if not input_key:
         raise ValueError("Job JSON missing 'input_key'")
 
-    # ถ้า app ไม่ใส่ output_key มา ใช้ default path เดิม
     output_key = raw_job.get("output_key") or f"{OUTPUT_PREFIX}/{job_id}/result.mp4"
 
+    # ✅ NEW: params from app
+    params = raw_job.get("params", {}) if isinstance(raw_job, dict) else {}
+    dot_px = int(params.get("dot_px", 5))
+    dot_px = max(1, min(20, dot_px))
+    keep_audio = bool(params.get("keep_audio", True))
+
     logger.info(
-        "[process_job] job_id=%s mode=%s input_key=%s output_key=%s",
+        "[process_job] job_id=%s mode=%s input_key=%s output_key=%s dot_px=%s keep_audio=%s",
         job_id,
         mode,
         input_key,
         output_key,
+        dot_px,
+        keep_audio,
     )
 
-    # ย้าย JSON ไป processing
     job = dict(raw_job)
     job = update_status(job, "processing")
     job["output_key"] = output_key
@@ -298,13 +341,24 @@ def process_job(job_json_key: str) -> None:
     move_json(job_json_key, processing_key, job)
 
     try:
-        # รองรับทั้งชื่อ mode แบบเก่าและแบบใหม่
         if mode in ("dots", "dots_1p", "dots_single"):
-            process_dots_video(input_key, output_key, multi_person=False)
+            process_dots_video(
+                input_key,
+                output_key,
+                multi_person=False,
+                dot_px=dot_px,
+                keep_audio=keep_audio,
+            )
         elif mode in ("dots_2p", "dots_multi"):
-            process_dots_video(input_key, output_key, multi_person=True)
+            process_dots_video(
+                input_key,
+                output_key,
+                multi_person=True,
+                dot_px=dot_px,
+                keep_audio=keep_audio,
+            )
         else:
-            # default: passthrough / copy เฉย ๆ
+            # passthrough/copy (มีเสียงเดิมอยู่แล้ว)
             copy_video_in_s3(input_key, output_key)
 
         job = update_status(job, "finished", error=None)
@@ -323,7 +377,6 @@ def process_job(job_json_key: str) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
-
 def main() -> None:
     logger.info("====== AI People Reader Worker (Johansson) ======")
     logger.info("Using bucket: %s", AWS_BUCKET)
@@ -332,6 +385,7 @@ def main() -> None:
     logger.info("MP available : %s", bool(mp and MP_HAS_SOLUTIONS))
     logger.info("cv2 available: %s", cv2 is not None)
     logger.info("numpy avail. : %s", np is not None)
+    logger.info("ffmpeg avail.: %s", _ffmpeg_exists())
 
     while True:
         try:
