@@ -1,17 +1,10 @@
 # app.py — AI People Reader Job Manager (Johansson / dots / clear / skeleton)
-#
-# หน้าที่หลัก:
-#   - ให้ผู้ใช้ upload วิดีโอ + เลือก mode
-#   - สร้าง job JSON ตาม schema เดียวกับ worker.py
-#   - เซฟ input video + job JSON ลง S3
-#   - แสดงรายการ jobs จากทุกสถานะ (pending / processing / finished / failed)
-#   - ให้เลือก job แล้วดาวน์โหลด result.mp4 ถ้าไฟล์มีจริงใน S3
 
 import os
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import boto3
 import pandas as pd
@@ -44,19 +37,16 @@ st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 # ----------------------------------------------------------
 
 def utc_now_iso() -> str:
-    """คืนค่าเวลาปัจจุบันแบบ ISO (UTC)"""
     return datetime.now(timezone.utc).isoformat()
 
 
 def new_job_id() -> str:
-    """สร้าง job_id ใหม่ เช่น 20260114_140637__6d6c6"""
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:5]
     return f"{ts}__{rand}"
 
 
 def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/octet-stream") -> None:
-    """อัปโหลดไฟล์ binary ขึ้น S3"""
     s3.put_object(
         Bucket=AWS_BUCKET,
         Key=key,
@@ -66,7 +56,6 @@ def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/o
 
 
 def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
-    """เซฟ JSON ลง S3"""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     s3.put_object(
         Bucket=AWS_BUCKET,
@@ -77,17 +66,23 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 
 def s3_get_json(key: str) -> Dict[str, Any]:
-    """ดึง JSON จาก S3"""
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     data = obj["Body"].read()
     return json.loads(data.decode("utf-8"))
 
 
-def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
+def create_job(
+    file_bytes: bytes,
+    mode: str,
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     สร้าง job ใหม่:
       - เซฟ input video ไปที่ jobs/pending/<job_id>/input/input.mp4
       - สร้าง JSON และเซฟที่ jobs/pending/<job_id>.json
+
+    params (optional) เช่น:
+      {"dot_px": 8, "keep_audio": True}
     """
     job_id = new_job_id()
 
@@ -98,7 +93,7 @@ def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
     upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
 
     now = utc_now_iso()
-    job = {
+    job: Dict[str, Any] = {
         "job_id": job_id,
         "status": "pending",
         "mode": mode,
@@ -109,6 +104,10 @@ def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
         "error": None,
     }
 
+    # ✅ Add params only if provided (backward compatible)
+    if params:
+        job["params"] = params
+
     job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
     s3_put_json(job_json_key, job)
 
@@ -116,13 +115,6 @@ def create_job(file_bytes: bytes, mode: str) -> Dict[str, Any]:
 
 
 def list_jobs() -> List[Dict[str, Any]]:
-    """
-    ดึง job จากทุก prefix (pending/processing/finished/failed)
-    แล้วรวมเป็น list เดียว
-
-    NOTE: ใช้ prefix เป็นตัวกำหนด status เสมอ
-          (ไม่เชื่อ field "status" ใน JSON เพราะ worker ไม่ได้อัปเดต)
-    """
     all_jobs: List[Dict[str, Any]] = []
 
     prefix_status_pairs = [
@@ -157,21 +149,15 @@ def list_jobs() -> List[Dict[str, Any]]:
                 st.warning(f"Cannot read job {key}: {ce}")
                 continue
 
-            # ใช้ prefix เป็นตัวตัดสินใจสถานะเสมอ
             job["status"] = default_status
             job["s3_key"] = key
             all_jobs.append(job)
 
-    # sort by created_at (จากเก่าไปใหม่)
     all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=False)
     return all_jobs
 
 
 def download_output_video(job_id: str) -> bytes:
-    """
-    ดึง result video จาก jobs/output/<job_id>/result.mp4
-    ถ้าไม่มีไฟล์ จะโยน ClientError (ให้ไปจับด้าน UI)
-    """
     key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     return obj["Body"].read()
@@ -191,6 +177,30 @@ with col_left:
 
     mode = st.selectbox("Mode", ["dots", "clear", "skeleton"], index=0)
 
+    # ✅ New controls (only for dots)
+    dot_px = 5
+    keep_audio = True
+
+    if mode == "dots":
+        st.subheader("Dots settings")
+
+        dot_px = st.slider(
+            "Dot size (px)",
+            min_value=1,
+            max_value=20,
+            value=5,
+            step=1,
+            help="ขนาดจุด Johansson (1–20 px)",
+        )
+
+        audio_choice = st.radio(
+            "Output audio",
+            options=["Keep audio (มีเสียง)", "No audio (ไม่มีเสียง)"],
+            index=0,
+            help="ถ้าเลือก Keep audio: worker จะใช้ ffmpeg ใส่เสียงจากไฟล์ต้นฉบับกลับเข้า result.mp4",
+        )
+        keep_audio = (audio_choice == "Keep audio (มีเสียง)")
+
     uploaded_file = st.file_uploader(
         "Upload video file",
         type=["mp4", "mov", "m4v"],
@@ -202,7 +212,15 @@ with col_left:
             st.warning("Please upload a video file first.")
         else:
             file_bytes = uploaded_file.read()
-            job = create_job(file_bytes, mode)
+
+            params = None
+            if mode == "dots":
+                params = {
+                    "dot_px": int(dot_px),
+                    "keep_audio": bool(keep_audio),
+                }
+
+            job = create_job(file_bytes, mode, params=params)
             st.success(f"Created job: {job['job_id']}")
             st.json(job)
 
@@ -210,7 +228,6 @@ with col_left:
 with col_right:
     st.header("Jobs")
 
-    # ปุ่ม refresh ใช้ st.rerun() แทน experimental_rerun
     if st.button("Refresh job list"):
         st.rerun()
 
@@ -227,15 +244,14 @@ with col_right:
                     "created_at": j.get("created_at"),
                     "updated_at": j.get("updated_at"),
                     "error": j.get("error"),
+                    # ✅ show params if exists (nice for teacher)
+                    "params": json.dumps(j.get("params", {}), ensure_ascii=False),
                 }
                 for j in jobs
             ]
         )
         st.dataframe(df, use_container_width=True)
 
-        # ------------------------------------------
-        # Download result section
-        # ------------------------------------------
         st.subheader("Download result video ↪")
 
         job_ids_all = [j["job_id"] for j in jobs]
@@ -252,7 +268,6 @@ with col_right:
                 try:
                     data = download_output_video(selected_job_id)
                 except ClientError as ce:
-                    # NoSuchKey = ยังไม่มี result.mp4
                     err_code = ce.response.get("Error", {}).get("Code")
                     if err_code == "NoSuchKey":
                         st.error(
