@@ -205,7 +205,7 @@ if st.button("Check status.json"):
             st.json(status_obj)
 
             # =========================
-            # ✅ NEW: Download buttons
+            # ✅ Download buttons (FIX: ไม่ซ่อนปุ่มด้วย head_object)
             # =========================
             outputs = (status_obj or {}).get("outputs") or {}
 
@@ -218,20 +218,18 @@ if st.button("Check status.json"):
 
                     out_key = out_key.strip()
 
-                    # ถ้า worker ใส่ key เป็น full s3 key แบบ "jobs/..." ใช้ได้เลย
-                    # ถ้า key ไม่มีอยู่จริง จะแจ้งเตือน
-                    if not s3_key_exists(out_key):
-                        st.warning(f"Output key not found yet: {name} -> {out_key}")
-                        continue
+                    # ✅ แสดงปุ่มเลย (ไม่เช็ค head_object เพราะบางครั้งสิทธิ์ไม่พอแล้วปุ่มไม่ขึ้น)
+                    try:
+                        url = presigned_get_url(out_key, expires=3600)
+                        label = f"⬇️ Download {name}"
+                        if hasattr(st, "link_button"):
+                            st.link_button(label, url)
+                        else:
+                            st.markdown(f"[{label}]({url})")
+                    except Exception as e:
+                        st.error(f"Cannot create download link for {name}: {e}")
 
-                    url = presigned_get_url(out_key, expires=3600)
-
-                    # ปุ่มดาวน์โหลด (Streamlit v1.28+ มี link_button)
-                    label = f"⬇️ Download {name}"
-                    if hasattr(st, "link_button"):
-                        st.link_button(label, url)
-                    else:
-                        st.markdown(f"[{label}]({url})")
+                st.caption("ถ้ากดแล้วขึ้น NoSuchKey = ไฟล์ยังไม่ถูกอัปโหลดจริง (ต้องดู worker logs)")
 
             else:
                 st.info("ยังไม่มี outputs ใน status.json (รอ worker เขียน outputs ก่อน)")
