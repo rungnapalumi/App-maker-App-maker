@@ -89,6 +89,9 @@ FINISHED_PREFIX = f"{JOBS_PREFIX}/finished/"
 FAILED_PREFIX = f"{JOBS_PREFIX}/failed/"
 OUTPUT_PREFIX = f"{JOBS_PREFIX}/output/"
 
+# ✅ NEW: Reserved system folders under jobs/ (skip scanning as job_id folders)
+RESERVED_FOLDERS = {"pending", "processing", "finished", "failed", "output"}
+
 # MediaPipe Pose landmark indices 0–10 are face-related in Pose
 FACE_LMS = set(range(0, 11))
 
@@ -505,18 +508,34 @@ def _safe_get_json(key: str) -> Optional[Dict[str, Any]]:
 def list_job_folder_prefixes() -> List[str]:
     """
     Return folder prefixes: jobs/<job_id>/
+    ✅ Skip reserved system folders: jobs/pending/, jobs/finished/, jobs/output/, ...
     """
     prefixes: List[str] = []
     try:
-        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=f"{JOBS_PREFIX}/", Delimiter="/")
-        for cp in resp.get("CommonPrefixes", []) or []:
-            p = cp.get("Prefix")
-            if p and p != f"{JOBS_PREFIX}/":
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(
+            Bucket=AWS_BUCKET,
+            Prefix=f"{JOBS_PREFIX}/",
+            Delimiter="/",
+        ):
+            for cp in page.get("CommonPrefixes", []) or []:
+                p = cp.get("Prefix")
+                if not p or p == f"{JOBS_PREFIX}/":
+                    continue
+
+                folder_name = p.rstrip("/").split("/")[-1]
+                if folder_name in RESERVED_FOLDERS:
+                    continue
+
                 prefixes.append(p)
+
+                if len(prefixes) >= MAX_JOB_FOLDERS_SCAN:
+                    return prefixes
+
     except Exception as e:
         logger.exception("[list_job_folder_prefixes] %s", e)
 
-    return prefixes[:MAX_JOB_FOLDERS_SCAN]
+    return prefixes
 
 def try_claim_folder_job(job_folder_prefix: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
