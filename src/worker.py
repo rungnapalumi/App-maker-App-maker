@@ -1,3 +1,4 @@
+print("🔥🔥🔥 THIS IS THE NEW WORKER.PY VERSION 🔥🔥🔥", flush=True)
 # app.py — AI People Reader Job Manager (dots / skeleton + keep audio + dot size)
 # ✅ Upload video to S3
 # ✅ Create job JSON under jobs/pending/<job_id>.json (worker polls this)
