@@ -1,6 +1,6 @@
 # worker.py — AI People Reader Worker (Dots + Skeleton)
 #
-# ✅ Modes:
+# ✅ Legacy Modes (pending-json pipeline):
 #   - dots     : Johansson dots on BLACK background (no audio)
 #   - skeleton : Skeleton overlay on REAL video (no audio)
 #   - clear    : Copy input -> output (no processing)
@@ -13,10 +13,16 @@
 # Backward compatible:
 #   - Accept params in job["params"] or at top-level keys.
 #
+# ✅ NEW (Added, non-breaking):
+#   - Also supports "job folder" pipeline created by app-maker-app-maker:
+#       jobs/<job_id>/job.json
+#       jobs/<job_id>/status.json  (queued|processing|finished|failed)
+#       jobs/<job_id>/input/<file>
+#       jobs/<job_id>/output/<mode>.mp4 / report.json
+#
 # IMPORTANT:
 #   This worker REQUIRES these libraries installed in worker environment:
 #     - boto3
-#     - python-dotenv (optional)
 #     - opencv-python-headless
 #     - numpy
 #     - mediapipe
@@ -32,7 +38,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 
 import boto3
-from botocore.exceptions import ClientError
 
 # Optional heavy libs — if missing, we fail job nicely
 try:
@@ -60,6 +65,12 @@ AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
+# NEW: heartbeat logs so Render won't show "no logs"
+HEARTBEAT_SECONDS = int(os.getenv("WORKER_HEARTBEAT_SECONDS", "30"))
+
+# NEW: safety limit when scanning jobs/<job_id>/ folders
+MAX_JOB_FOLDERS_SCAN = int(os.getenv("MAX_JOB_FOLDERS_SCAN", "50"))
+
 if not AWS_BUCKET:
     raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
 
@@ -78,13 +89,9 @@ FINISHED_PREFIX = f"{JOBS_PREFIX}/finished/"
 FAILED_PREFIX = f"{JOBS_PREFIX}/failed/"
 OUTPUT_PREFIX = f"{JOBS_PREFIX}/output/"
 
-# NEW (folder-job style created by app-maker-app-maker)
-FOLDER_JOBS_ROOT = f"{JOBS_PREFIX}/"  # jobs/<job_id>/job.json + status.json
-MAX_FOLDER_SCAN = int(os.getenv("MAX_FOLDER_SCAN", "50"))
-WORKER_ID = os.getenv("WORKER_ID", "ai-people-reader-worker")
-
 # MediaPipe Pose landmark indices 0–10 are face-related in Pose
 FACE_LMS = set(range(0, 11))
+
 
 # -----------------------------------------------------------------------------
 # Small helpers
@@ -112,7 +119,7 @@ def _hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
     """
     if not hex_color:
         return (0, 255, 0)
-    s = hex_color.strip()
+    s = str(hex_color).strip()
     if s.startswith("#"):
         s = s[1:]
     if len(s) != 6:
@@ -140,16 +147,6 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
         Body=body_str.encode("utf-8"),
         ContentType="application/json",
     )
-
-def s3_get_json_safe(key: str) -> Optional[Dict[str, Any]]:
-    """Return None if missing."""
-    try:
-        return s3_get_json(key)
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code")
-        if code in ("NoSuchKey", "404"):
-            return None
-        raise
 
 def download_to_temp(key: str, suffix: str = ".mp4") -> str:
     fd, path = tempfile.mkstemp(suffix=suffix)
@@ -179,15 +176,26 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
         MetadataDirective="REPLACE",
     )
 
+def get_param(job: Dict[str, Any], key: str, default: Any = None) -> Any:
+    """
+    Read param from:
+      - job["params"][key]
+      - or job[key] (backward compatibility)
+    """
+    params = job.get("params")
+    if isinstance(params, dict) and key in params:
+        return params.get(key)
+    return job.get(key, default)
+
+
 # -----------------------------------------------------------------------------
-# Job lifecycle helpers (OLD queue: jobs/pending/<job_id>.json)  — UNCHANGED
+# Job lifecycle helpers (LEGACY pipeline: jobs/pending/<job_id>.json)
 # -----------------------------------------------------------------------------
 def list_pending_json_keys():
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=AWS_BUCKET, Prefix=PENDING_PREFIX):
         for item in page.get("Contents", []):
             key = item["Key"]
-            # pending job json is: jobs/pending/<job_id>.json
             if key.endswith(".json") and key.count("/") == PENDING_PREFIX.count("/"):
                 yield key
 
@@ -210,136 +218,9 @@ def update_status(job: Dict[str, Any], status: str, error: Optional[str] = None)
         job["error"] = error
     return job
 
-def get_param(job: Dict[str, Any], key: str, default: Any = None) -> Any:
-    """
-    Read param from:
-      - job["params"][key]
-      - or job[key] (backward compatibility)
-    """
-    params = job.get("params")
-    if isinstance(params, dict) and key in params:
-        return params.get(key)
-    return job.get(key, default)
 
 # -----------------------------------------------------------------------------
-# NEW: Folder-job helpers (NEW queue: jobs/<job_id>/job.json + status.json)
-# -----------------------------------------------------------------------------
-def list_job_folder_prefixes() -> List[str]:
-    """
-    Return prefixes like: jobs/<job_id>/
-    We filter out known old folders (pending/processing/finished/failed/output/)
-    """
-    out: List[str] = []
-    try:
-        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=FOLDER_JOBS_ROOT, Delimiter="/")
-        for cp in resp.get("CommonPrefixes", []) or []:
-            p = cp.get("Prefix")  # e.g. 'jobs/20260124_xxx/'
-            if not p:
-                continue
-            # Skip legacy queue folders
-            if p in (PENDING_PREFIX, PROCESSING_PREFIX, FINISHED_PREFIX, FAILED_PREFIX, OUTPUT_PREFIX):
-                continue
-            # also skip "jobs/output/" etc if present
-            if p.endswith("pending/") or p.endswith("processing/") or p.endswith("finished/") or p.endswith("failed/") or p.endswith("output/"):
-                continue
-            out.append(p)
-    except Exception as e:
-        logger.exception("[list_job_folder_prefixes] error: %s", e)
-
-    return out[:MAX_FOLDER_SCAN]
-
-def try_claim_folder_job(job_prefix: str) -> Optional[Dict[str, Any]]:
-    """
-    job_prefix like 'jobs/<job_id>/'
-    Check status.json == queued then set to processing.
-    """
-    status_key = f"{job_prefix}status.json"
-    job_key = f"{job_prefix}job.json"
-
-    status = s3_get_json_safe(status_key)
-    if not status:
-        return None
-
-    if status.get("status") != "queued":
-        return None
-
-    job = s3_get_json_safe(job_key)
-    if not job:
-        # job.json missing -> fail it to stop infinite queued
-        s3_put_json(status_key, {
-            "status": "failed",
-            "job_id": status.get("job_id") or job_prefix.strip("/").split("/")[-1],
-            "updated_at": utc_now_iso(),
-            "error": "Missing job.json",
-            "worker_id": WORKER_ID,
-        })
-        return None
-
-    # claim: set processing
-    job_id = job.get("job_id") or status.get("job_id") or job_prefix.strip("/").split("/")[-1]
-    s3_put_json(status_key, {
-        "status": "processing",
-        "job_id": job_id,
-        "updated_at": utc_now_iso(),
-        "worker_id": WORKER_ID,
-    })
-    return job
-
-def folder_output_key(job_prefix: str, mode: str) -> str:
-    # jobs/<job_id>/output/<mode>.mp4
-    return f"{job_prefix}output/{mode}.mp4"
-
-def finish_folder_job(job_prefix: str, job_id: str, outputs: Dict[str, str]) -> None:
-    status_key = f"{job_prefix}status.json"
-    s3_put_json(status_key, {
-        "status": "finished",
-        "job_id": job_id,
-        "updated_at": utc_now_iso(),
-        "worker_id": WORKER_ID,
-        "outputs": outputs,
-    })
-
-def fail_folder_job(job_prefix: str, job_id: str, error: str) -> None:
-    status_key = f"{job_prefix}status.json"
-    s3_put_json(status_key, {
-        "status": "failed",
-        "job_id": job_id,
-        "updated_at": utc_now_iso(),
-        "worker_id": WORKER_ID,
-        "error": error,
-    })
-
-def normalize_modes(job: Dict[str, Any]) -> List[str]:
-    """
-    app-maker may send:
-      - job["modes"] = ["overlay", "dots", ...]
-    old single-mode style uses:
-      - job["mode"] = "dots"
-    """
-    modes = job.get("modes")
-    if isinstance(modes, list):
-        out = []
-        for m in modes:
-            if not m:
-                continue
-            out.append(str(m).strip().lower())
-        return out
-
-    mode = (job.get("mode") or "").strip().lower()
-    if mode:
-        return [mode]
-
-    return ["clear"]
-
-def map_mode_alias(mode: str) -> str:
-    # IMPORTANT: keep your original modes.
-    # app-maker uses "overlay" checkbox -> we map to existing "skeleton" overlay
-    if mode == "overlay":
-        return "skeleton"
-    return mode
-
-# -----------------------------------------------------------------------------
-# Video processing: Dots  — UNCHANGED
+# Video processing: Dots
 # -----------------------------------------------------------------------------
 def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None:
     """
@@ -383,7 +264,7 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
         min_tracking_confidence=0.5,
     )
 
-    logger.info("[dots] radius=%s input=%s out=%s", dot_radius, input_path, out_path)
+    logger.info("[dots] start input=%s out=%s dot_radius=%s", input_path, out_path, dot_radius)
 
     try:
         with pose:
@@ -412,7 +293,7 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
                                 int(dot_radius),
                                 (255, 255, 255),
                                 -1,
-                                lineType=cv2.LINE_8,  # sharp
+                                lineType=cv2.LINE_8,
                             )
 
                 writer.write(black)
@@ -429,8 +310,9 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
                 except OSError:
                     pass
 
+
 # -----------------------------------------------------------------------------
-# Video processing: Skeleton overlay (BODY ONLY, no face)  — UNCHANGED
+# Video processing: Skeleton overlay (BODY ONLY, no face)
 # -----------------------------------------------------------------------------
 def process_skeleton_video(
     input_key: str,
@@ -484,12 +366,8 @@ def process_skeleton_video(
     )
 
     logger.info(
-        "[skeleton] color=%s bgr=%s thickness=%s input=%s out=%s",
-        skeleton_color_hex,
-        color_bgr,
-        thickness,
-        input_path,
-        out_path,
+        "[skeleton] start input=%s out=%s color=%s thickness=%s",
+        input_path, out_path, skeleton_color_hex, thickness
     )
 
     try:
@@ -506,7 +384,6 @@ def process_skeleton_video(
                 if results.pose_landmarks:
                     h, w, _ = frame.shape
 
-                    # Build landmark map but remove face landmarks completely
                     lm_xy: Dict[int, Optional[Tuple[int, int]]] = {}
                     for idx, lm in enumerate(results.pose_landmarks.landmark):
                         if idx in FACE_LMS:
@@ -522,7 +399,6 @@ def process_skeleton_video(
                         else:
                             lm_xy[idx] = None
 
-                    # Draw connections (BODY ONLY) — sharp lines
                     for a, b in mp.solutions.pose.POSE_CONNECTIONS:  # type: ignore[attr-defined]
                         if a in FACE_LMS or b in FACE_LMS:
                             continue
@@ -535,7 +411,7 @@ def process_skeleton_video(
                                 pb,
                                 color_bgr,
                                 thickness,
-                                lineType=cv2.LINE_8,  # << sharp
+                                lineType=cv2.LINE_8,
                             )
 
                 writer.write(frame)
@@ -552,8 +428,9 @@ def process_skeleton_video(
                 except OSError:
                     pass
 
+
 # -----------------------------------------------------------------------------
-# Job processor (OLD queue) — UNCHANGED
+# Job processor (LEGACY pipeline)
 # -----------------------------------------------------------------------------
 def process_job(job_json_key: str) -> None:
     raw_job = s3_get_json(job_json_key)
@@ -569,7 +446,6 @@ def process_job(job_json_key: str) -> None:
 
     output_key = raw_job.get("output_key") or f"{OUTPUT_PREFIX}{job_id}/result.mp4"
 
-    # Parameters (support both params dict and top-level keys)
     dot_radius = _clamp_int(get_param(raw_job, "dot_radius", get_param(raw_job, "dot_px", 5)), 1, 20, 5)
     skeleton_color = str(get_param(raw_job, "skeleton_color", "#00FF00") or "#00FF00")
     skeleton_thickness = _clamp_int(get_param(raw_job, "skeleton_thickness", 2), 1, 12, 2)
@@ -582,7 +458,6 @@ def process_job(job_json_key: str) -> None:
         output_key,
     )
 
-    # Move JSON -> processing
     job = dict(raw_job)
     job["output_key"] = output_key
     job = update_status(job, "processing")
@@ -603,7 +478,6 @@ def process_job(job_json_key: str) -> None:
             )
 
         else:
-            # clear / passthrough
             copy_video_in_s3(input_key, output_key)
 
         job = update_status(job, "finished", error=None)
@@ -617,71 +491,152 @@ def process_job(job_json_key: str) -> None:
         failed_key = f"{FAILED_PREFIX}{job_id}.json"
         move_json(processing_key, failed_key, job)
 
-# -----------------------------------------------------------------------------
-# NEW: Folder-job runner (jobs/<job_id>/job.json + status.json)
-# -----------------------------------------------------------------------------
-def process_folder_job(job_prefix: str, job: Dict[str, Any]) -> None:
-    job_id = job.get("job_id") or job_prefix.strip("/").split("/")[-1]
-    input_key = job.get("input_key")
 
+# =============================================================================
+# NEW: Support app-maker job folders: jobs/<job_id>/job.json + status.json
+# (ADDED ONLY — legacy behavior unchanged)
+# =============================================================================
+def _safe_get_json(key: str) -> Optional[Dict[str, Any]]:
+    try:
+        return s3_get_json(key)
+    except Exception:
+        return None
+
+def list_job_folder_prefixes() -> List[str]:
+    """
+    Return folder prefixes: jobs/<job_id>/
+    """
+    prefixes: List[str] = []
+    try:
+        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=f"{JOBS_PREFIX}/", Delimiter="/")
+        for cp in resp.get("CommonPrefixes", []) or []:
+            p = cp.get("Prefix")
+            if p and p != f"{JOBS_PREFIX}/":
+                prefixes.append(p)
+    except Exception as e:
+        logger.exception("[list_job_folder_prefixes] %s", e)
+
+    return prefixes[:MAX_JOB_FOLDERS_SCAN]
+
+def try_claim_folder_job(job_folder_prefix: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """
+    If jobs/<job_id>/status.json says queued, mark processing and return (job_id, job_json)
+    """
+    job_id = job_folder_prefix.rstrip("/").split("/")[-1]
+    status_key = f"{job_folder_prefix}status.json"
+    job_key = f"{job_folder_prefix}job.json"
+
+    status = _safe_get_json(status_key)
+    if not status or status.get("status") != "queued":
+        return None
+
+    job = _safe_get_json(job_key)
+    if not job:
+        s3_put_json(status_key, {"status": "failed", "job_id": job_id, "error": "Missing job.json", "updated_at": utc_now_iso()})
+        return None
+
+    # claim
+    s3_put_json(status_key, {"status": "processing", "job_id": job_id, "updated_at": utc_now_iso()})
+    return job_id, job
+
+def _normalize_modes(job: Dict[str, Any]) -> List[str]:
+    modes = job.get("modes")
+    if isinstance(modes, list):
+        out: List[str] = []
+        for m in modes:
+            if isinstance(m, str) and m.strip():
+                out.append(m.strip().lower())
+        return out or ["clear"]
+
+    mode = job.get("mode")
+    if isinstance(mode, str) and mode.strip():
+        return [mode.strip().lower()]
+
+    return ["clear"]
+
+def _output_key_for_mode(job_folder_prefix: str, mode: str) -> str:
+    if mode == "report":
+        return f"{job_folder_prefix}output/report.json"
+    if mode == "overlay":
+        return f"{job_folder_prefix}output/overlay.mp4"
+    if mode == "dots":
+        return f"{job_folder_prefix}output/dots.mp4"
+    if mode == "skeleton":
+        return f"{job_folder_prefix}output/skeleton.mp4"
+    return f"{job_folder_prefix}output/result.mp4"
+
+def run_folder_job(job_id: str, job_folder_prefix: str, job: Dict[str, Any]) -> None:
+    status_key = f"{job_folder_prefix}status.json"
+
+    input_key = job.get("input_key")
     if not input_key:
-        fail_folder_job(job_prefix, job_id, "Missing input_key in job.json")
+        s3_put_json(status_key, {"status": "failed", "job_id": job_id, "error": "Missing input_key", "updated_at": utc_now_iso()})
         return
 
-    # Parameters (same as old; support params or top-level)
+    modes = _normalize_modes(job)
+
     dot_radius = _clamp_int(get_param(job, "dot_radius", get_param(job, "dot_px", 5)), 1, 20, 5)
     skeleton_color = str(get_param(job, "skeleton_color", "#00FF00") or "#00FF00")
     skeleton_thickness = _clamp_int(get_param(job, "skeleton_thickness", 2), 1, 12, 2)
 
-    modes = normalize_modes(job)
     outputs: Dict[str, str] = {}
 
-    logger.info("[folder_job] job_id=%s modes=%s input_key=%s", job_id, modes, input_key)
+    logger.info("[folder_job] START job_id=%s modes=%s input_key=%s", job_id, modes, input_key)
 
     try:
-        for m in modes:
-            mm = map_mode_alias(m)
-
-            if mm == "dots":
-                out_key = folder_output_key(job_prefix, "dots")
+        for mode in modes:
+            if mode == "dots":
+                out_key = _output_key_for_mode(job_folder_prefix, "dots")
                 process_dots_video(input_key, out_key, dot_radius=dot_radius)
                 outputs["dots"] = out_key
 
-            elif mm == "skeleton":
-                out_key = folder_output_key(job_prefix, "overlay")  # keep name overlay for UI
-                process_skeleton_video(
-                    input_key,
-                    out_key,
-                    skeleton_color_hex=skeleton_color,
-                    skeleton_thickness=skeleton_thickness,
-                )
-                outputs["overlay"] = out_key  # UI expects overlay
+            elif mode == "skeleton":
+                out_key = _output_key_for_mode(job_folder_prefix, "skeleton")
+                process_skeleton_video(input_key, out_key, skeleton_color_hex=skeleton_color, skeleton_thickness=skeleton_thickness)
+                outputs["skeleton"] = out_key
 
-            elif mm == "clear":
-                out_key = folder_output_key(job_prefix, "clear")
+            elif mode == "overlay":
+                # overlay = skeleton overlay but separate file name
+                out_key = _output_key_for_mode(job_folder_prefix, "overlay")
+                process_skeleton_video(input_key, out_key, skeleton_color_hex=skeleton_color, skeleton_thickness=skeleton_thickness)
+                outputs["overlay"] = out_key
+
+            elif mode == "report":
+                out_key = _output_key_for_mode(job_folder_prefix, "report")
+                report_obj = {
+                    "job_id": job_id,
+                    "input_key": input_key,
+                    "modes": modes,
+                    "generated_at": utc_now_iso(),
+                    "note": job.get("note"),
+                    "params": job.get("params", {}),
+                }
+                s3_put_json(out_key, report_obj)
+                outputs["report"] = out_key
+
+            else:
+                out_key = _output_key_for_mode(job_folder_prefix, "result")
                 copy_video_in_s3(input_key, out_key)
                 outputs["clear"] = out_key
 
-            else:
-                # Unknown mode => fail
-                raise RuntimeError(f"Unknown mode: {m}")
-
-        finish_folder_job(job_prefix, job_id, outputs)
-        logger.info("[folder_job] job_id=%s finished outputs=%s", job_id, list(outputs.keys()))
+        s3_put_json(status_key, {"status": "finished", "job_id": job_id, "updated_at": utc_now_iso(), "outputs": outputs})
+        logger.info("[folder_job] FINISH job_id=%s outputs=%s", job_id, list(outputs.keys()))
 
     except Exception as exc:
-        logger.exception("[folder_job] job_id=%s FAILED: %s", job_id, exc)
-        fail_folder_job(job_prefix, job_id, str(exc))
+        logger.exception("[folder_job] FAILED job_id=%s: %s", job_id, exc)
+        s3_put_json(status_key, {"status": "failed", "job_id": job_id, "updated_at": utc_now_iso(), "error": str(exc)})
+
 
 # -----------------------------------------------------------------------------
-# Main loop
+# Main loop (Legacy first, then folder jobs)
 # -----------------------------------------------------------------------------
 def main() -> None:
-    logger.info("WORKER VERSION: final_clean_no_audio_body_only_face_removed")
+    logger.info("WORKER VERSION: final_clean_no_audio_body_only_face_removed + folder_job_support")
     logger.info("====== AI People Reader Worker (No Audio) ======")
     logger.info("Using bucket : %s", AWS_BUCKET)
     logger.info("Region      : %s", AWS_REGION)
     logger.info("Poll every  : %s seconds", POLL_INTERVAL)
+    logger.info("Heartbeat   : %s seconds", HEARTBEAT_SECONDS)
     logger.info("MP available: %s", bool(mp and MP_HAS_SOLUTIONS))
     logger.info("cv2 avail.  : %s", cv2 is not None)
     logger.info("numpy avail.: %s", np is not None)
@@ -691,8 +646,32 @@ def main() -> None:
     while True:
         try:
             now = time.time()
-            if now - last_heartbeat > 30:
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
                 logger.info("[heartbeat] alive")
                 last_heartbeat = now
 
-            #
+            # 1) LEGACY pipeline: jobs/pending/<job_id>.json
+            job_key = find_one_pending_job_key()
+            if job_key:
+                process_job(job_key)
+                continue
+
+            # 2) NEW folder pipeline: jobs/<job_id>/status.json == queued
+            claimed = False
+            for folder_prefix in list_job_folder_prefixes():
+                res = try_claim_folder_job(folder_prefix)
+                if res:
+                    jid, job = res
+                    run_folder_job(jid, folder_prefix, job)
+                    claimed = True
+                    break
+
+            if not claimed:
+                time.sleep(POLL_INTERVAL)
+
+        except Exception as exc:
+            logger.exception("[main] Unexpected error: %s", exc)
+            time.sleep(POLL_INTERVAL)
+
+if __name__ == "__main__":
+    main()
