@@ -1,2 +1,8 @@
+# Core
 boto3
 python-dotenv
+
+# Video & CV stack (REQUIRED for dots & skeleton)
+opencv-python-headless
+numpy
+mediapipe
