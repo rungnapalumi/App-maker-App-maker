@@ -1,39 +1,16 @@
 # worker.py — AI People Reader Worker (Dots + Skeleton)
-#
-# ✅ Legacy Modes (pending-json pipeline):
-#   - dots     : Johansson dots on BLACK background (no audio)
-#   - skeleton : Skeleton overlay on REAL video (no audio)
-#   - clear    : Copy input -> output (no processing)
-#
-# ✅ Params supported (from job JSON):
-#   - dot_radius: int (1–20)
-#   - skeleton_color: str hex เช่น "#00FF00" (default green)
-#   - skeleton_thickness: int (default 2)
-#
-# Backward compatible:
-#   - Accept params in job["params"] or at top-level keys.
-#
-# ✅ NEW (Added, non-breaking):
-#   - Also supports "job folder" pipeline created by app-maker-app-maker:
-#       jobs/<job_id>/job.json
-#       jobs/<job_id>/status.json  (queued|processing|finished|failed)
-#       jobs/<job_id>/input/<file>
-#       jobs/<job_id>/output/<mode>.mp4 / report.json
-#
-# IMPORTANT:
-#   This worker REQUIRES these libraries installed in worker environment:
-#     - boto3
-#     - opencv-python-headless
-#     - numpy
-#     - mediapipe
-#
-# If you see "requires OpenCV, NumPy, and MediaPipe", your worker_requirements.txt is missing them.
+# - Legacy pending-json pipeline + NEW folder job pipeline
+# - NO AUDIO
+# - BODY ONLY (no face lines)
+# - FIX: encode outputs as H.264 for browser compatibility (Chrome/Safari)
 
 import os
 import json
 import time
 import logging
 import tempfile
+import subprocess
+import shutil
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 
@@ -65,11 +42,11 @@ AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
-# NEW: heartbeat logs so Render won't show "no logs"
 HEARTBEAT_SECONDS = int(os.getenv("WORKER_HEARTBEAT_SECONDS", "30"))
-
-# NEW: safety limit when scanning jobs/<job_id>/ folders
 MAX_JOB_FOLDERS_SCAN = int(os.getenv("MAX_JOB_FOLDERS_SCAN", "50"))
+
+# Encode outputs for web playback
+ENABLE_H264_TRANSCODE = os.getenv("ENABLE_H264_TRANSCODE", "1") == "1"
 
 if not AWS_BUCKET:
     raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
@@ -89,9 +66,6 @@ FINISHED_PREFIX = f"{JOBS_PREFIX}/finished/"
 FAILED_PREFIX = f"{JOBS_PREFIX}/failed/"
 OUTPUT_PREFIX = f"{JOBS_PREFIX}/output/"
 
-# ✅ NEW: Reserved system folders under jobs/ (skip scanning as job_id folders)
-RESERVED_FOLDERS = {"pending", "processing", "finished", "failed", "output"}
-
 # MediaPipe Pose landmark indices 0–10 are face-related in Pose
 FACE_LMS = set(range(0, 11))
 
@@ -104,9 +78,7 @@ def utc_now_iso() -> str:
 
 def _require_cv_stack(context: str) -> None:
     if cv2 is None or np is None or not (mp and MP_HAS_SOLUTIONS):
-        raise RuntimeError(
-            f"{context} requires OpenCV, NumPy, and MediaPipe to be installed"
-        )
+        raise RuntimeError(f"{context} requires OpenCV, NumPy, and MediaPipe to be installed")
 
 def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     try:
@@ -116,10 +88,6 @@ def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
     return max(lo, min(hi, iv))
 
 def _hex_to_bgr(hex_color: str) -> Tuple[int, int, int]:
-    """
-    Input: '#RRGGBB' or 'RRGGBB' (case-insensitive)
-    Output: (B, G, R) for OpenCV
-    """
     if not hex_color:
         return (0, 255, 0)
     s = str(hex_color).strip()
@@ -180,15 +148,65 @@ def copy_video_in_s3(input_key: str, output_key: str) -> None:
     )
 
 def get_param(job: Dict[str, Any], key: str, default: Any = None) -> Any:
-    """
-    Read param from:
-      - job["params"][key]
-      - or job[key] (backward compatibility)
-    """
     params = job.get("params")
     if isinstance(params, dict) and key in params:
         return params.get(key)
     return job.get(key, default)
+
+
+# -----------------------------------------------------------------------------
+# NEW: ffmpeg helpers (H.264)
+# -----------------------------------------------------------------------------
+def _ffmpeg_path() -> Optional[str]:
+    # 1) system ffmpeg
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    # 2) imageio-ffmpeg (recommended in worker_requirements.txt)
+    try:
+        import imageio_ffmpeg  # type: ignore
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
+
+def transcode_to_h264(input_mp4: str) -> str:
+    """
+    Convert any mp4 (including cv2 mp4v) -> H.264 baseline-ish web-friendly.
+    No audio (-an). faststart for streaming.
+    """
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg not found. Add 'imageio-ffmpeg' to worker_requirements.txt or install ffmpeg.")
+
+    out_path = tempfile.mktemp(suffix=".mp4")
+
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i", input_mp4,
+        "-an",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        "-preset", "veryfast",
+        "-crf", "23",
+        out_path,
+    ]
+    logger.info("[ffmpeg] %s", " ".join(cmd))
+
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"ffmpeg transcode failed: {err[:800]}")
+
+    # sanity size
+    try:
+        if os.path.getsize(out_path) < 1024:
+            raise RuntimeError("ffmpeg produced too small output")
+    except Exception as e:
+        raise RuntimeError(f"ffmpeg output invalid: {e}")
+
+    return out_path
 
 
 # -----------------------------------------------------------------------------
@@ -223,17 +241,13 @@ def update_status(job: Dict[str, Any], status: str, error: Optional[str] = None)
 
 
 # -----------------------------------------------------------------------------
-# Video processing: Dots
+# Video processing: Dots (BLACK bg)
 # -----------------------------------------------------------------------------
 def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None:
-    """
-    Create Johansson dots on BLACK background.
-    NO AUDIO.
-    """
     _require_cv_stack("Johansson dots mode")
 
     input_path = download_to_temp(input_key, suffix=".mp4")
-    out_path = tempfile.mktemp(suffix=".mp4")
+    raw_out = tempfile.mktemp(suffix=".mp4")
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
@@ -252,8 +266,9 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
         height, width = frame0.shape[:2]
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
+    # mp4v is OK as intermediate, then we transcode to H.264
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+    writer = cv2.VideoWriter(raw_out, fourcc, fps, (width, height))
     if not writer.isOpened():
         cap.release()
         writer.release()
@@ -267,8 +282,9 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
         min_tracking_confidence=0.5,
     )
 
-    logger.info("[dots] start input=%s out=%s dot_radius=%s", input_path, out_path, dot_radius)
+    logger.info("[dots] start input=%s raw_out=%s dot_radius=%s", input_path, raw_out, dot_radius)
 
+    final_out = None
     try:
         with pose:
             while True:
@@ -290,24 +306,31 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
                         x = int(lm.x * w)
                         y = int(lm.y * h)
                         if 0 <= x < w and 0 <= y < h:
-                            cv2.circle(
-                                black,
-                                (x, y),
-                                int(dot_radius),
-                                (255, 255, 255),
-                                -1,
-                                lineType=cv2.LINE_8,
-                            )
+                            cv2.circle(black, (x, y), int(dot_radius), (255, 255, 255), -1, lineType=cv2.LINE_8)
 
                 writer.write(black)
 
-    finally:
         cap.release()
         writer.release()
+
+        if ENABLE_H264_TRANSCODE:
+            final_out = transcode_to_h264(raw_out)
+        else:
+            final_out = raw_out
+
+        upload_from_path(final_out, output_key, content_type="video/mp4")
+
+    finally:
         try:
-            upload_from_path(out_path, output_key)
-        finally:
-            for p in (input_path, out_path):
+            cap.release()
+        except Exception:
+            pass
+        try:
+            writer.release()
+        except Exception:
+            pass
+        for p in [input_path, raw_out, final_out]:
+            if p and os.path.exists(p):
                 try:
                     os.remove(p)
                 except OSError:
@@ -315,7 +338,7 @@ def process_dots_video(input_key: str, output_key: str, dot_radius: int) -> None
 
 
 # -----------------------------------------------------------------------------
-# Video processing: Skeleton overlay (BODY ONLY, no face)
+# Video processing: Skeleton overlay (BODY ONLY)
 # -----------------------------------------------------------------------------
 def process_skeleton_video(
     input_key: str,
@@ -323,15 +346,10 @@ def process_skeleton_video(
     skeleton_color_hex: str,
     skeleton_thickness: int,
 ) -> None:
-    """
-    Overlay skeleton on REAL video.
-    BODY ONLY: remove face lines/landmarks (0–10).
-    NO AUDIO.
-    """
     _require_cv_stack("Skeleton mode")
 
     input_path = download_to_temp(input_key, suffix=".mp4")
-    out_path = tempfile.mktemp(suffix=".mp4")
+    raw_out = tempfile.mktemp(suffix=".mp4")
 
     cap = cv2.VideoCapture(input_path)  # type: ignore[arg-type]
     if not cap.isOpened():
@@ -351,7 +369,7 @@ def process_skeleton_video(
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
+    writer = cv2.VideoWriter(raw_out, fourcc, fps, (width, height))
     if not writer.isOpened():
         cap.release()
         writer.release()
@@ -368,11 +386,9 @@ def process_skeleton_video(
         min_tracking_confidence=0.5,
     )
 
-    logger.info(
-        "[skeleton] start input=%s out=%s color=%s thickness=%s",
-        input_path, out_path, skeleton_color_hex, thickness
-    )
+    logger.info("[skeleton] start input=%s raw_out=%s color=%s thickness=%s", input_path, raw_out, skeleton_color_hex, thickness)
 
+    final_out = None
     try:
         with pose:
             while True:
@@ -408,24 +424,31 @@ def process_skeleton_video(
                         pa = lm_xy.get(a)
                         pb = lm_xy.get(b)
                         if pa and pb:
-                            cv2.line(
-                                frame,
-                                pa,
-                                pb,
-                                color_bgr,
-                                thickness,
-                                lineType=cv2.LINE_8,
-                            )
+                            cv2.line(frame, pa, pb, color_bgr, thickness, lineType=cv2.LINE_8)
 
                 writer.write(frame)
 
-    finally:
         cap.release()
         writer.release()
+
+        if ENABLE_H264_TRANSCODE:
+            final_out = transcode_to_h264(raw_out)
+        else:
+            final_out = raw_out
+
+        upload_from_path(final_out, output_key, content_type="video/mp4")
+
+    finally:
         try:
-            upload_from_path(out_path, output_key)
-        finally:
-            for p in (input_path, out_path):
+            cap.release()
+        except Exception:
+            pass
+        try:
+            writer.release()
+        except Exception:
+            pass
+        for p in [input_path, raw_out, final_out]:
+            if p and os.path.exists(p):
                 try:
                     os.remove(p)
                 except OSError:
@@ -453,13 +476,7 @@ def process_job(job_json_key: str) -> None:
     skeleton_color = str(get_param(raw_job, "skeleton_color", "#00FF00") or "#00FF00")
     skeleton_thickness = _clamp_int(get_param(raw_job, "skeleton_thickness", 2), 1, 12, 2)
 
-    logger.info(
-        "[process_job] job_id=%s mode=%s input_key=%s output_key=%s",
-        job_id,
-        mode,
-        input_key,
-        output_key,
-    )
+    logger.info("[process_job] job_id=%s mode=%s input_key=%s output_key=%s", job_id, mode, input_key, output_key)
 
     job = dict(raw_job)
     job["output_key"] = output_key
@@ -471,15 +488,8 @@ def process_job(job_json_key: str) -> None:
     try:
         if mode == "dots":
             process_dots_video(input_key, output_key, dot_radius=dot_radius)
-
         elif mode == "skeleton":
-            process_skeleton_video(
-                input_key,
-                output_key,
-                skeleton_color_hex=skeleton_color,
-                skeleton_thickness=skeleton_thickness,
-            )
-
+            process_skeleton_video(input_key, output_key, skeleton_color_hex=skeleton_color, skeleton_thickness=skeleton_thickness)
         else:
             copy_video_in_s3(input_key, output_key)
 
@@ -496,8 +506,7 @@ def process_job(job_json_key: str) -> None:
 
 
 # =============================================================================
-# NEW: Support app-maker job folders: jobs/<job_id>/job.json + status.json
-# (ADDED ONLY — legacy behavior unchanged)
+# NEW: Support job folders: jobs/<job_id>/job.json + status.json
 # =============================================================================
 def _safe_get_json(key: str) -> Optional[Dict[str, Any]]:
     try:
@@ -506,41 +515,18 @@ def _safe_get_json(key: str) -> Optional[Dict[str, Any]]:
         return None
 
 def list_job_folder_prefixes() -> List[str]:
-    """
-    Return folder prefixes: jobs/<job_id>/
-    ✅ Skip reserved system folders: jobs/pending/, jobs/finished/, jobs/output/, ...
-    """
     prefixes: List[str] = []
     try:
-        paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(
-            Bucket=AWS_BUCKET,
-            Prefix=f"{JOBS_PREFIX}/",
-            Delimiter="/",
-        ):
-            for cp in page.get("CommonPrefixes", []) or []:
-                p = cp.get("Prefix")
-                if not p or p == f"{JOBS_PREFIX}/":
-                    continue
-
-                folder_name = p.rstrip("/").split("/")[-1]
-                if folder_name in RESERVED_FOLDERS:
-                    continue
-
+        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=f"{JOBS_PREFIX}/", Delimiter="/")
+        for cp in resp.get("CommonPrefixes", []) or []:
+            p = cp.get("Prefix")
+            if p and p != f"{JOBS_PREFIX}/":
                 prefixes.append(p)
-
-                if len(prefixes) >= MAX_JOB_FOLDERS_SCAN:
-                    return prefixes
-
     except Exception as e:
         logger.exception("[list_job_folder_prefixes] %s", e)
-
-    return prefixes
+    return prefixes[:MAX_JOB_FOLDERS_SCAN]
 
 def try_claim_folder_job(job_folder_prefix: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-    """
-    If jobs/<job_id>/status.json says queued, mark processing and return (job_id, job_json)
-    """
     job_id = job_folder_prefix.rstrip("/").split("/")[-1]
     status_key = f"{job_folder_prefix}status.json"
     job_key = f"{job_folder_prefix}job.json"
@@ -554,7 +540,6 @@ def try_claim_folder_job(job_folder_prefix: str) -> Optional[Tuple[str, Dict[str
         s3_put_json(status_key, {"status": "failed", "job_id": job_id, "error": "Missing job.json", "updated_at": utc_now_iso()})
         return None
 
-    # claim
     s3_put_json(status_key, {"status": "processing", "job_id": job_id, "updated_at": utc_now_iso()})
     return job_id, job
 
@@ -593,7 +578,6 @@ def run_folder_job(job_id: str, job_folder_prefix: str, job: Dict[str, Any]) -> 
         return
 
     modes = _normalize_modes(job)
-
     dot_radius = _clamp_int(get_param(job, "dot_radius", get_param(job, "dot_px", 5)), 1, 20, 5)
     skeleton_color = str(get_param(job, "skeleton_color", "#00FF00") or "#00FF00")
     skeleton_thickness = _clamp_int(get_param(job, "skeleton_thickness", 2), 1, 12, 2)
@@ -615,7 +599,6 @@ def run_folder_job(job_id: str, job_folder_prefix: str, job: Dict[str, Any]) -> 
                 outputs["skeleton"] = out_key
 
             elif mode == "overlay":
-                # overlay = skeleton overlay but separate file name
                 out_key = _output_key_for_mode(job_folder_prefix, "overlay")
                 process_skeleton_video(input_key, out_key, skeleton_color_hex=skeleton_color, skeleton_thickness=skeleton_thickness)
                 outputs["overlay"] = out_key
@@ -650,7 +633,7 @@ def run_folder_job(job_id: str, job_folder_prefix: str, job: Dict[str, Any]) -> 
 # Main loop (Legacy first, then folder jobs)
 # -----------------------------------------------------------------------------
 def main() -> None:
-    logger.info("WORKER VERSION: final_clean_no_audio_body_only_face_removed + folder_job_support")
+    logger.info("WORKER VERSION: folder_job_support + H264_transcode=%s", ENABLE_H264_TRANSCODE)
     logger.info("====== AI People Reader Worker (No Audio) ======")
     logger.info("Using bucket : %s", AWS_BUCKET)
     logger.info("Region      : %s", AWS_REGION)
@@ -659,6 +642,7 @@ def main() -> None:
     logger.info("MP available: %s", bool(mp and MP_HAS_SOLUTIONS))
     logger.info("cv2 avail.  : %s", cv2 is not None)
     logger.info("numpy avail.: %s", np is not None)
+    logger.info("ffmpeg path : %s", _ffmpeg_path())
 
     last_heartbeat = 0.0
 
