@@ -7,6 +7,12 @@ import streamlit as st
 import boto3
 from botocore.exceptions import ClientError
 
+# OPTIONAL: ใช้เรียก Presentation Analysis API (ถ้าไม่มี requests ก็ไม่พัง)
+try:
+    import requests  # type: ignore
+except Exception:
+    requests = None  # type: ignore
+
 
 # =========================
 # Page setup
@@ -72,6 +78,12 @@ def guess_content_type(filename: str) -> str:
         return "video/x-m4v"
     if fn.endswith(".webm"):
         return "video/webm"
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    if fn.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if fn.endswith(".json"):
+        return "application/json"
     return "application/octet-stream"
 
 
@@ -117,6 +129,65 @@ def s3_key_exists(key: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# =========================
+# ✅ NEW (REPORT ONLY): Presentation Analysis integration helpers
+# =========================
+def normalize_base_url(url: str) -> str:
+    u = (url or "").strip()
+    return u[:-1] if u.endswith("/") else u
+
+
+def build_pa_ui_url(pa_base_url: str, job_id: str, lang: str) -> str:
+    # ใช้พาไปหน้า UI ของ presentation-analysis (fallback)
+    base = normalize_base_url(pa_base_url)
+    return f"{base}/?job_id={job_id}&lang={lang}"
+
+
+def try_generate_report_via_pa_api(pa_base_url: str, job_id: str, lang: str) -> dict | None:
+    """
+    พยายามเรียก API ของ Presentation Analysis เพื่อ generate report แล้วคืน key ใน S3
+    - ถ้าโปรเจกต์คุณครูมี API อยู่แล้ว -> ให้ปรับ endpoint ให้ตรง
+    - ถ้าไม่มี API -> ฟังก์ชันนี้จะคืน None (ไม่ทำให้หน้าอื่นพัง)
+    """
+    if requests is None:
+        return None
+
+    base = normalize_base_url(pa_base_url)
+
+    # ✅ คุณปรับ endpoint นี้ให้ตรงของ presentation-analysis ได้เลย
+    # ตัวอย่างที่ปลอดภัย: /api/generate_report?job_id=...&lang=...
+    endpoint = f"{base}/api/generate_report"
+
+    try:
+        r = requests.get(endpoint, params={"job_id": job_id, "lang": lang}, timeout=60)
+        if r.status_code != 200:
+            return None
+        data = r.json() if r.headers.get("content-type", "").startswith("application/json") else None
+        if not isinstance(data, dict):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def extract_report_s3_key(api_response: dict) -> str | None:
+    """
+    รองรับหลายชื่อ field เผื่อแต่ละเวอร์ชันไม่เหมือนกัน
+    """
+    for k in ["report_key", "s3_key", "output_key", "key"]:
+        v = api_response.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    outputs = api_response.get("outputs")
+    if isinstance(outputs, dict):
+        v = outputs.get("report")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    return None
 
 
 # =========================
@@ -178,19 +249,9 @@ if st.button("🚀 Submit job", disabled=(uploaded is None)):
         st.markdown("### Next")
         st.write(f"✅ ตอนนี้มี job ใน S3 แล้ว: `jobs/{job_id}/...`")
 
-        # Link ideas
-        st.markdown("**Open results (choose one):**")
-        pres_url = st.text_input(
-            "Presentation Analysis base URL (optional)",
-            value="",
-            placeholder="e.g. https://presentation-analysis.onrender.com",
-        )
-        if pres_url.strip():
-            st.link_button("Open in Presentation Analysis", f"{pres_url.rstrip('/')}/?job_id={job_id}")
-
         st.info(
             "ถ้า worker ทำงานอยู่และอ่าน jobs/<job_id>/job.json ได้ "
-            "มันจะเขียน output ลง jobs/<job_id>/output/... แล้วคุณไปเปิดดูได้ในหน้า S3 Browser"
+            "มันจะเขียน output ลง jobs/<job_id>/output/... แล้วคุณไปกดดาวน์โหลดในข้อ 2/3 ด้านล่าง"
         )
 
     except ClientError as e:
@@ -206,6 +267,10 @@ st.subheader("2) Verify job exists (read-only)")
 
 # ✅ auto-fill job ล่าสุด (ไม่กระทบ UI เดิม แค่ช่วยใส่ค่าให้)
 job_id_check = st.text_input("Job ID to check", value=st.session_state.get("last_job_id", ""))
+
+# ✅ NEW (REPORT ONLY): ตั้งค่า base URL ของ Presentation Analysis (ไม่กระทบส่วนอื่น)
+pa_default = os.getenv("PRESENTATION_ANALYSIS_URL", "https://presentation-analysis.onrender.com")
+PA_BASE_URL = st.text_input("Presentation Analysis URL (for report)", value=pa_default)
 
 if st.button("Check status.json"):
     if not job_id_check.strip():
@@ -234,26 +299,71 @@ if st.button("Check status.json"):
                         continue
 
                     out_key = out_key.strip()
+                    name_lc = str(name).lower().strip()
 
+                    # ---------- ✅ REPORT: เปลี่ยนเฉพาะตรงนี้ ----------
+                    if name_lc == "report":
+                        st.markdown("#### 📄 Report (from Presentation Analysis)")
+
+                        # ปุ่มสร้าง/ดึง report จาก presentation-analysis (TH/EN)
+                        col_th, col_en = st.columns(2)
+
+                        with col_th:
+                            if st.button("⬇️ Download report (TH)", key=f"dl_report_th_{jid}"):
+                                pa = normalize_base_url(PA_BASE_URL)
+                                api_res = try_generate_report_via_pa_api(pa, jid, "th")
+                                report_key = extract_report_s3_key(api_res) if isinstance(api_res, dict) else None
+
+                                if report_key and s3_key_exists(report_key):
+                                    fname = report_key.split("/")[-1] or "report_th.pdf"
+                                    url = presigned_get_url(
+                                        report_key,
+                                        expires=3600,
+                                        filename=fname,
+                                        content_type=guess_content_type(fname),
+                                    )
+                                    st.success("Report ready ✅")
+                                    st.link_button("Download report (TH) — file", url)
+                                else:
+                                    # fallback: ไปหน้า UI ของ presentation-analysis
+                                    st.info("ยังไม่พบ report key จาก API — เปิดหน้า Presentation Analysis เพื่อ Generate/Download")
+                                    st.link_button("Open Presentation Analysis (TH)", build_pa_ui_url(pa, jid, "th"))
+
+                        with col_en:
+                            if st.button("⬇️ Download report (EN)", key=f"dl_report_en_{jid}"):
+                                pa = normalize_base_url(PA_BASE_URL)
+                                api_res = try_generate_report_via_pa_api(pa, jid, "en")
+                                report_key = extract_report_s3_key(api_res) if isinstance(api_res, dict) else None
+
+                                if report_key and s3_key_exists(report_key):
+                                    fname = report_key.split("/")[-1] or "report_en.pdf"
+                                    url = presigned_get_url(
+                                        report_key,
+                                        expires=3600,
+                                        filename=fname,
+                                        content_type=guess_content_type(fname),
+                                    )
+                                    st.success("Report ready ✅")
+                                    st.link_button("Download report (EN) — file", url)
+                                else:
+                                    st.info("ยังไม่พบ report key จาก API — เปิดหน้า Presentation Analysis เพื่อ Generate/Download")
+                                    st.link_button("Open Presentation Analysis (EN)", build_pa_ui_url(pa, jid, "en"))
+
+                        # ข้าม loop item นี้ (ไม่ให้ใช้ presigned ของ report.json เดิม)
+                        continue
+                    # ---------- ✅ END REPORT CHANGE ----------
+
+                    # ของเดิม: overlay/dots/skeleton (อย่าแตะ)
                     if not s3_key_exists(out_key):
                         st.warning(f"Output key not found yet: {name} -> {out_key}")
                         continue
 
-                    # ✅ Force download via Content-Disposition attachment
-                    if str(name).lower() == "report":
-                        url = presigned_get_url(
-                            out_key,
-                            expires=3600,
-                            filename="report.json",
-                            content_type="application/json",
-                        )
-                    else:
-                        url = presigned_get_url(
-                            out_key,
-                            expires=3600,
-                            filename=f"{name}.mp4",
-                            content_type="video/mp4",
-                        )
+                    url = presigned_get_url(
+                        out_key,
+                        expires=3600,
+                        filename=f"{name}.mp4",
+                        content_type="video/mp4",
+                    )
 
                     label = f"⬇️ Download {name}"
                     if hasattr(st, "link_button"):
