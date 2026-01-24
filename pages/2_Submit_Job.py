@@ -68,6 +68,10 @@ def guess_content_type(filename: str) -> str:
         return "video/mp4"
     if fn.endswith(".mov"):
         return "video/quicktime"
+    if fn.endswith(".m4v"):
+        return "video/x-m4v"
+    if fn.endswith(".webm"):
+        return "video/webm"
     return "application/octet-stream"
 
 
@@ -80,6 +84,22 @@ def build_job_manifest(job_id: str, input_key: str, modes: list[str], note: str 
         "created_at": datetime.now(timezone.utc).isoformat(),
         "version": "submit-v1",
     }
+
+
+def presigned_get_url(key: str, expires: int = 3600) -> str:
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={"Bucket": AWS_BUCKET, "Key": key},
+        ExpiresIn=expires,
+    )
+
+
+def s3_key_exists(key: str) -> bool:
+    try:
+        s3.head_object(Bucket=AWS_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 # =========================
@@ -132,11 +152,14 @@ if st.button("🚀 Submit job", disabled=(uploaded is None)):
         # 3) initial status
         s3_put_json(f"jobs/{job_id}/status.json", {"status": "queued", "job_id": job_id})
 
+        # ✅ จำ job ล่าสุดไว้ auto-fill ด้านล่าง
+        st.session_state["last_job_id"] = job_id
+
         st.success("Submitted ✅")
         st.code(json.dumps(job, ensure_ascii=False, indent=2))
 
         st.markdown("### Next")
-        st.write("✅ ตอนนี้มี job ใน S3 แล้ว: `jobs/{job_id}/...`")
+        st.write(f"✅ ตอนนี้มี job ใน S3 แล้ว: `jobs/{job_id}/...`")
 
         # Link ideas
         st.markdown("**Open results (choose one):**")
@@ -164,16 +187,55 @@ if st.button("🚀 Submit job", disabled=(uploaded is None)):
 st.divider()
 st.subheader("2) Verify job exists (read-only)")
 
-job_id_check = st.text_input("Job ID to check", value="")
+# ✅ auto-fill job ล่าสุด (ไม่กระทบ UI เดิม แค่ช่วยใส่ค่าให้)
+job_id_check = st.text_input("Job ID to check", value=st.session_state.get("last_job_id", ""))
+
 if st.button("Check status.json"):
     if not job_id_check.strip():
         st.warning("Please enter job_id")
     else:
-        key = f"jobs/{job_id_check.strip()}/status.json"
+        jid = job_id_check.strip()
+        key = f"jobs/{jid}/status.json"
         try:
             obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
             data = obj["Body"].read().decode("utf-8", errors="replace")
-            st.json(json.loads(data))
+            status_obj = json.loads(data)
+
+            # ✅ แสดง status เดิม
+            st.json(status_obj)
+
+            # =========================
+            # ✅ NEW: Download buttons
+            # =========================
+            outputs = (status_obj or {}).get("outputs") or {}
+
+            if isinstance(outputs, dict) and len(outputs) > 0:
+                st.subheader("3) Downloads")
+
+                for name, out_key in outputs.items():
+                    if not isinstance(out_key, str) or not out_key.strip():
+                        continue
+
+                    out_key = out_key.strip()
+
+                    # ถ้า worker ใส่ key เป็น full s3 key แบบ "jobs/..." ใช้ได้เลย
+                    # ถ้า key ไม่มีอยู่จริง จะแจ้งเตือน
+                    if not s3_key_exists(out_key):
+                        st.warning(f"Output key not found yet: {name} -> {out_key}")
+                        continue
+
+                    url = presigned_get_url(out_key, expires=3600)
+
+                    # ปุ่มดาวน์โหลด (Streamlit v1.28+ มี link_button)
+                    label = f"⬇️ Download {name}"
+                    if hasattr(st, "link_button"):
+                        st.link_button(label, url)
+                    else:
+                        st.markdown(f"[{label}]({url})")
+
+            else:
+                st.info("ยังไม่มี outputs ใน status.json (รอ worker เขียน outputs ก่อน)")
+
         except ClientError as e:
             st.error("Cannot read status.json")
             st.exception(e)
