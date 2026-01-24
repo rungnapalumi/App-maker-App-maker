@@ -1,4 +1,5 @@
-# app.py — AI People Reader Job Manager (Johansson dots + skeleton + audio options)
+# app.py — AI People Reader Job Manager (dots + skeleton) | NO AUDIO OPTIONS
+
 import os
 import json
 import uuid
@@ -29,8 +30,9 @@ JOBS_OUTPUT_PREFIX = "jobs/output/"
 
 st.set_page_config(page_title="AI People Reader - Job Manager", layout="wide")
 
+
 # ----------------------------------------------------------
-# Helper functions
+# Helpers
 # ----------------------------------------------------------
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -53,20 +55,20 @@ def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
 
 def s3_get_json(key: str) -> Dict[str, Any]:
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
-    data = obj["Body"].read()
-    return json.loads(data.decode("utf-8"))
+    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 def create_job(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Create job:
-      - Upload input video to: jobs/pending/<job_id>/input/input.mp4
-      - Save job JSON to:      jobs/pending/<job_id>.json
-
-    IMPORTANT: We store controls as TOP-LEVEL keys (worker expects them):
-      keep_audio, dot_radius, skeleton_line_color, skeleton_line_thickness
+    Upload input to:
+      jobs/pending/<job_id>/input/input.mp4
+    Save job json to:
+      jobs/pending/<job_id>.json
+    Output expected at:
+      jobs/output/<job_id>/result.mp4
     """
     job_id = new_job_id()
+
     input_key = f"{JOBS_PENDING_PREFIX}{job_id}/input/input.mp4"
     output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
 
@@ -76,7 +78,7 @@ def create_job(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict
     job: Dict[str, Any] = {
         "job_id": job_id,
         "status": "pending",
-        "mode": mode,
+        "mode": mode,               # "dots" or "skeleton"
         "input_key": input_key,
         "output_key": output_key,
         "created_at": now,
@@ -84,7 +86,7 @@ def create_job(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict
         "error": None,
     }
 
-    # ✅ merge extra fields (top-level)
+    # top-level fields for worker
     for k, v in (job_fields or {}).items():
         job[k] = v
 
@@ -95,40 +97,34 @@ def create_job(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict
 
 def list_jobs() -> List[Dict[str, Any]]:
     all_jobs: List[Dict[str, Any]] = []
-    prefix_status_pairs = [
+    pairs = [
         (JOBS_PENDING_PREFIX, "pending"),
         (JOBS_PROCESSING_PREFIX, "processing"),
         (JOBS_FINISHED_PREFIX, "finished"),
         (JOBS_FAILED_PREFIX, "failed"),
     ]
 
-    for prefix, default_status in prefix_status_pairs:
+    for prefix, status in pairs:
         try:
             resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=prefix)
-        except ClientError as ce:
-            st.error(f"Error listing {prefix}: {ce}")
+        except ClientError as e:
+            st.error(f"List error {prefix}: {e}")
             continue
 
-        contents = resp.get("Contents")
-        if not contents:
-            continue
-
-        for obj in contents:
+        for obj in resp.get("Contents", []):
             key = obj["Key"]
             if not key.endswith(".json"):
                 continue
-
             try:
-                job = s3_get_json(key)
-            except ClientError as ce:
-                st.warning(f"Cannot read job {key}: {ce}")
+                j = s3_get_json(key)
+            except ClientError:
                 continue
 
-            job["status"] = default_status
-            job["s3_key"] = key
-            all_jobs.append(job)
+            j["status"] = status
+            j["s3_key"] = key
+            all_jobs.append(j)
 
-    all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=False)
+    all_jobs.sort(key=lambda x: x.get("created_at", ""), reverse=False)
     return all_jobs
 
 
@@ -137,60 +133,31 @@ def download_output_video(job_id: str) -> bytes:
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     return obj["Body"].read()
 
+
 # ----------------------------------------------------------
 # UI
 # ----------------------------------------------------------
-st.title("AI People Reader - Job Manager")
+st.title("AI People Reader - Job Manager (No Audio)")
 
 col_left, col_right = st.columns([1, 2])
 
-# ---------- LEFT: Create job ----------
 with col_left:
     st.header("Create New Job")
 
-    mode = st.selectbox("Mode", ["dots", "skeleton", "clear"], index=0)
+    mode = st.selectbox("Mode", ["dots", "skeleton"], index=0)
 
-    # Shared audio choice for dots + skeleton
-    st.subheader("Audio")
-    audio_choice = st.radio(
-        "Output audio",
-        options=["Keep audio (มีเสียง)", "No audio (ไม่มีเสียง)"],
-        index=0,
-        help="Keep audio: worker จะ merge เสียงจากไฟล์ต้นฉบับกลับเข้า result.mp4 (ต้องมี ffmpeg ใน worker service)",
-    )
-    keep_audio = (audio_choice == "Keep audio (มีเสียง)")
-
-    # Dots controls
     dot_radius = 5
-    if mode == "dots":
-        st.subheader("Dots settings")
-        dot_radius = st.slider(
-            "Dot size (radius px)",
-            min_value=1,
-            max_value=20,
-            value=5,
-            step=1,
-            help="ขนาดจุด Johansson (1–20 px)",
-        )
-
-    # Skeleton controls
     skeleton_color = "#00FF00"
     skeleton_thickness = 2
+
+    if mode == "dots":
+        st.subheader("Dots settings")
+        dot_radius = st.slider("Dot size (radius px)", 1, 20, 5, 1)
+
     if mode == "skeleton":
         st.subheader("Skeleton settings")
-        skeleton_color = st.color_picker(
-            "Line color",
-            value="#00FF00",
-            help="เลือกสีเส้น skeleton (default = green)",
-        )
-        skeleton_thickness = st.slider(
-            "Line thickness (px)",
-            min_value=1,
-            max_value=20,
-            value=2,
-            step=1,
-            help="ความหนาเส้น skeleton (1–20 px)",
-        )
+        skeleton_color = st.color_picker("Line color (default green)", "#00FF00")
+        skeleton_thickness = st.slider("Line thickness (px)", 1, 20, 2, 1)
 
     uploaded_file = st.file_uploader(
         "Upload video file",
@@ -202,10 +169,7 @@ with col_left:
         if not uploaded_file:
             st.warning("Please upload a video file first.")
         else:
-            file_bytes = uploaded_file.read()
-
-            # ✅ TOP-LEVEL fields (match worker.py)
-            job_fields: Dict[str, Any] = {"keep_audio": bool(keep_audio)}
+            job_fields: Dict[str, Any] = {}
 
             if mode == "dots":
                 job_fields["dot_radius"] = int(dot_radius)
@@ -214,11 +178,10 @@ with col_left:
                 job_fields["skeleton_line_color"] = str(skeleton_color)
                 job_fields["skeleton_line_thickness"] = int(skeleton_thickness)
 
-            job = create_job(file_bytes, mode, job_fields=job_fields)
+            job = create_job(uploaded_file.read(), mode, job_fields=job_fields)
             st.success(f"Created job: {job['job_id']}")
             st.json(job)
 
-# ---------- RIGHT: Job list + download ----------
 with col_right:
     st.header("Jobs")
 
@@ -229,14 +192,12 @@ with col_right:
     if not jobs:
         st.info("No jobs yet.")
     else:
-        # Show useful columns including the new options
         df = pd.DataFrame(
             [
                 {
                     "job_id": j.get("job_id"),
                     "status": j.get("status"),
                     "mode": j.get("mode"),
-                    "keep_audio": j.get("keep_audio"),
                     "dot_radius": j.get("dot_radius"),
                     "skeleton_color": j.get("skeleton_line_color"),
                     "skeleton_thickness": j.get("skeleton_line_thickness"),
@@ -252,26 +213,20 @@ with col_right:
         st.subheader("Download result video ↪")
 
         job_ids_all = [j["job_id"] for j in jobs]
-        selected_job_id = st.selectbox(
-            "Select job (will download if result.mp4 exists)",
-            job_ids_all,
-        )
+        selected_job_id = st.selectbox("Select job_id", job_ids_all)
 
         if st.button("Prepare download"):
             try:
                 data = download_output_video(selected_job_id)
             except ClientError as ce:
-                err_code = ce.response.get("Error", {}).get("Code")
-                if err_code == "NoSuchKey":
-                    st.error(
-                        "Result video for this job is not ready yet (result.mp4 not found in S3). "
-                        "Please wait a bit and refresh the job list."
-                    )
+                code = ce.response.get("Error", {}).get("Code")
+                if code == "NoSuchKey":
+                    st.error("Result not ready yet. Please wait and refresh.")
                 else:
-                    st.error(f"Cannot download result: {ce}")
+                    st.error(f"Download error: {ce}")
             else:
                 st.download_button(
-                    label="Download result.mp4",
+                    "Download result.mp4",
                     data=data,
                     file_name=f"{selected_job_id}_result.mp4",
                     mime="video/mp4",
