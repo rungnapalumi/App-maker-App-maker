@@ -86,10 +86,27 @@ def build_job_manifest(job_id: str, input_key: str, modes: list[str], note: str 
     }
 
 
-def presigned_get_url(key: str, expires: int = 3600) -> str:
+def presigned_get_url(
+    key: str,
+    expires: int = 3600,
+    filename: str | None = None,
+    content_type: str | None = None,
+) -> str:
+    """
+    ✅ Force download (not open in browser tab) by setting:
+      ResponseContentDisposition = attachment; filename="..."
+    """
+    params = {"Bucket": AWS_BUCKET, "Key": key}
+
+    if filename:
+        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+
+    if content_type:
+        params["ResponseContentType"] = content_type
+
     return s3.generate_presigned_url(
         ClientMethod="get_object",
-        Params={"Bucket": AWS_BUCKET, "Key": key},
+        Params=params,
         ExpiresIn=expires,
     )
 
@@ -120,7 +137,7 @@ with col2:
     mode_skeleton = st.checkbox("skeleton", value=False)
     mode_report = st.checkbox("report", value=False)
 
-modes = []
+modes: list[str] = []
 if mode_overlay:
     modes.append("overlay")
 if mode_dots:
@@ -205,7 +222,7 @@ if st.button("Check status.json"):
             st.json(status_obj)
 
             # =========================
-            # ✅ Download buttons (FIX: ไม่ซ่อนปุ่มด้วย head_object)
+            # ✅ Downloads (force download)
             # =========================
             outputs = (status_obj or {}).get("outputs") or {}
 
@@ -218,18 +235,31 @@ if st.button("Check status.json"):
 
                     out_key = out_key.strip()
 
-                    # ✅ แสดงปุ่มเลย (ไม่เช็ค head_object เพราะบางครั้งสิทธิ์ไม่พอแล้วปุ่มไม่ขึ้น)
-                    try:
-                        url = presigned_get_url(out_key, expires=3600)
-                        label = f"⬇️ Download {name}"
-                        if hasattr(st, "link_button"):
-                            st.link_button(label, url)
-                        else:
-                            st.markdown(f"[{label}]({url})")
-                    except Exception as e:
-                        st.error(f"Cannot create download link for {name}: {e}")
+                    if not s3_key_exists(out_key):
+                        st.warning(f"Output key not found yet: {name} -> {out_key}")
+                        continue
 
-                st.caption("ถ้ากดแล้วขึ้น NoSuchKey = ไฟล์ยังไม่ถูกอัปโหลดจริง (ต้องดู worker logs)")
+                    # ✅ Force download via Content-Disposition attachment
+                    if str(name).lower() == "report":
+                        url = presigned_get_url(
+                            out_key,
+                            expires=3600,
+                            filename="report.json",
+                            content_type="application/json",
+                        )
+                    else:
+                        url = presigned_get_url(
+                            out_key,
+                            expires=3600,
+                            filename=f"{name}.mp4",
+                            content_type="video/mp4",
+                        )
+
+                    label = f"⬇️ Download {name}"
+                    if hasattr(st, "link_button"):
+                        st.link_button(label, url)
+                    else:
+                        st.markdown(f"[{label}]({url})")
 
             else:
                 st.info("ยังไม่มี outputs ใน status.json (รอ worker เขียน outputs ก่อน)")
