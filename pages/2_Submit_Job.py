@@ -1,44 +1,85 @@
-# 2_Submit_Job.py — AI People Reader Submit Job (LEGACY-compatible)
-# ✅ เขียนงานเหมือน app.py เป๊ะ: jobs/pending/<job_id>.json + input ไป jobs/pending/<job_id>/input/input.mp4
-# ✅ ตัด report ออกก่อน เพื่อให้ dots/skeleton กลับมาทำงานเหมือนเดิม
-# ✅ ปลอดภัย: ไม่แตะ app.py หน้าแรก
+# 2_Submit_Job.py — Video Analysis (วิเคราะห์วิดีโอ)
+# Upload once -> get 4 downloads:
+#   1) Dots video
+#   2) Skeleton video
+#   3) English report
+#   4) Thai report
+#
+# IMPORTANT:
+# - This page uses the LEGACY queue that your worker already supports:
+#     jobs/pending/<job_id>.json
+#     jobs/pending/<job_id>/input/input.mp4
+#   Output expected:
+#     jobs/output/<job_id>/result.mp4
+#
+# - Reports are expected to be written somewhere in S3 by your report generator.
+#   This page just "looks for" report files and creates download links if found.
 
 import os
 import json
 import uuid
+import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, List
 
 import streamlit as st
 import boto3
 from botocore.exceptions import ClientError
 
 
-# ----------------------------------------------------------
-# Config (match app.py)
-# ----------------------------------------------------------
-AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
-AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
+# -------------------------
+# Page setup
+# -------------------------
+st.set_page_config(page_title="Video Analysis (วิเคราะห์วิดีโอ)", layout="wide")
+
+# -------------------------
+# Env / S3
+# -------------------------
+AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
+AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 
 if not AWS_BUCKET:
-    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
+    st.error("Missing AWS_BUCKET (or S3_BUCKET) environment variable in Render.")
+    st.stop()
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
 JOBS_PENDING_PREFIX = "jobs/pending/"
-JOBS_PROCESSING_PREFIX = "jobs/processing/"
-JOBS_FINISHED_PREFIX = "jobs/finished/"
-JOBS_FAILED_PREFIX = "jobs/failed/"
 JOBS_OUTPUT_PREFIX = "jobs/output/"
 
-st.set_page_config(page_title="Submit Job (Legacy)", layout="wide")
-st.title("🚀 Submit Job (Legacy-compatible)")
-st.caption("หน้านี้สร้างงานแบบเดียวกับ app.py เพื่อให้ worker ตัวเดิมอ่านคิวได้ทันที (jobs/pending/*.json)")
+# -------------------------
+# Report keys (customize if your report generator uses different paths)
+# We'll try these candidates (first found wins).
+# You can adjust without touching the rest of the logic.
+# -------------------------
+def report_candidates(group_id: str) -> Dict[str, List[str]]:
+    """
+    Return candidate S3 keys for EN/TH reports.
+    Adjust these paths to match where your system actually writes reports.
+    """
+    return {
+        "th": [
+            f"jobs/output/{group_id}/report_th.pdf",
+            f"jobs/output/{group_id}/thai_report.pdf",
+            f"jobs/output/{group_id}/report_th.docx",
+            f"jobs/output/{group_id}/thai_report.docx",
+            f"jobs/{group_id}/output/report_th.pdf",
+            f"jobs/{group_id}/output/report_th.docx",
+        ],
+        "en": [
+            f"jobs/output/{group_id}/report_en.pdf",
+            f"jobs/output/{group_id}/english_report.pdf",
+            f"jobs/output/{group_id}/report_en.docx",
+            f"jobs/output/{group_id}/english_report.docx",
+            f"jobs/{group_id}/output/report_en.pdf",
+            f"jobs/{group_id}/output/report_en.docx",
+        ],
+    }
 
 
-# ----------------------------------------------------------
-# Helpers (copy from app.py style)
-# ----------------------------------------------------------
+# -------------------------
+# Helpers
+# -------------------------
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -49,18 +90,30 @@ def new_job_id() -> str:
     return f"{ts}__{rand}"
 
 
-def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/octet-stream") -> None:
+def guess_content_type(filename: str) -> str:
+    fn = (filename or "").lower()
+    if fn.endswith(".mp4"):
+        return "video/mp4"
+    if fn.endswith(".mov"):
+        return "video/quicktime"
+    if fn.endswith(".m4v"):
+        return "video/x-m4v"
+    if fn.endswith(".webm"):
+        return "video/webm"
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    if fn.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return "application/octet-stream"
+
+
+def s3_put_bytes(key: str, data: bytes, content_type: str) -> None:
     s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType=content_type)
 
 
 def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
-
-
-def s3_get_json(key: str) -> Dict[str, Any]:
-    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
-    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 def s3_key_exists(key: str) -> bool:
@@ -72,30 +125,42 @@ def s3_key_exists(key: str) -> bool:
 
 
 def presigned_get_url(key: str, expires: int = 3600, filename: Optional[str] = None) -> str:
+    """
+    Force download with ResponseContentDisposition
+    """
     params: Dict[str, Any] = {"Bucket": AWS_BUCKET, "Key": key}
-    # บังคับให้ browser download
     if filename:
         params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
-    return s3.generate_presigned_url("get_object", Params=params, ExpiresIn=expires)
+        params["ResponseContentType"] = guess_content_type(filename)
+
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params=params,
+        ExpiresIn=expires,
+    )
 
 
-def create_job_legacy(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict[str, Any]:
+def create_legacy_job(
+    *,
+    file_bytes: bytes,
+    mode: str,
+    dot_radius: int,
+    skeleton_color: str,
+    skeleton_thickness: int,
+    note: str,
+) -> Dict[str, Any]:
     """
-    ✅ EXACT MATCH app.py
-
-    Upload input to:
-      jobs/pending/<job_id>/input/input.mp4
-    Save job json to:
-      jobs/pending/<job_id>.json
-    Output expected at:
-      jobs/output/<job_id>/result.mp4
+    LEGACY worker contract:
+      input:  jobs/pending/<job_id>/input/input.mp4
+      job:    jobs/pending/<job_id>.json
+      output: jobs/output/<job_id>/result.mp4
     """
     job_id = new_job_id()
 
     input_key = f"{JOBS_PENDING_PREFIX}{job_id}/input/input.mp4"
     output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
 
-    upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
+    s3_put_bytes(input_key, file_bytes, content_type="video/mp4")
 
     now = utc_now_iso()
     job: Dict[str, Any] = {
@@ -107,91 +172,105 @@ def create_job_legacy(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) 
         "created_at": now,
         "updated_at": now,
         "error": None,
+        "note": note or "",
     }
 
-    # top-level fields for worker
-    for k, v in (job_fields or {}).items():
-        job[k] = v
+    # mode-specific fields (match your working app.py)
+    if mode == "dots":
+        job["dot_radius"] = int(dot_radius)
+    elif mode == "skeleton":
+        job["skeleton_line_color"] = str(skeleton_color)
+        job["skeleton_line_thickness"] = int(skeleton_thickness)
 
     job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
     s3_put_json(job_json_key, job)
+
     return job
 
 
-def find_job_json_key(job_id: str) -> Optional[str]:
-    """หา job json ใน 4 โซน (pending/processing/finished/failed)"""
-    candidates = [
-        f"{JOBS_PENDING_PREFIX}{job_id}.json",
-        f"{JOBS_PROCESSING_PREFIX}{job_id}.json",
-        f"{JOBS_FINISHED_PREFIX}{job_id}.json",
-        f"{JOBS_FAILED_PREFIX}{job_id}.json",
-    ]
+def find_first_existing_key(candidates: List[str]) -> Optional[str]:
     for k in candidates:
-        if s3_key_exists(k):
+        if k and s3_key_exists(k):
             return k
     return None
 
 
-# ----------------------------------------------------------
-# UI
-# ----------------------------------------------------------
-with st.expander("🔧 Environment (read-only)", expanded=False):
-    st.write("AWS_BUCKET =", AWS_BUCKET)
-    st.write("AWS_REGION =", AWS_REGION)
+# -------------------------
+# UI (match your example layout)
+# -------------------------
+st.markdown("# Video Analysis (วิเคราะห์วิดีโอ)")
+st.markdown("Upload your video, then click **Analysis**. (อัปโหลดวิดีโอ แล้วกด Analysis)")
 
-st.subheader("1) Create job (dots / skeleton)")
+st.write("")  # spacer
 
-col1, col2 = st.columns([2, 1], vertical_alignment="top")
+uploaded = st.file_uploader(
+    "Video (MP4) (วิดีโอ MP4)",
+    type=["mp4", "mov", "m4v", "webm"],
+    accept_multiple_files=False,
+)
 
-with col1:
-    uploaded = st.file_uploader("Upload video", type=["mp4", "mov", "m4v"], accept_multiple_files=False)
-    note = st.text_input("Note (optional)", value="")
+# Keep the page simple like your example, but we still need the params:
+# (use same defaults as your working app.py)
+DEFAULT_DOT_RADIUS = 5
+DEFAULT_SKELETON_COLOR = "#00FF00"
+DEFAULT_SKELETON_THICKNESS = 2
 
-with col2:
-    mode = st.selectbox("Mode", ["dots", "skeleton"], index=0)
+# We keep note optional (hidden-ish but still there)
+note = st.text_input("Note (optional)", value="", label_visibility="collapsed", placeholder="")
 
-    dot_radius = 5
-    skeleton_color = "#00FF00"
-    skeleton_thickness = 2
+btn_col1, btn_col2 = st.columns([1, 1])
+with btn_col1:
+    analyze_clicked = st.button("Analysis (วิเคราะห์)", type="primary", disabled=(uploaded is None))
+with btn_col2:
+    reset_clicked = st.button("Reset (รีเซ็ต)")
 
-    if mode == "dots":
-        dot_radius = st.slider("Dot size (radius px)", 1, 20, 5, 1)
+if reset_clicked:
+    # wipe only this page state
+    for k in [
+        "group_id",
+        "dots_job_id",
+        "skeleton_job_id",
+        "submitted_at",
+        "last_status",
+        "last_message",
+    ]:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.rerun()
 
-    if mode == "skeleton":
-        skeleton_color = st.color_picker("Line color", "#00FF00")
-        skeleton_thickness = st.slider("Line thickness (px)", 1, 20, 2, 1)
-
-if st.button("🚀 Submit job", disabled=(uploaded is None)):
+# Submit on Analysis
+if analyze_clicked and uploaded is not None:
     try:
-        if uploaded is None:
-            st.warning("Please upload a video first.")
-            st.stop()
+        video_bytes = uploaded.getvalue()
 
-        job_fields: Dict[str, Any] = {}
+        # Create a group id (so report keys can be grouped even though dots/skeleton have their own job_id)
+        group_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
+        st.session_state["group_id"] = group_id
 
-        # ✅ match app.py field names exactly
-        if mode == "dots":
-            job_fields["dot_radius"] = int(dot_radius)
-
-        if mode == "skeleton":
-            job_fields["skeleton_line_color"] = str(skeleton_color)
-            job_fields["skeleton_line_thickness"] = int(skeleton_thickness)
-
-        # note (optional) - safe to add, worker จะ ignore ถ้าไม่ใช้
-        if note.strip():
-            job_fields["note"] = note.strip()
-
-        job = create_job_legacy(uploaded.getvalue(), mode, job_fields=job_fields)
-
-        st.session_state["last_job_id"] = job["job_id"]
-
-        st.success(f"Created job ✅  {job['job_id']}")
-        st.code(json.dumps(job, ensure_ascii=False, indent=2))
-
-        st.info(
-            "Worker จะเห็นคิวงานทันทีเพราะเขียนไปที่ "
-            f"`{JOBS_PENDING_PREFIX}<job_id>.json` เหมือนหน้า app.py"
+        # Create 2 legacy jobs: dots + skeleton
+        job_dots = create_legacy_job(
+            file_bytes=video_bytes,
+            mode="dots",
+            dot_radius=DEFAULT_DOT_RADIUS,
+            skeleton_color=DEFAULT_SKELETON_COLOR,
+            skeleton_thickness=DEFAULT_SKELETON_THICKNESS,
+            note=note,
         )
+        job_skeleton = create_legacy_job(
+            file_bytes=video_bytes,
+            mode="skeleton",
+            dot_radius=DEFAULT_DOT_RADIUS,
+            skeleton_color=DEFAULT_SKELETON_COLOR,
+            skeleton_thickness=DEFAULT_SKELETON_THICKNESS,
+            note=note,
+        )
+
+        st.session_state["dots_job_id"] = job_dots["job_id"]
+        st.session_state["skeleton_job_id"] = job_skeleton["job_id"]
+        st.session_state["submitted_at"] = utc_now_iso()
+
+        st.session_state["last_status"] = "processing"
+        st.session_state["last_message"] = "processing video (กำลังประมวลผลวิดีโอ)"
 
     except ClientError as e:
         st.error("Submit failed (S3 ClientError)")
@@ -200,45 +279,110 @@ if st.button("🚀 Submit job", disabled=(uploaded is None)):
         st.error("Submit failed")
         st.exception(e)
 
-st.divider()
-st.subheader("2) Verify job + Download output (read-only)")
+# Show processing/done + Downloads (same vibe as your example)
+group_id = st.session_state.get("group_id")
+dots_job_id = st.session_state.get("dots_job_id")
+skeleton_job_id = st.session_state.get("skeleton_job_id")
 
-job_id_check = st.text_input("Job ID to check", value=st.session_state.get("last_job_id", ""))
+if group_id and dots_job_id and skeleton_job_id:
+    st.write("")
+    st.write(st.session_state.get("last_message", "processing video (กำลังประมวลผลวิดีโอ)"))
 
-colA, colB = st.columns([1, 1], vertical_alignment="top")
+    # Check readiness (videos)
+    dots_out_key = f"{JOBS_OUTPUT_PREFIX}{dots_job_id}/result.mp4"
+    skel_out_key = f"{JOBS_OUTPUT_PREFIX}{skeleton_job_id}/result.mp4"
 
-with colA:
-    if st.button("Check job.json location"):
-        if not job_id_check.strip():
-            st.warning("Please enter job_id")
-        else:
-            jid = job_id_check.strip()
-            key = find_job_json_key(jid)
-            if not key:
-                st.error("Not found in pending/processing/finished/failed")
+    dots_ready = s3_key_exists(dots_out_key)
+    skel_ready = s3_key_exists(skel_out_key)
+
+    # Reports (optional) — find if they exist
+    rc = report_candidates(group_id)
+    report_th_key = find_first_existing_key(rc["th"])
+    report_en_key = find_first_existing_key(rc["en"])
+
+    all_ready = dots_ready and skel_ready and (report_th_key is not None) and (report_en_key is not None)
+
+    # Auto-refresh a little (without being too aggressive)
+    # If not ready, give a "check again" button like your “check output” flow.
+    check_col1, check_col2 = st.columns([1, 1])
+    with check_col1:
+        check_now = st.button("Check output (ตรวจผลอีกครั้ง)")
+    with check_col2:
+        st.caption(f"Group ID: `{group_id}`")
+
+    if check_now:
+        st.rerun()
+
+    if all_ready:
+        st.success("Done. Download your files below. (เสร็จแล้ว ดาวน์โหลดไฟล์ได้ด้านล่าง)")
+        st.session_state["last_message"] = "Done. Download your files below. (เสร็จแล้ว ดาวน์โหลดไฟล์ได้ด้านล่าง)"
+    else:
+        st.info("processing video (กำลังประมวลผลวิดีโอ)")
+
+    st.markdown("## Downloads (ดาวน์โหลด)")
+
+    d1, d2 = st.columns(2)
+
+    # 1) Dots video
+    with d1:
+        if dots_ready:
+            url = presigned_get_url(dots_out_key, filename=f"{dots_job_id}_dots.mp4")
+            if hasattr(st, "link_button"):
+                st.link_button("Download: Processed VDO for dots (วิดีโอประมวลผลสำหรับจุด)", url)
             else:
-                st.success(f"Found ✅  {key}")
-                try:
-                    st.json(s3_get_json(key))
-                except Exception:
-                    st.warning("Found key but cannot parse JSON (unexpected format)")
-
-with colB:
-    if st.button("Check output + create download link"):
-        if not job_id_check.strip():
-            st.warning("Please enter job_id")
+                st.markdown(f"[Download: Processed VDO for dots (วิดีโอประมวลผลสำหรับจุด)]({url})")
         else:
-            jid = job_id_check.strip()
-            out_key = f"{JOBS_OUTPUT_PREFIX}{jid}/result.mp4"
+            st.button(
+                "Download: Processed VDO for dots (วิดีโอประมวลผลสำหรับจุด)",
+                disabled=True,
+            )
 
-            if not s3_key_exists(out_key):
-                st.info("Output not ready yet: jobs/output/<job_id>/result.mp4 ยังไม่มา")
+    # 2) Skeleton video
+    with d2:
+        if skel_ready:
+            url = presigned_get_url(skel_out_key, filename=f"{skeleton_job_id}_skeleton.mp4")
+            if hasattr(st, "link_button"):
+                st.link_button("Download: Processed VDO for skeleton (วิดีโอประมวลผลสำหรับโครงกระดูก)", url)
             else:
-                url = presigned_get_url(out_key, expires=3600, filename=f"{jid}_result.mp4")
-                st.success("Output ready ✅")
-                if hasattr(st, "link_button"):
-                    st.link_button("⬇️ Download result.mp4", url)
-                else:
-                    st.markdown(f"[⬇️ Download result.mp4]({url})")
+                st.markdown(f"[Download: Processed VDO for skeleton (วิดีโอประมวลผลสำหรับโครงกระดูก)]({url})")
+        else:
+            st.button(
+                "Download: Processed VDO for skeleton (วิดีโอประมวลผลสำหรับโครงกระดูก)",
+                disabled=True,
+            )
 
-st.caption("หมายเหตุ: หน้านี้ intentionally ไม่ยุ่ง status.json แบบใหม่ และไม่มี report เพื่อกันพัง")
+    d3, d4 = st.columns(2)
+
+    # 3) Thai report
+    with d3:
+        if report_th_key:
+            fname = report_th_key.split("/")[-1] or "thai_report.pdf"
+            url = presigned_get_url(report_th_key, filename=fname)
+            if hasattr(st, "link_button"):
+                st.link_button("Download: Thai Report (รายงานภาษาไทย)", url)
+            else:
+                st.markdown(f"[Download: Thai Report (รายงานภาษาไทย)]({url})")
+        else:
+            st.button("Download: Thai Report (รายงานภาษาไทย)", disabled=True)
+
+    # 4) English report
+    with d4:
+        if report_en_key:
+            fname = report_en_key.split("/")[-1] or "english_report.pdf"
+            url = presigned_get_url(report_en_key, filename=fname)
+            if hasattr(st, "link_button"):
+                st.link_button("Download: English Report (รายงานภาษาอังกฤษ)", url)
+            else:
+                st.markdown(f"[Download: English Report (รายงานภาษาอังกฤษ)]({url})")
+        else:
+            st.button("Download: English Report (รายงานภาษาอังกฤษ)", disabled=True)
+
+    st.write("")
+    st.caption(
+        "หมายเหตุ: หน้านี้ intentionally ใช้ legacy queue (jobs/pending/*.json) เพื่อให้ dots/skeleton กลับมาทำงานเหมือนเดิม "
+        "และจะโชว์ปุ่ม report ก็ต่อเมื่อไฟล์ report ถูกเขียนลง S3 ตาม path ที่กำหนดไว้ในโค้ด"
+    )
+
+else:
+    # initial empty state — keep simple like your example
+    st.write("")
