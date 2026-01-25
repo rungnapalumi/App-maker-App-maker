@@ -1,99 +1,66 @@
+# 2_Submit_Job.py — AI People Reader Submit Job (LEGACY-compatible)
+# ✅ เขียนงานเหมือน app.py เป๊ะ: jobs/pending/<job_id>.json + input ไป jobs/pending/<job_id>/input/input.mp4
+# ✅ ตัด report ออกก่อน เพื่อให้ dots/skeleton กลับมาทำงานเหมือนเดิม
+# ✅ ปลอดภัย: ไม่แตะ app.py หน้าแรก
+
 import os
-import io
 import json
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import boto3
 from botocore.exceptions import ClientError
 
-# =========================
-# Page setup
-# =========================
-st.set_page_config(page_title="Submit Job (Legacy)", layout="wide")
-st.title("🚀 Submit Job (Legacy) — dots / skeleton / overlay (NO REPORT)")
 
-st.caption(
-    "โหมดนี้ใช้ legacy queue แบบเดิม: เขียน jobs/pending/<job_id>.json ให้ worker ตัวเดิมหยิบงานได้ทันที"
-)
-
-# =========================
-# Env
-# =========================
-AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
-AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-
-with st.expander("🔧 Environment (read-only)", expanded=False):
-    st.write("AWS_BUCKET =", AWS_BUCKET)
-    st.write("AWS_REGION =", AWS_REGION)
+# ----------------------------------------------------------
+# Config (match app.py)
+# ----------------------------------------------------------
+AWS_BUCKET = os.environ.get("AWS_BUCKET") or os.environ.get("S3_BUCKET")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
 
 if not AWS_BUCKET:
-    st.error("Missing AWS_BUCKET (or S3_BUCKET) environment variable in Render.")
-    st.stop()
+    raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-# session state
-if "last_job_id" not in st.session_state:
-    st.session_state["last_job_id"] = ""
-if "download_urls" not in st.session_state:
-    st.session_state["download_urls"] = {}  # job_id -> {label:url}
+JOBS_PENDING_PREFIX = "jobs/pending/"
+JOBS_PROCESSING_PREFIX = "jobs/processing/"
+JOBS_FINISHED_PREFIX = "jobs/finished/"
+JOBS_FAILED_PREFIX = "jobs/failed/"
+JOBS_OUTPUT_PREFIX = "jobs/output/"
+
+st.set_page_config(page_title="Submit Job (Legacy)", layout="wide")
+st.title("🚀 Submit Job (Legacy-compatible)")
+st.caption("หน้านี้สร้างงานแบบเดียวกับ app.py เพื่อให้ worker ตัวเดิมอ่านคิวได้ทันที (jobs/pending/*.json)")
 
 
-# =========================
-# Helpers
-# =========================
+# ----------------------------------------------------------
+# Helpers (copy from app.py style)
+# ----------------------------------------------------------
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def new_job_id() -> str:
-    """
-    ✅ match old worker pattern: YYYYMMDD_HHMMSS__xxxxx
-    """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:5]
     return f"{ts}__{rand}"
 
 
-def safe_filename(name: str) -> str:
-    n = (name or "").strip().replace("\\", "/").split("/")[-1]
-    keep = []
-    for ch in n:
-        if ch.isalnum() or ch in ("-", "_", ".", " "):
-            keep.append(ch)
-    n2 = "".join(keep).strip().replace(" ", "_")
-    return n2 or "input.mp4"
+def upload_bytes_to_s3(data: bytes, key: str, content_type: str = "application/octet-stream") -> None:
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType=content_type)
 
 
-def guess_content_type(filename: str) -> str:
-    fn = (filename or "").lower()
-    if fn.endswith(".mp4"):
-        return "video/mp4"
-    if fn.endswith(".mov"):
-        return "video/quicktime"
-    if fn.endswith(".m4v"):
-        return "video/x-m4v"
-    if fn.endswith(".webm"):
-        return "video/webm"
-    if fn.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
+def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=body, ContentType="application/json")
 
 
-def s3_put_json(key: str, obj: dict):
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=key,
-        Body=json.dumps(obj, ensure_ascii=False).encode("utf-8"),
-        ContentType="application/json",
-    )
-
-
-def s3_put_bytes(key: str, data: bytes, content_type: str):
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=key,
-        Body=data,
-        ContentType=content_type,
-    )
+def s3_get_json(key: str) -> Dict[str, Any]:
+    obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
+    return json.loads(obj["Body"].read().decode("utf-8"))
 
 
 def s3_key_exists(key: str) -> bool:
@@ -104,122 +71,127 @@ def s3_key_exists(key: str) -> bool:
         return False
 
 
-def presigned_get_url(
-    key: str,
-    expires: int = 3600,
-    filename: str | None = None,
-    content_type: str | None = None,
-) -> str:
-    params = {"Bucket": AWS_BUCKET, "Key": key}
+def presigned_get_url(key: str, expires: int = 3600, filename: Optional[str] = None) -> str:
+    params: Dict[str, Any] = {"Bucket": AWS_BUCKET, "Key": key}
+    # บังคับให้ browser download
     if filename:
         params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
-    if content_type:
-        params["ResponseContentType"] = content_type
-
-    return s3.generate_presigned_url(
-        ClientMethod="get_object",
-        Params=params,
-        ExpiresIn=expires,
-    )
+    return s3.generate_presigned_url("get_object", Params=params, ExpiresIn=expires)
 
 
-def list_output_files(job_id: str) -> list[str]:
+def create_job_legacy(file_bytes: bytes, mode: str, job_fields: Dict[str, Any]) -> Dict[str, Any]:
     """
-    ✅ สแกน output แบบเดิม: jobs/<job_id>/output/
-    ใช้แทน status.json ในกรณี worker ไม่อัปเดต status
+    ✅ EXACT MATCH app.py
+
+    Upload input to:
+      jobs/pending/<job_id>/input/input.mp4
+    Save job json to:
+      jobs/pending/<job_id>.json
+    Output expected at:
+      jobs/output/<job_id>/result.mp4
     """
-    prefix = f"jobs/{job_id}/output/"
-    keys: list[str] = []
-    try:
-        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=prefix)
-        for it in resp.get("Contents", []) or []:
-            k = it.get("Key")
-            if isinstance(k, str) and k.endswith("/") is False:
-                keys.append(k)
-    except Exception:
-        pass
-    return keys
+    job_id = new_job_id()
+
+    input_key = f"{JOBS_PENDING_PREFIX}{job_id}/input/input.mp4"
+    output_key = f"{JOBS_OUTPUT_PREFIX}{job_id}/result.mp4"
+
+    upload_bytes_to_s3(file_bytes, input_key, content_type="video/mp4")
+
+    now = utc_now_iso()
+    job: Dict[str, Any] = {
+        "job_id": job_id,
+        "status": "pending",
+        "mode": mode,  # "dots" or "skeleton"
+        "input_key": input_key,
+        "output_key": output_key,
+        "created_at": now,
+        "updated_at": now,
+        "error": None,
+    }
+
+    # top-level fields for worker
+    for k, v in (job_fields or {}).items():
+        job[k] = v
+
+    job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
+    s3_put_json(job_json_key, job)
+    return job
 
 
-def build_downloads_from_keys(job_id: str, keys: list[str]) -> dict[str, str]:
-    """
-    สร้าง label->url จากไฟล์ที่เจอใน output
-    """
-    out: dict[str, str] = {}
-    for k in keys:
-        fname = k.split("/")[-1] or "output"
-        ctype = guess_content_type(fname)
-        url = presigned_get_url(k, expires=3600, filename=fname, content_type=ctype)
-        label = f"⬇️ Download {fname}"
-        out[label] = url
-    return out
+def find_job_json_key(job_id: str) -> Optional[str]:
+    """หา job json ใน 4 โซน (pending/processing/finished/failed)"""
+    candidates = [
+        f"{JOBS_PENDING_PREFIX}{job_id}.json",
+        f"{JOBS_PROCESSING_PREFIX}{job_id}.json",
+        f"{JOBS_FINISHED_PREFIX}{job_id}.json",
+        f"{JOBS_FAILED_PREFIX}{job_id}.json",
+    ]
+    for k in candidates:
+        if s3_key_exists(k):
+            return k
+    return None
 
 
-# =========================
-# UI: Submit
-# =========================
-st.subheader("1) Upload video + submit (legacy queue)")
+# ----------------------------------------------------------
+# UI
+# ----------------------------------------------------------
+with st.expander("🔧 Environment (read-only)", expanded=False):
+    st.write("AWS_BUCKET =", AWS_BUCKET)
+    st.write("AWS_REGION =", AWS_REGION)
 
-col1, col2 = st.columns([2, 1])
+st.subheader("1) Create job (dots / skeleton)")
+
+col1, col2 = st.columns([2, 1], vertical_alignment="top")
 
 with col1:
-    uploaded = st.file_uploader("Upload video", type=["mp4", "mov", "m4v", "webm"])
+    uploaded = st.file_uploader("Upload video", type=["mp4", "mov", "m4v"], accept_multiple_files=False)
     note = st.text_input("Note (optional)", value="")
 
 with col2:
-    st.markdown("### Modes (legacy)")
-    mode_overlay = st.checkbox("overlay", value=True)
-    mode_dots = st.checkbox("dots", value=False)
-    mode_skeleton = st.checkbox("skeleton", value=False)
+    mode = st.selectbox("Mode", ["dots", "skeleton"], index=0)
 
-modes: list[str] = []
-if mode_overlay:
-    modes.append("overlay")
-if mode_dots:
-    modes.append("dots")
-if mode_skeleton:
-    modes.append("skeleton")
+    dot_radius = 5
+    skeleton_color = "#00FF00"
+    skeleton_thickness = 2
 
-if len(modes) == 0:
-    st.warning("เลือกอย่างน้อย 1 mode (overlay / dots / skeleton)")
+    if mode == "dots":
+        dot_radius = st.slider("Dot size (radius px)", 1, 20, 5, 1)
 
-st.caption("Submit จะเขียน jobs/pending/<job_id>.json (legacy) ให้ worker ตัวเดิมหยิบงาน")
+    if mode == "skeleton":
+        skeleton_color = st.color_picker("Line color", "#00FF00")
+        skeleton_thickness = st.slider("Line thickness (px)", 1, 20, 2, 1)
 
-if st.button("🚀 Submit job", disabled=(uploaded is None or len(modes) == 0)):
+if st.button("🚀 Submit job", disabled=(uploaded is None)):
     try:
-        job_id = new_job_id()
+        if uploaded is None:
+            st.warning("Please upload a video first.")
+            st.stop()
 
-        filename = safe_filename(uploaded.name if uploaded else "input.mp4")
-        content_type = guess_content_type(filename)
+        job_fields: Dict[str, Any] = {}
 
-        # 1) upload input
-        input_key = f"jobs/{job_id}/input/{filename}"
-        s3_put_bytes(input_key, uploaded.getvalue(), content_type=content_type)
+        # ✅ match app.py field names exactly
+        if mode == "dots":
+            job_fields["dot_radius"] = int(dot_radius)
 
-        # 2) write status.json (หน้า UI จะอ่าน)
-        s3_put_json(f"jobs/{job_id}/status.json", {"status": "queued", "job_id": job_id})
+        if mode == "skeleton":
+            job_fields["skeleton_line_color"] = str(skeleton_color)
+            job_fields["skeleton_line_thickness"] = int(skeleton_thickness)
 
-        # 3) ✅ legacy pending file (สิ่งที่ worker เก่าหยิบ)
-        # ใส่ field ให้กว้าง ๆ เผื่อ worker รุ่นต่างกัน (unknown fields worker ignore)
-        pending_payload = {
-            "job_id": job_id,
-            "input_key": input_key,
-            "modes": modes,
-            "note": note,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            # compatibility helpers (บางเวอร์ชันชอบมี job_key)
-            "job_key": f"jobs/{job_id}/job.json",
-        }
-        s3_put_json(f"jobs/pending/{job_id}.json", pending_payload)
+        # note (optional) - safe to add, worker จะ ignore ถ้าไม่ใช้
+        if note.strip():
+            job_fields["note"] = note.strip()
 
-        # 4) optional job.json (บางเวอร์ชันใช้, บางเวอร์ชันไม่ใช้)
-        s3_put_json(f"jobs/{job_id}/job.json", pending_payload)
+        job = create_job_legacy(uploaded.getvalue(), mode, job_fields=job_fields)
 
-        st.session_state["last_job_id"] = job_id
-        st.success("Submitted ✅ (legacy pending written)")
-        st.code(json.dumps(pending_payload, ensure_ascii=False, indent=2))
+        st.session_state["last_job_id"] = job["job_id"]
 
-        st.info(f"Legacy queue file: jobs/pending/{job_id}.json")
+        st.success(f"Created job ✅  {job['job_id']}")
+        st.code(json.dumps(job, ensure_ascii=False, indent=2))
+
+        st.info(
+            "Worker จะเห็นคิวงานทันทีเพราะเขียนไปที่ "
+            f"`{JOBS_PENDING_PREFIX}<job_id>.json` เหมือนหน้า app.py"
+        )
 
     except ClientError as e:
         st.error("Submit failed (S3 ClientError)")
@@ -228,46 +200,45 @@ if st.button("🚀 Submit job", disabled=(uploaded is None or len(modes) == 0)):
         st.error("Submit failed")
         st.exception(e)
 
-
 st.divider()
-st.subheader("2) Verify job + downloads (read-only)")
+st.subheader("2) Verify job + Download output (read-only)")
 
 job_id_check = st.text_input("Job ID to check", value=st.session_state.get("last_job_id", ""))
 
-# show saved links (ไม่หายตอน rerun)
-jid = (job_id_check or "").strip()
-if jid and jid in st.session_state["download_urls"] and st.session_state["download_urls"][jid]:
-    st.subheader("Downloads (saved links)")
-    for label, url in st.session_state["download_urls"][jid].items():
-        st.link_button(label, url)
+colA, colB = st.columns([1, 1], vertical_alignment="top")
 
-if st.button("Check now"):
-    if not jid:
-        st.warning("Please enter job_id")
-    else:
-        # 1) try show status.json if exists
-        status_key = f"jobs/{jid}/status.json"
-        if s3_key_exists(status_key):
-            try:
-                obj = s3.get_object(Bucket=AWS_BUCKET, Key=status_key)
-                data = obj["Body"].read().decode("utf-8", errors="replace")
-                status_obj = json.loads(data)
-                st.markdown("### status.json")
-                st.json(status_obj)
-            except Exception as e:
-                st.warning("อ่าน status.json ไม่สำเร็จ แต่จะสแกน output ให้แทน")
+with colA:
+    if st.button("Check job.json location"):
+        if not job_id_check.strip():
+            st.warning("Please enter job_id")
         else:
-            st.info("ไม่พบ status.json (ไม่เป็นไร) — จะสแกน output ให้แทน")
+            jid = job_id_check.strip()
+            key = find_job_json_key(jid)
+            if not key:
+                st.error("Not found in pending/processing/finished/failed")
+            else:
+                st.success(f"Found ✅  {key}")
+                try:
+                    st.json(s3_get_json(key))
+                except Exception:
+                    st.warning("Found key but cannot parse JSON (unexpected format)")
 
-        # 2) ✅ scan output folder (ของจริง)
-        out_keys = list_output_files(jid)
-        if not out_keys:
-            st.info("ยังไม่พบไฟล์ใน jobs/<job_id>/output/ (ยังไม่ออก หรือ worker ยังไม่หยิบงาน)")
+with colB:
+    if st.button("Check output + create download link"):
+        if not job_id_check.strip():
+            st.warning("Please enter job_id")
         else:
-            st.success(f"พบ output {len(out_keys)} file(s) ✅")
-            urls = build_downloads_from_keys(jid, out_keys)
-            st.session_state["download_urls"][jid] = urls  # save links
+            jid = job_id_check.strip()
+            out_key = f"{JOBS_OUTPUT_PREFIX}{jid}/result.mp4"
 
-            st.subheader("Downloads")
-            for label, url in urls.items():
-                st.link_button(label, url)
+            if not s3_key_exists(out_key):
+                st.info("Output not ready yet: jobs/output/<job_id>/result.mp4 ยังไม่มา")
+            else:
+                url = presigned_get_url(out_key, expires=3600, filename=f"{jid}_result.mp4")
+                st.success("Output ready ✅")
+                if hasattr(st, "link_button"):
+                    st.link_button("⬇️ Download result.mp4", url)
+                else:
+                    st.markdown(f"[⬇️ Download result.mp4]({url})")
+
+st.caption("หมายเหตุ: หน้านี้ intentionally ไม่ยุ่ง status.json แบบใหม่ และไม่มี report เพื่อกันพัง")
