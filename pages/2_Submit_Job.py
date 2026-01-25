@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import uuid
 from datetime import datetime, timezone
@@ -7,21 +8,14 @@ import streamlit as st
 import boto3
 from botocore.exceptions import ClientError
 
-# OPTIONAL: ใช้เรียก Presentation Analysis API (ถ้าไม่มี requests ก็ไม่พัง)
-try:
-    import requests  # type: ignore
-except Exception:
-    requests = None  # type: ignore
-
-
 # =========================
 # Page setup
 # =========================
-st.set_page_config(page_title="Submit Job (S3)", layout="wide")
-st.title("🚀 Submit Job to S3 (Safe / Separate Page)")
+st.set_page_config(page_title="Submit Job (Legacy)", layout="wide")
+st.title("🚀 Submit Job (Legacy) — dots / skeleton / overlay (NO REPORT)")
 
 st.caption(
-    "หน้านี้เป็นหน้าใหม่แยกจาก app.py เดิม: ทำแค่อัปโหลด + สร้าง job.json/status.json ใน S3 (ไม่ยุ่งโค้ดเดิม)"
+    "โหมดนี้ใช้ legacy queue แบบเดิม: เขียน jobs/pending/<job_id>.json ให้ worker ตัวเดิมหยิบงานได้ทันที"
 )
 
 # =========================
@@ -40,13 +34,11 @@ if not AWS_BUCKET:
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 
-# session keys
+# session state
 if "last_job_id" not in st.session_state:
     st.session_state["last_job_id"] = ""
 if "download_urls" not in st.session_state:
-    st.session_state["download_urls"] = {}  # dict[str, dict[str, str]]  job_id -> {label:url}
-if "report_urls" not in st.session_state:
-    st.session_state["report_urls"] = {}     # dict[str, dict[str, str]]  job_id -> {TH:url, EN:url}
+    st.session_state["download_urls"] = {}  # job_id -> {label:url}
 
 
 # =========================
@@ -54,8 +46,7 @@ if "report_urls" not in st.session_state:
 # =========================
 def new_job_id() -> str:
     """
-    ✅ IMPORTANT: match the OLD worker expectation:
-       YYYYMMDD_HHMMSS__xxxxx  (double underscore)
+    ✅ match old worker pattern: YYYYMMDD_HHMMSS__xxxxx
     """
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:5]
@@ -64,13 +55,27 @@ def new_job_id() -> str:
 
 def safe_filename(name: str) -> str:
     n = (name or "").strip().replace("\\", "/").split("/")[-1]
-    # กันชื่อแปลก ๆ
     keep = []
     for ch in n:
         if ch.isalnum() or ch in ("-", "_", ".", " "):
             keep.append(ch)
     n2 = "".join(keep).strip().replace(" ", "_")
     return n2 or "input.mp4"
+
+
+def guess_content_type(filename: str) -> str:
+    fn = (filename or "").lower()
+    if fn.endswith(".mp4"):
+        return "video/mp4"
+    if fn.endswith(".mov"):
+        return "video/quicktime"
+    if fn.endswith(".m4v"):
+        return "video/x-m4v"
+    if fn.endswith(".webm"):
+        return "video/webm"
+    if fn.endswith(".json"):
+        return "application/json"
+    return "application/octet-stream"
 
 
 def s3_put_json(key: str, obj: dict):
@@ -91,34 +96,12 @@ def s3_put_bytes(key: str, data: bytes, content_type: str):
     )
 
 
-def guess_content_type(filename: str) -> str:
-    fn = (filename or "").lower()
-    if fn.endswith(".mp4"):
-        return "video/mp4"
-    if fn.endswith(".mov"):
-        return "video/quicktime"
-    if fn.endswith(".m4v"):
-        return "video/x-m4v"
-    if fn.endswith(".webm"):
-        return "video/webm"
-    if fn.endswith(".pdf"):
-        return "application/pdf"
-    if fn.endswith(".docx"):
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    if fn.endswith(".json"):
-        return "application/json"
-    return "application/octet-stream"
-
-
-def build_job_manifest(job_id: str, input_key: str, modes: list[str], note: str = "") -> dict:
-    return {
-        "job_id": job_id,
-        "input_key": input_key,
-        "modes": modes,
-        "note": note,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "version": "submit-v2-legacy-compatible",
-    }
+def s3_key_exists(key: str) -> bool:
+    try:
+        s3.head_object(Bucket=AWS_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def presigned_get_url(
@@ -127,12 +110,7 @@ def presigned_get_url(
     filename: str | None = None,
     content_type: str | None = None,
 ) -> str:
-    """
-    ✅ Force download (not open in browser tab) by setting:
-      ResponseContentDisposition = attachment; filename="..."
-    """
     params = {"Bucket": AWS_BUCKET, "Key": key}
-
     if filename:
         params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
     if content_type:
@@ -145,64 +123,42 @@ def presigned_get_url(
     )
 
 
-def s3_key_exists(key: str) -> bool:
+def list_output_files(job_id: str) -> list[str]:
+    """
+    ✅ สแกน output แบบเดิม: jobs/<job_id>/output/
+    ใช้แทน status.json ในกรณี worker ไม่อัปเดต status
+    """
+    prefix = f"jobs/{job_id}/output/"
+    keys: list[str] = []
     try:
-        s3.head_object(Bucket=AWS_BUCKET, Key=key)
-        return True
+        resp = s3.list_objects_v2(Bucket=AWS_BUCKET, Prefix=prefix)
+        for it in resp.get("Contents", []) or []:
+            k = it.get("Key")
+            if isinstance(k, str) and k.endswith("/") is False:
+                keys.append(k)
     except Exception:
-        return False
+        pass
+    return keys
 
 
-# =========================
-# ✅ NEW (REPORT ONLY): Presentation Analysis integration helpers
-# =========================
-def normalize_base_url(url: str) -> str:
-    u = (url or "").strip()
-    return u[:-1] if u.endswith("/") else u
-
-
-def build_pa_ui_url(pa_base_url: str, job_id: str, lang: str) -> str:
-    base = normalize_base_url(pa_base_url)
-    return f"{base}/?job_id={job_id}&lang={lang}"
-
-
-def try_generate_report_via_pa_api(pa_base_url: str, job_id: str, lang: str) -> dict | None:
-    if requests is None:
-        return None
-
-    base = normalize_base_url(pa_base_url)
-    endpoint = f"{base}/api/generate_report"
-
-    try:
-        r = requests.get(endpoint, params={"job_id": job_id, "lang": lang}, timeout=60)
-        if r.status_code != 200:
-            return None
-        if not r.headers.get("content-type", "").startswith("application/json"):
-            return None
-        data = r.json()
-        return data if isinstance(data, dict) else None
-    except Exception:
-        return None
-
-
-def extract_report_s3_key(api_response: dict) -> str | None:
-    for k in ["report_key", "s3_key", "output_key", "key"]:
-        v = api_response.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-
-    outputs = api_response.get("outputs")
-    if isinstance(outputs, dict):
-        v = outputs.get("report")
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-    return None
+def build_downloads_from_keys(job_id: str, keys: list[str]) -> dict[str, str]:
+    """
+    สร้าง label->url จากไฟล์ที่เจอใน output
+    """
+    out: dict[str, str] = {}
+    for k in keys:
+        fname = k.split("/")[-1] or "output"
+        ctype = guess_content_type(fname)
+        url = presigned_get_url(k, expires=3600, filename=fname, content_type=ctype)
+        label = f"⬇️ Download {fname}"
+        out[label] = url
+    return out
 
 
 # =========================
 # UI: Submit
 # =========================
-st.subheader("1) Upload video + create job.json")
+st.subheader("1) Upload video + submit (legacy queue)")
 
 col1, col2 = st.columns([2, 1])
 
@@ -211,11 +167,10 @@ with col1:
     note = st.text_input("Note (optional)", value="")
 
 with col2:
-    st.markdown("### Modes to request")
+    st.markdown("### Modes (legacy)")
     mode_overlay = st.checkbox("overlay", value=True)
     mode_dots = st.checkbox("dots", value=False)
     mode_skeleton = st.checkbox("skeleton", value=False)
-    mode_report = st.checkbox("report", value=False)
 
 modes: list[str] = []
 if mode_overlay:
@@ -224,56 +179,47 @@ if mode_dots:
     modes.append("dots")
 if mode_skeleton:
     modes.append("skeleton")
-if mode_report:
-    modes.append("report")
 
-st.caption("modes จะถูกเขียนลง jobs/<job_id>/job.json เพื่อให้ worker อ่านไปทำงาน")
+if len(modes) == 0:
+    st.warning("เลือกอย่างน้อย 1 mode (overlay / dots / skeleton)")
 
-# ✅ สำคัญ: ให้ worker เดิมที่ scan jobs/pending ทำงานได้
-write_legacy_pending = st.checkbox(
-    "✅ Also write legacy pending file (jobs/pending/<job_id>.json)",
-    value=True
-)
+st.caption("Submit จะเขียน jobs/pending/<job_id>.json (legacy) ให้ worker ตัวเดิมหยิบงาน")
 
-if st.button("🚀 Submit job", disabled=(uploaded is None)):
+if st.button("🚀 Submit job", disabled=(uploaded is None or len(modes) == 0)):
     try:
         job_id = new_job_id()
 
         filename = safe_filename(uploaded.name if uploaded else "input.mp4")
         content_type = guess_content_type(filename)
 
-        # 1) upload input video to S3
+        # 1) upload input
         input_key = f"jobs/{job_id}/input/{filename}"
-        video_bytes = uploaded.getvalue()
-        s3_put_bytes(input_key, video_bytes, content_type=content_type)
+        s3_put_bytes(input_key, uploaded.getvalue(), content_type=content_type)
 
-        # 2) write job manifest
-        job = build_job_manifest(job_id, input_key, modes=modes, note=note)
-        s3_put_json(f"jobs/{job_id}/job.json", job)
-
-        # 3) initial status
+        # 2) write status.json (หน้า UI จะอ่าน)
         s3_put_json(f"jobs/{job_id}/status.json", {"status": "queued", "job_id": job_id})
 
-        # 4) legacy pending (for OLD worker)
-        if write_legacy_pending:
-            legacy_pending_key = f"jobs/pending/{job_id}.json"
-            legacy_payload = {
-                "job_id": job_id,
-                "job_key": f"jobs/{job_id}/job.json",
-                "input_key": input_key,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            s3_put_json(legacy_pending_key, legacy_payload)
+        # 3) ✅ legacy pending file (สิ่งที่ worker เก่าหยิบ)
+        # ใส่ field ให้กว้าง ๆ เผื่อ worker รุ่นต่างกัน (unknown fields worker ignore)
+        pending_payload = {
+            "job_id": job_id,
+            "input_key": input_key,
+            "modes": modes,
+            "note": note,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            # compatibility helpers (บางเวอร์ชันชอบมี job_key)
+            "job_key": f"jobs/{job_id}/job.json",
+        }
+        s3_put_json(f"jobs/pending/{job_id}.json", pending_payload)
+
+        # 4) optional job.json (บางเวอร์ชันใช้, บางเวอร์ชันไม่ใช้)
+        s3_put_json(f"jobs/{job_id}/job.json", pending_payload)
 
         st.session_state["last_job_id"] = job_id
+        st.success("Submitted ✅ (legacy pending written)")
+        st.code(json.dumps(pending_payload, ensure_ascii=False, indent=2))
 
-        st.success("Submitted ✅")
-        st.code(json.dumps(job, ensure_ascii=False, indent=2))
-        if write_legacy_pending:
-            st.info(f"Wrote legacy pending: jobs/pending/{job_id}.json")
-
-        st.markdown("### Next")
-        st.write(f"✅ ตอนนี้มี job ใน S3 แล้ว: `jobs/{job_id}/...`")
+        st.info(f"Legacy queue file: jobs/pending/{job_id}.json")
 
     except ClientError as e:
         st.error("Submit failed (S3 ClientError)")
@@ -284,128 +230,44 @@ if st.button("🚀 Submit job", disabled=(uploaded is None)):
 
 
 st.divider()
-st.subheader("2) Verify job exists (read-only)")
+st.subheader("2) Verify job + downloads (read-only)")
 
 job_id_check = st.text_input("Job ID to check", value=st.session_state.get("last_job_id", ""))
 
-pa_default = os.getenv("PRESENTATION_ANALYSIS_URL", "https://presentation-analysis.onrender.com")
-PA_BASE_URL = st.text_input("Presentation Analysis URL (for report)", value=pa_default)
+# show saved links (ไม่หายตอน rerun)
+jid = (job_id_check or "").strip()
+if jid and jid in st.session_state["download_urls"] and st.session_state["download_urls"][jid]:
+    st.subheader("Downloads (saved links)")
+    for label, url in st.session_state["download_urls"][jid].items():
+        st.link_button(label, url)
 
-# ✅ แสดง download links ที่เคยสร้างไว้ (ไม่ให้หายตอน rerun)
-jid_tmp = (job_id_check or "").strip()
-if jid_tmp:
-    if jid_tmp in st.session_state["download_urls"] and st.session_state["download_urls"][jid_tmp]:
-        st.subheader("3) Downloads (saved links)")
-        for label, url in st.session_state["download_urls"][jid_tmp].items():
-            st.link_button(label, url)
-
-    if jid_tmp in st.session_state["report_urls"] and st.session_state["report_urls"][jid_tmp]:
-        st.subheader("📄 Report links (saved)")
-        ru = st.session_state["report_urls"][jid_tmp]
-        if "TH" in ru:
-            st.link_button("⬇️ Download report (TH)", ru["TH"])
-        if "EN" in ru:
-            st.link_button("⬇️ Download report (EN)", ru["EN"])
-
-
-if st.button("Check status.json"):
-    if not job_id_check.strip():
+if st.button("Check now"):
+    if not jid:
         st.warning("Please enter job_id")
     else:
-        jid = job_id_check.strip()
-        key = f"jobs/{jid}/status.json"
-        try:
-            obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
-            data = obj["Body"].read().decode("utf-8", errors="replace")
-            status_obj = json.loads(data)
-
-            st.json(status_obj)
-
-            outputs = (status_obj or {}).get("outputs") or {}
-            if not (isinstance(outputs, dict) and len(outputs) > 0):
-                st.info("ยังไม่มี outputs ใน status.json (รอ worker เขียน outputs ก่อน)")
-            else:
-                st.subheader("3) Downloads")
-
-                # เตรียม dict เก็บ url เพื่อไม่ให้หาย
-                if jid not in st.session_state["download_urls"]:
-                    st.session_state["download_urls"][jid] = {}
-
-                for name, out_key in outputs.items():
-                    if not isinstance(out_key, str) or not out_key.strip():
-                        continue
-                    out_key = out_key.strip()
-
-                    if not s3_key_exists(out_key):
-                        st.warning(f"Output key not found yet: {name} -> {out_key}")
-                        continue
-
-                    # ตั้งชื่อไฟล์ตาม key จริง (ไม่เดาเป็น mp4 เสมอ)
-                    real_name = out_key.split("/")[-1] or str(name)
-                    ctype = guess_content_type(real_name)
-
-                    url = presigned_get_url(
-                        out_key,
-                        expires=3600,
-                        filename=real_name,
-                        content_type=ctype,
-                    )
-
-                    label = f"⬇️ Download {name} ({real_name})"
-                    st.session_state["download_urls"][jid][label] = url
-                    st.link_button(label, url)
-
-        except ClientError as e:
-            st.error("Cannot read status.json")
-            st.exception(e)
-        except Exception as e:
-            st.error("Failed to parse status.json")
-            st.exception(e)
-
-
-st.divider()
-st.subheader("4) Report (from Presentation Analysis)")
-
-st.caption("กดแล้วลิงก์จะถูกจำไว้ด้านบน (ไม่หายตอน rerun)")
-
-col_th, col_en = st.columns(2)
-
-with col_th:
-    if st.button("⬇️ Generate/Download report (TH)", key="gen_report_th"):
-        jid = (job_id_check or "").strip()
-        if not jid:
-            st.warning("กรอก Job ID ก่อน")
+        # 1) try show status.json if exists
+        status_key = f"jobs/{jid}/status.json"
+        if s3_key_exists(status_key):
+            try:
+                obj = s3.get_object(Bucket=AWS_BUCKET, Key=status_key)
+                data = obj["Body"].read().decode("utf-8", errors="replace")
+                status_obj = json.loads(data)
+                st.markdown("### status.json")
+                st.json(status_obj)
+            except Exception as e:
+                st.warning("อ่าน status.json ไม่สำเร็จ แต่จะสแกน output ให้แทน")
         else:
-            pa = normalize_base_url(PA_BASE_URL)
-            api_res = try_generate_report_via_pa_api(pa, jid, "th")
-            report_key = extract_report_s3_key(api_res) if isinstance(api_res, dict) else None
+            st.info("ไม่พบ status.json (ไม่เป็นไร) — จะสแกน output ให้แทน")
 
-            if report_key and s3_key_exists(report_key):
-                fname = report_key.split("/")[-1] or "report_th.pdf"
-                url = presigned_get_url(report_key, 3600, fname, guess_content_type(fname))
-                st.session_state["report_urls"].setdefault(jid, {})
-                st.session_state["report_urls"][jid]["TH"] = url
-                st.success("Report ready ✅ (link saved above)")
-            else:
-                st.info("ยังไม่พบ report key จาก API — เปิดหน้า Presentation Analysis")
-                st.link_button("Open Presentation Analysis (TH)", build_pa_ui_url(pa, jid, "th"))
-
-with col_en:
-    if st.button("⬇️ Generate/Download report (EN)", key="gen_report_en"):
-        jid = (job_id_check or "").strip()
-        if not jid:
-            st.warning("กรอก Job ID ก่อน")
+        # 2) ✅ scan output folder (ของจริง)
+        out_keys = list_output_files(jid)
+        if not out_keys:
+            st.info("ยังไม่พบไฟล์ใน jobs/<job_id>/output/ (ยังไม่ออก หรือ worker ยังไม่หยิบงาน)")
         else:
-            pa = normalize_base_url(PA_BASE_URL)
-            api_res = try_generate_report_via_pa_api(pa, jid, "en")
-            report_key = extract_report_s3_key(api_res) if isinstance(api_res, dict) else None
+            st.success(f"พบ output {len(out_keys)} file(s) ✅")
+            urls = build_downloads_from_keys(jid, out_keys)
+            st.session_state["download_urls"][jid] = urls  # save links
 
-            if report_key and s3_key_exists(report_key):
-                fname = report_key.split("/")[-1] or "report_en.pdf"
-                url = presigned_get_url(report_key, 3600, fname, guess_content_type(fname))
-                st.session_state["report_urls"].setdefault(jid, {})
-                st.session_state["report_urls"][jid]["EN"] = url
-                st.success("Report ready ✅ (link saved above)")
-            else:
-                st.info("ยังไม่พบ report key จาก API — เปิดหน้า Presentation Analysis")
-                st.link_button("Open Presentation Analysis (EN)", build_pa_ui_url(pa, jid, "en"))
+            st.subheader("Downloads")
+            for label, url in urls.items():
+                st.link_button(label, url)
