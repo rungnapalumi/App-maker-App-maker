@@ -1,11 +1,12 @@
 # src/report_worker.py
 # ------------------------------------------------------------
-# AI People Reader - Report Worker (TH/EN)
-# - Polls S3 for report jobs
-# - Downloads input video
-# - Runs analysis (MediaPipe if available, otherwise fallback)
-# - Generates DOCX (and optional PDF) + graphs
-# - Uploads outputs back to S3 + updates job status
+# AI People Reader - Report Worker (TH/EN)  [LEGACY QUEUE]
+# - Polls S3: jobs/pending/*.json
+# - Handles only mode=="report"
+# - Downloads shared input video via job["input_key"]
+# - Generates DOCX + PDF (if libs available) + graphs
+# - Uploads outputs to job-specified keys
+# - Moves job json to jobs/finished/ or jobs/failed/
 # ------------------------------------------------------------
 
 import os
@@ -18,7 +19,7 @@ import tempfile
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any, List
 
 import boto3
 
@@ -52,32 +53,29 @@ except Exception:
     Pt = Inches = None  # type: ignore
     WD_ALIGN_PARAGRAPH = WD_BREAK = None  # type: ignore
 
+# PDF (ReportLab)
 try:
     from reportlab.lib.pagesizes import letter  # type: ignore
     from reportlab.lib.units import inch  # type: ignore
-    from reportlab.lib.utils import ImageReader  # type: ignore
-    from reportlab.pdfbase import pdfmetrics  # type: ignore
-    from reportlab.pdfbase.ttfonts import TTFont  # type: ignore
     from reportlab.platypus import (  # type: ignore
         SimpleDocTemplate,
         Paragraph,
         Spacer,
         PageBreak,
         Image as RLImage,
-        ListFlowable,
-        ListItem,
         Table,
         TableStyle,
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore
     from reportlab.lib.enums import TA_LEFT  # type: ignore
+    from reportlab.lib import colors  # type: ignore
 except Exception:
-    letter = inch = ImageReader = None  # type: ignore
-    pdfmetrics = TTFont = None  # type: ignore
+    letter = inch = None  # type: ignore
     SimpleDocTemplate = Paragraph = Spacer = PageBreak = RLImage = None  # type: ignore
-    ListFlowable = ListItem = Table = TableStyle = None  # type: ignore
+    Table = TableStyle = None  # type: ignore
     getSampleStyleSheet = ParagraphStyle = None  # type: ignore
     TA_LEFT = None  # type: ignore
+    colors = None  # type: ignore
 
 try:
     import mediapipe as mp  # type: ignore
@@ -103,23 +101,19 @@ ASSET_FOOTER = os.path.join(PROJECT_ROOT, "Footer.png")
 ASSET_EFFORT = os.path.join(PROJECT_ROOT, "Effort.xlsx")
 ASSET_SHAPE = os.path.join(PROJECT_ROOT, "Shape.xlsx")
 
+
 # -------------------------
-# S3 config (match your existing pattern)
+# S3 config
 # -------------------------
 AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-
 JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
-# Job scanning prefixes (override if your system uses different)
-JOB_PREFIX = os.getenv("JOB_PREFIX", "jobs/")              # e.g. jobs/
-UPLOAD_PREFIX = os.getenv("UPLOAD_PREFIX", "uploads/")     # e.g. uploads/{job_id}/input.mp4
-OUTPUT_PREFIX = os.getenv("OUTPUT_PREFIX", "outputs/")     # e.g. outputs/{job_id}/...
-
-# If you want report jobs isolated, set:
-# JOB_REPORT_PREFIX=jobs_report/
-JOB_REPORT_PREFIX = os.getenv("JOB_REPORT_PREFIX", "").strip()  # optional override
-SCAN_PREFIX = JOB_REPORT_PREFIX or JOB_PREFIX
+# Legacy queue prefixes
+JOBS_PENDING_PREFIX = os.getenv("JOBS_PENDING_PREFIX", "jobs/pending/")
+JOBS_PROCESSING_PREFIX = os.getenv("JOBS_PROCESSING_PREFIX", "jobs/processing/")
+JOBS_FINISHED_PREFIX = os.getenv("JOBS_FINISHED_PREFIX", "jobs/finished/")
+JOBS_FAILED_PREFIX = os.getenv("JOBS_FAILED_PREFIX", "jobs/failed/")
 
 if not AWS_BUCKET:
     raise RuntimeError("Missing AWS_BUCKET (or S3_BUCKET) environment variable")
@@ -397,11 +391,9 @@ def generate_shape_graph(detection_results: dict, output_path: str):
 # Analysis (fallback)
 # =========================
 def analyze_video_fallback(video_path: str) -> dict:
-    # Safe fallback (no mediapipe)
     duration = get_video_duration_seconds(video_path)
     total_indicators = int(max(2000, min(20000, duration * 300))) if duration else 2000
 
-    # Simple deterministic-ish (uses file size)
     size = os.path.getsize(video_path) if os.path.exists(video_path) else 12345
     base = (size % 1000) / 1000.0
 
@@ -424,11 +416,9 @@ def analyze_video_fallback(video_path: str) -> dict:
     authority_score = score_from_ratio(authority_pos / max(1, total_indicators))
     overall_score = int(round((engaging_score + convince_score + authority_score) / 3.0))
 
-    # Minimal detections so graphs render
     effort_detection = {"Gliding": 5, "Punching": 3, "Dabbing": 2, "Flicking": 1, "Pressing": 2}
     shape_detection = {"Advancing": 3, "Retreating": 1, "Enclosing": 1, "Spreading": 3, "Directing": 2, "Indirecting": 1}
 
-    # Add *_count keys too (your graph code supports both styles)
     for k in list(effort_detection.keys()):
         effort_detection[f"{k.lower()}_count"] = effort_detection[k]
     for k in list(shape_detection.keys()):
@@ -451,7 +441,7 @@ def analyze_video_fallback(video_path: str) -> dict:
 
 
 # =========================
-# DOCX generator (same structure as your app.py)
+# DOCX generator
 # =========================
 def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Optional[str], graph2_path: Optional[str], lang: str):
     if Document is None:
@@ -533,7 +523,7 @@ def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Opti
                     )
                 )
 
-    # Page 3 graph1
+    # Graph 1
     if graph1_path and os.path.exists(graph1_path):
         doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         h = doc.add_paragraph(_t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"))
@@ -543,7 +533,7 @@ def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Opti
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.add_run().add_picture(graph1_path, width=Inches(6.0))
 
-    # Page 4 graph2
+    # Graph 2
     if graph2_path and os.path.exists(graph2_path):
         doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
         h = doc.add_paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"))
@@ -577,6 +567,101 @@ def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Opti
 
 
 # =========================
+# PDF generator (simple, robust)
+# =========================
+def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[str], graph2_path: Optional[str], lang: str):
+    if SimpleDocTemplate is None:
+        raise RuntimeError("reportlab is required to build PDF reports")
+
+    styles = getSampleStyleSheet()
+    base = styles["Normal"]
+    base.fontName = "Helvetica"
+    base.fontSize = 11
+
+    title_style = ParagraphStyle(
+        "title",
+        parent=base,
+        fontSize=18,
+        leading=22,
+        spaceAfter=12,
+    )
+
+    h_style = ParagraphStyle(
+        "h",
+        parent=base,
+        fontSize=12,
+        leading=16,
+        spaceBefore=10,
+        spaceAfter=6,
+    )
+
+    doc = SimpleDocTemplate(out_path, pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
+
+    story: List[Any] = []
+
+    # header image (optional)
+    if os.path.exists(ASSET_HEADER):
+        story.append(RLImage(ASSET_HEADER, width=6.5*inch, height=0.9*inch))
+        story.append(Spacer(1, 0.15*inch))
+
+    story.append(Paragraph(_t(lang, "Presentation Analysis Report", "รายงานการวิเคราะห์การนำเสนอ"), title_style))
+
+    story.append(Paragraph(f"<b>{_t(lang,'Client Name:','ชื่อลูกค้า:')}</b> {report.client_name or '—'}", base))
+    story.append(Paragraph(f"<b>{_t(lang,'Analysis Date:','วันที่วิเคราะห์:')}</b> {report.analysis_date or '—'}", base))
+    story.append(Spacer(1, 0.15*inch))
+
+    story.append(Paragraph(_t(lang, "Video Information", "ข้อมูลวิดีโอ"), h_style))
+    story.append(Paragraph(f"<b>{_t(lang,'Duration:','ความยาว:')}</b> {report.video_length_str or '—'}", base))
+
+    if report.categories:
+        story.append(PageBreak())
+        story.append(Paragraph(_t(lang, "Detailed Presentation Analysis", "รายละเอียดการวิเคราะห์การนำเสนอ"), h_style))
+
+        for cat in report.categories:
+            cat_name = cat.name_th if (lang or "").startswith("th") else cat.name_en
+            story.append(Paragraph(f"<b>• {cat_name}</b>", base))
+
+            tpl = REPORT_CATEGORY_TEMPLATES.get(cat.name_en)
+            if tpl:
+                bullets_key = "bullets_th" if (lang or "").startswith("th") else "bullets_en"
+                bullets = tpl.get(bullets_key) or []
+                for b in bullets:
+                    if str(b).strip():
+                        story.append(Paragraph(f" - {str(b).strip()}", base))
+
+            story.append(Paragraph(f"<b>{_t(lang,'Scale:','ระดับ:')}</b> {_scale_label(cat.scale, lang=lang)}", base))
+            if cat.total > 0:
+                story.append(
+                    Paragraph(
+                        _t(
+                            lang,
+                            f"Detected {cat.positives} positive indicators out of {cat.total} total indicators",
+                            f"ตรวจพบตัวบ่งชี้เชิงบวก {cat.positives} รายการ จากทั้งหมด {cat.total} รายการ",
+                        ),
+                        base,
+                    )
+                )
+            story.append(Spacer(1, 0.12*inch))
+
+    if graph1_path and os.path.exists(graph1_path):
+        story.append(PageBreak())
+        story.append(Paragraph(_t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"), h_style))
+        story.append(RLImage(graph1_path, width=6.5*inch, height=4.0*inch))
+
+    if graph2_path and os.path.exists(graph2_path):
+        story.append(PageBreak())
+        story.append(Paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), h_style))
+        story.append(RLImage(graph2_path, width=6.5*inch, height=4.0*inch))
+
+    # footer image (optional)
+    if os.path.exists(ASSET_FOOTER):
+        story.append(PageBreak())
+        story.append(RLImage(ASSET_FOOTER, width=6.5*inch, height=0.9*inch))
+
+    doc.build(story)
+
+
+# =========================
 # S3 helpers
 # =========================
 def s3_get_json(key: str) -> dict:
@@ -597,11 +682,16 @@ def s3_download_to_file(key: str, local_path: str):
     s3.download_file(AWS_BUCKET, key, local_path)
 
 
-def s3_upload_file(local_path: str, key: str, content_type: str):
-    s3.upload_file(local_path, AWS_BUCKET, key, ExtraArgs={"ContentType": content_type})
+def s3_put_bytes(key: str, data: bytes, content_type: str):
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType=content_type)
 
 
-def list_job_json_keys(prefix: str, limit: int = 50) -> list:
+def s3_copy_delete(src_key: str, dst_key: str):
+    s3.copy_object(Bucket=AWS_BUCKET, CopySource={"Bucket": AWS_BUCKET, "Key": src_key}, Key=dst_key)
+    s3.delete_object(Bucket=AWS_BUCKET, Key=src_key)
+
+
+def list_job_json_keys(prefix: str, limit: int = 200) -> list:
     keys = []
     token = None
     while True:
@@ -643,32 +733,18 @@ def set_status(job: dict, status: str, message: str = "") -> dict:
 
 
 def resolve_video_key(job: dict, job_id: str) -> str:
-    # Prefer explicit fields
     for f in ("video_s3_key", "input_video_key", "input_key", "s3_key"):
         if job.get(f):
             return str(job[f])
-    # Fallback: uploads/{job_id}/input.mp4
-    return f"{UPLOAD_PREFIX}{job_id}/input.mp4"
+    # legacy fallback
+    return f"jobs/pending/{job_id}/input/input.mp4"
 
 
-def want_langs(job: dict) -> Tuple[bool, bool]:
-    # return (want_en, want_th)
+def job_lang(job: dict) -> str:
     lang = (job.get("lang") or job.get("language") or "").strip().lower()
-    langs = job.get("langs")
-
-    if isinstance(langs, list):
-        ls = [str(x).strip().lower() for x in langs]
-        return ("en" in ls or "english" in ls), ("th" in ls or "thai" in ls or "ไทย" in ls)
-
-    if lang in ("both", "en+th", "th+en"):
-        return True, True
     if lang.startswith("th"):
-        return False, True
-    if lang.startswith("en"):
-        return True, False
-
-    # default: generate both (safe for your use case)
-    return True, True
+        return "th"
+    return "en"
 
 
 # =========================
@@ -678,15 +754,16 @@ def process_report_job(job_key: str):
     job = s3_get_json(job_key)
     job_id = str(job.get("job_id") or job.get("id") or os.path.splitext(os.path.basename(job_key))[0])
 
-    # Guard: only handle report jobs
     if not is_report_job(job):
         return
 
-    st = job_status(job)
-    if st in ("processing", "finished", "done", "failed", "error"):
+    stt = job_status(job)
+    if stt in ("processing", "finished", "done", "failed", "error"):
         return
 
-    log.info(f"Processing report job: {job_id} ({job_key})")
+    lang_code = job_lang(job)
+
+    log.info(f"Processing report job: {job_id} ({lang_code}) ({job_key})")
     job = set_status(job, "processing", "Generating report…")
     s3_put_json(job_key, job)
 
@@ -694,29 +771,19 @@ def process_report_job(job_key: str):
     try:
         # Download video
         video_key = resolve_video_key(job, job_id)
-        video_path = os.path.join(tmp_dir, "input_video")
         ext = os.path.splitext(video_key)[1] or ".mp4"
-        video_path += ext
+        video_path = os.path.join(tmp_dir, "input_video" + ext)
 
         log.info(f"Downloading video from s3://{AWS_BUCKET}/{video_key}")
         s3_download_to_file(video_key, video_path)
 
-        # Analyze
-        if cv2 is None or np is None:
-            result = analyze_video_fallback(video_path)
-        else:
-            # keep it safe: use fallback unless you explicitly enable real analysis
-            want_real = str(job.get("analysis_mode") or os.getenv("ANALYSIS_MODE", "fallback")).strip().lower().startswith("real")
-            if want_real and mp is not None:
-                # You can later plug your full mediapipe analysis here (like in app.py)
-                result = analyze_video_fallback(video_path)
-            else:
-                result = analyze_video_fallback(video_path)
+        # Analyze (safe fallback)
+        result = analyze_video_fallback(video_path)
 
         duration_str = format_seconds_to_mmss(result.get("duration_seconds") or 0.0)
         analysis_date = datetime.now().strftime("%Y-%m-%d")
-
         total = int(result.get("total_indicators") or 0)
+
         categories = [
             CategoryResult(
                 name_en="Engaging & Connecting",
@@ -747,9 +814,7 @@ def process_report_job(job_key: str):
         client_name = str(job.get("client_name") or job.get("client") or "").strip()
         summary_comment = str(job.get("summary_comment") or "").strip()
 
-        want_en, want_th = want_langs(job)
-
-        # Generate graphs
+        # Generate graphs (optional)
         graph1_path = os.path.join(tmp_dir, "Graph 1.png")
         graph2_path = os.path.join(tmp_dir, "Graph 2.png")
         try:
@@ -760,43 +825,62 @@ def process_report_job(job_key: str):
             graph1_path = None
             graph2_path = None
 
-        outputs = {}
+        report = ReportData(
+            client_name=client_name,
+            analysis_date=analysis_date,
+            video_length_str=duration_str,
+            overall_score=int(round(sum([c.score for c in categories]) / max(1, len(categories)))),
+            categories=categories,
+            summary_comment=summary_comment,
+            generated_by=_t(lang_code, "Generated by AI People Reader™", "จัดทำโดย AI People Reader™"),
+        )
 
-        def build_one(lang_code: str):
-            report = ReportData(
-                client_name=client_name,
-                analysis_date=analysis_date,
-                video_length_str=duration_str,
-                overall_score=int(round(sum([c.score for c in categories]) / max(1, len(categories)))),
-                categories=categories,
-                summary_comment=summary_comment,
-                generated_by=_t(lang_code, "Generated by AI People Reader™", "จัดทำโดย AI People Reader™"),
-            )
+        outputs: Dict[str, str] = {}
 
-            docx_bio = io.BytesIO()
-            build_docx_report(report, docx_bio, graph1_path, graph2_path, lang=lang_code)
-            docx_bytes = docx_bio.getvalue()
-            if not docx_bytes:
-                raise RuntimeError("DOCX generation produced empty output")
+        # Output keys from job (preferred)
+        out_docx_key = job.get("output_docx_key")
+        out_pdf_key = job.get("output_pdf_key")
 
-            docx_name = f"Presentation_Analysis_Report_{analysis_date}_{'TH' if lang_code=='th' else 'EN'}.docx"
-            docx_key = f"{OUTPUT_PREFIX}{job_id}/{docx_name}"
-            s3.put_object(
-                Bucket=AWS_BUCKET,
-                Key=docx_key,
-                Body=docx_bytes,
-                ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
-            outputs[f"docx_{lang_code}"] = docx_key
+        # Fallback if not provided
+        if not out_docx_key:
+            out_docx_key = f"jobs/output/{job_id}/report_{lang_code}.docx"
+        if not out_pdf_key:
+            out_pdf_key = f"jobs/output/{job_id}/report_{lang_code}.pdf"
 
-        if want_en:
-            build_one("en")
-        if want_th:
-            build_one("th")
+        # Build DOCX
+        docx_bio = io.BytesIO()
+        build_docx_report(report, docx_bio, graph1_path, graph2_path, lang=lang_code)
+        docx_bytes = docx_bio.getvalue()
+        if not docx_bytes:
+            raise RuntimeError("DOCX generation produced empty output")
+
+        s3_put_bytes(
+            str(out_docx_key),
+            docx_bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        outputs["docx"] = str(out_docx_key)
+
+        # Build PDF (required by your spec — but keep graceful if libs missing)
+        pdf_ok = True
+        try:
+            local_pdf = os.path.join(tmp_dir, f"report_{lang_code}.pdf")
+            build_pdf_report(report, local_pdf, graph1_path, graph2_path, lang=lang_code)
+            with open(local_pdf, "rb") as f:
+                pdf_bytes = f.read()
+            if not pdf_bytes:
+                raise RuntimeError("PDF generation produced empty output")
+            s3_put_bytes(str(out_pdf_key), pdf_bytes, "application/pdf")
+            outputs["pdf"] = str(out_pdf_key)
+        except Exception as e:
+            pdf_ok = False
+            log.warning(f"PDF generation skipped/failed: {e}")
 
         job["outputs"] = outputs
-        job = set_status(job, "finished", "Report generated")
+        msg = "Report generated" if pdf_ok else "DOCX generated (PDF missing on worker)"
+        job = set_status(job, "finished", msg)
         s3_put_json(job_key, job)
+
         log.info(f"Finished report job {job_id} -> {outputs}")
 
     except Exception as e:
@@ -806,6 +890,7 @@ def process_report_job(job_key: str):
             s3_put_json(job_key, job)
         except Exception:
             pass
+
     finally:
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -814,20 +899,39 @@ def process_report_job(job_key: str):
 
 
 def main_loop():
-    log.info(f"Report worker started. Bucket={AWS_BUCKET}, scan_prefix={SCAN_PREFIX}")
+    log.info(f"Report worker started. Bucket={AWS_BUCKET}, pending_prefix={JOBS_PENDING_PREFIX}")
     while True:
         try:
-            keys = list_job_json_keys(SCAN_PREFIX, limit=50)
-            # process oldest first (best effort)
+            keys = list_job_json_keys(JOBS_PENDING_PREFIX, limit=200)
             for job_key in sorted(keys):
                 try:
                     job = s3_get_json(job_key)
-                    if is_report_job(job) and job_status(job) in ("", "queued", "pending", "new"):
-                        process_report_job(job_key)
+                    if not is_report_job(job):
+                        continue
+
+                    stt = job_status(job)
+                    if stt in ("processing", "finished", "done", "failed", "error"):
+                        continue
+
+                    process_report_job(job_key)
+
+                    # After process, move json out of pending like legacy
+                    job2 = s3_get_json(job_key)
+                    job_id = str(job2.get("job_id") or job2.get("id") or os.path.splitext(os.path.basename(job_key))[0])
+
+                    if job_status(job2) in ("finished", "done"):
+                        dst = f"{JOBS_FINISHED_PREFIX}{job_id}.json"
+                        s3_copy_delete(job_key, dst)
+                    elif job_status(job2) in ("failed", "error"):
+                        dst = f"{JOBS_FAILED_PREFIX}{job_id}.json"
+                        s3_copy_delete(job_key, dst)
+
                 except Exception as e:
                     log.warning(f"Skip job {job_key}: {e}")
+
         except Exception as e:
             log.warning(f"Polling error: {e}")
+
         time.sleep(JOB_POLL_INTERVAL)
 
 
