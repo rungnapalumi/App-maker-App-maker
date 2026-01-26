@@ -1,5 +1,8 @@
 boto3
-python-dotenv
+python-docx
+numpy
+matplotlib
 pandas
-jinja2
+Pillow
 reportlab
+
