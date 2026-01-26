@@ -5,4 +5,5 @@ matplotlib
 pandas
 Pillow
 reportlab
+openpyxl==3.1.5
 
