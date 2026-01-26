@@ -39,6 +39,13 @@ try:
 except Exception:
     pd = None  # type: ignore
 
+# ⭐ IMPORTANT: Headless backend for Render/Worker environments
+try:
+    import matplotlib  # type: ignore
+    matplotlib.use("Agg")
+except Exception:
+    pass
+
 try:
     import matplotlib.pyplot as plt  # type: ignore
 except Exception:
@@ -292,8 +299,12 @@ def generate_effort_graph(effort_detection: dict, shape_detection: dict, output_
 
     fig_width = 14
     fig_height = max(7, len(sorted_motions) * 0.45)
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_width, fig_height),
-                                   gridspec_kw={'width_ratios': [1.2, 0.8], 'wspace': 0.4})
+    fig, (ax1, ax2) = plt.subplots(
+        1,
+        2,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={'width_ratios': [1.2, 0.8], 'wspace': 0.4},
+    )
 
     bar_h = 0.7
     y_all = range(len(sorted_motions))
@@ -311,8 +322,15 @@ def generate_effort_graph(effort_detection: dict, shape_detection: dict, output_
 
     for bar, pct in zip(bars_all, sorted_percentages):
         if pct > 0:
-            ax1.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2., f'{pct:.1f}%',
-                     ha='left', va='center', fontsize=11, fontweight='bold')
+            ax1.text(
+                bar.get_width() + 1,
+                bar.get_y() + bar.get_height() / 2.0,
+                f'{pct:.1f}%',
+                ha='left',
+                va='center',
+                fontsize=11,
+                fontweight='bold',
+            )
 
     top3_labels = [f"{m} - Rank #{i+1}" for i, m in enumerate(top3_motions)]
     y_top = [0, 1, 2]
@@ -331,8 +349,15 @@ def generate_effort_graph(effort_detection: dict, shape_detection: dict, output_
 
     for bar, pct in zip(bars_top, top3_percentages):
         if pct > 0:
-            ax2.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2., f'{pct:.1f}%',
-                     ha='left', va='center', fontsize=11, fontweight='bold')
+            ax2.text(
+                bar.get_width() + 1,
+                bar.get_y() + bar.get_height() / 2.0,
+                f'{pct:.1f}%',
+                ha='left',
+                va='center',
+                fontsize=11,
+                fontweight='bold',
+            )
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -372,8 +397,15 @@ def generate_shape_graph(detection_results: dict, output_path: str):
     for bar in bars:
         h = bar.get_height()
         if h > 0:
-            ax.text(bar.get_x() + bar.get_width()/2., h, f'{h:.1f}%',
-                    ha='center', va='bottom', fontsize=11, fontweight='bold')
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                h,
+                f'{h:.1f}%',
+                ha='center',
+                va='bottom',
+                fontsize=11,
+                fontweight='bold',
+            )
 
     if len(motions) > 6:
         plt.xticks(rotation=15, ha='right', fontsize=10)
@@ -443,7 +475,13 @@ def analyze_video_fallback(video_path: str) -> dict:
 # =========================
 # DOCX generator
 # =========================
-def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Optional[str], graph2_path: Optional[str], lang: str):
+def build_docx_report(
+    report: ReportData,
+    out_bio: io.BytesIO,
+    graph1_path: Optional[str],
+    graph2_path: Optional[str],
+    lang: str,
+):
     if Document is None:
         raise RuntimeError("python-docx is required to build DOCX reports")
 
@@ -564,6 +602,10 @@ def build_docx_report(report: ReportData, out_bio: io.BytesIO, graph1_path: Opti
     r.italic = True
 
     doc.save(out_bio)
+    try:
+        out_bio.seek(0)
+    except Exception:
+        pass
 
 
 # =========================
@@ -595,20 +637,27 @@ def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[st
         spaceAfter=6,
     )
 
-    doc = SimpleDocTemplate(out_path, pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
+    doc = SimpleDocTemplate(
+        out_path,
+        pagesize=letter,
+        leftMargin=0.75 * inch,
+        rightMargin=0.75 * inch,
+        topMargin=0.75 * inch,
+        bottomMargin=0.75 * inch,
+    )
 
     story: List[Any] = []
 
     # header image (optional)
     if os.path.exists(ASSET_HEADER):
-        story.append(RLImage(ASSET_HEADER, width=6.5*inch, height=0.9*inch))
-        story.append(Spacer(1, 0.15*inch))
+        story.append(RLImage(ASSET_HEADER, width=6.5 * inch, height=0.9 * inch))
+        story.append(Spacer(1, 0.15 * inch))
 
     story.append(Paragraph(_t(lang, "Presentation Analysis Report", "รายงานการวิเคราะห์การนำเสนอ"), title_style))
 
     story.append(Paragraph(f"<b>{_t(lang,'Client Name:','ชื่อลูกค้า:')}</b> {report.client_name or '—'}", base))
     story.append(Paragraph(f"<b>{_t(lang,'Analysis Date:','วันที่วิเคราะห์:')}</b> {report.analysis_date or '—'}", base))
-    story.append(Spacer(1, 0.15*inch))
+    story.append(Spacer(1, 0.15 * inch))
 
     story.append(Paragraph(_t(lang, "Video Information", "ข้อมูลวิดีโอ"), h_style))
     story.append(Paragraph(f"<b>{_t(lang,'Duration:','ความยาว:')}</b> {report.video_length_str or '—'}", base))
@@ -641,22 +690,22 @@ def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[st
                         base,
                     )
                 )
-            story.append(Spacer(1, 0.12*inch))
+            story.append(Spacer(1, 0.12 * inch))
 
     if graph1_path and os.path.exists(graph1_path):
         story.append(PageBreak())
         story.append(Paragraph(_t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"), h_style))
-        story.append(RLImage(graph1_path, width=6.5*inch, height=4.0*inch))
+        story.append(RLImage(graph1_path, width=6.5 * inch, height=4.0 * inch))
 
     if graph2_path and os.path.exists(graph2_path):
         story.append(PageBreak())
         story.append(Paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), h_style))
-        story.append(RLImage(graph2_path, width=6.5*inch, height=4.0*inch))
+        story.append(RLImage(graph2_path, width=6.5 * inch, height=4.0 * inch))
 
     # footer image (optional)
     if os.path.exists(ASSET_FOOTER):
         story.append(PageBreak())
-        story.append(RLImage(ASSET_FOOTER, width=6.5*inch, height=0.9*inch))
+        story.append(RLImage(ASSET_FOOTER, width=6.5 * inch, height=0.9 * inch))
 
     doc.build(story)
 
@@ -815,13 +864,34 @@ def process_report_job(job_key: str):
         summary_comment = str(job.get("summary_comment") or "").strip()
 
         # Generate graphs (optional)
-        graph1_path = os.path.join(tmp_dir, "Graph 1.png")
-        graph2_path = os.path.join(tmp_dir, "Graph 2.png")
+        graph1_path: Optional[str] = os.path.join(tmp_dir, "Graph 1.png")
+        graph2_path: Optional[str] = os.path.join(tmp_dir, "Graph 2.png")
+
         try:
+            # Helpful diagnostics (won't break anything)
+            log.info(f"Asset check: Effort.xlsx exists={os.path.exists(ASSET_EFFORT)} path={ASSET_EFFORT}")
+            log.info(f"Asset check: Shape.xlsx  exists={os.path.exists(ASSET_SHAPE)} path={ASSET_SHAPE}")
+            log.info(f"Matplotlib available={bool(plt)}  Numpy available={bool(np)}  Pandas available={bool(pd)}")
+
             generate_effort_graph(result.get("effort_detection", {}), result.get("shape_detection", {}), graph1_path)
             generate_shape_graph(result.get("shape_detection", {}), graph2_path)
+
+            log.info(f"Graph1 exists={os.path.exists(graph1_path)} path={graph1_path}")
+            log.info(f"Graph2 exists={os.path.exists(graph2_path)} path={graph2_path}")
+
+            if not os.path.exists(graph1_path):
+                log.warning("Graph1 file missing after generation (savefig may have failed)")
+                graph1_path = None
+            if not os.path.exists(graph2_path):
+                log.warning("Graph2 file missing after generation (savefig may have failed)")
+                graph2_path = None
+
         except Exception as e:
-            log.warning(f"Graph generation failed: {e}")
+            log.warning(
+                f"Graph generation failed: {e} | "
+                f"plt={'ok' if plt else 'None'} np={'ok' if np else 'None'} pd={'ok' if pd else 'None'} | "
+                f"Effort.xlsx exists={os.path.exists(ASSET_EFFORT)} Shape.xlsx exists={os.path.exists(ASSET_SHAPE)}"
+            )
             graph1_path = None
             graph2_path = None
 
