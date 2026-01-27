@@ -5,7 +5,9 @@
 # - Handles only mode=="report"
 # - Downloads shared input video via job["input_key"]
 # - ✅ Normalizes video with FFmpeg (always) -> stable decode on Render
-# - ✅ First Impression (REAL analysis) via MoveNet TFLite:
+# - ✅ First Impression (REAL analysis):
+#     Primary: MoveNet TFLite (if available)
+#     Fallback: MediaPipe Pose (if available)
 #     1) Eye Contact
 #     2) Uprightness (Posture & Upper-Body Alignment)
 #     3) Stance (Lower-Body Stability & Grounding)
@@ -15,11 +17,6 @@
 #
 # ✅ DOCX only (PDF removed)
 # ✅ Spacing/indent matches sample (DOCX)
-#
-# FIX (First Impression missing):
-#   1) include_first_impression(): treat dict/object under "first_impression" as ENABLED
-#      (only boolean False disables)
-#   2) DOCX: Always print "1. First impression" header; if FI unavailable, show a short note
 # ------------------------------------------------------------
 
 import os
@@ -51,6 +48,14 @@ try:
     import pandas as pd  # type: ignore
 except Exception:
     pd = None  # type: ignore
+
+# MediaPipe (optional) — used as fallback for First Impression if MoveNet/TFLite not available
+try:
+    import mediapipe as mp  # type: ignore
+    MP_HAS_SOLUTIONS = hasattr(mp, "solutions")
+except Exception:
+    mp = None  # type: ignore
+    MP_HAS_SOLUTIONS = False
 
 # ⭐ IMPORTANT: Headless backend for Render/Worker environments
 try:
@@ -463,7 +468,9 @@ def generate_shape_graph(detection_results: dict, output_path: str):
 
 
 # =========================
-# First Impression — REAL analysis from video (MoveNet TFLite)
+# First Impression — REAL analysis from video
+# Primary: MoveNet TFLite
+# Fallback: MediaPipe Pose
 # =========================
 # MoveNet keypoints (17):
 # 0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,
@@ -482,6 +489,18 @@ POSE_IDX = {
     "RIGHT_ANKLE": 16,
 }
 
+# MediaPipe Pose landmark indices (BlazePose):
+MP_IDX = {
+    "NOSE": 0,
+    "LEFT_EAR": 7,
+    "RIGHT_EAR": 8,
+    "LEFT_SHOULDER": 11,
+    "RIGHT_SHOULDER": 12,
+    "LEFT_HIP": 23,
+    "RIGHT_HIP": 24,
+    "LEFT_ANKLE": 27,
+    "RIGHT_ANKLE": 28,
+}
 
 def _load_tflite_interpreter(model_path: str):
     try:
@@ -509,14 +528,14 @@ def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
     """
     if np is None:
         raise RuntimeError("numpy is required for MoveNet inference")
+    if cv2 is None:
+        raise RuntimeError("opencv is required for MoveNet inference")
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    # MoveNet expects RGB
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
-    # Common MoveNet lightning resolution is 192x192
     in_h = int(input_details[0]["shape"][1])
     in_w = int(input_details[0]["shape"][2])
     resized = cv2.resize(rgb, (in_w, in_h), interpolation=cv2.INTER_AREA)
@@ -524,7 +543,6 @@ def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
     in_dtype = input_details[0]["dtype"]
     x = resized
 
-    # Handle uint8 / int32 / float32 models
     if str(in_dtype).endswith("uint8"):
         x = x.astype(np.uint8)
     elif str(in_dtype).endswith("int32"):
@@ -539,8 +557,6 @@ def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
 
     out = interpreter.get_tensor(output_details[0]["index"])
 
-    # Typical shapes:
-    # (1, 1, 17, 3) or (1, 17, 3)
     if out.ndim == 4:
         out = out[0, 0, :, :]
     elif out.ndim == 3:
@@ -599,7 +615,6 @@ def _fi_extract_pose_sequence_movenet(
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration_sec = frame_count / fps if fps > 0 else 0.0
 
-    # sample every N frames
     if fps <= 0:
         fps = 25.0
     sample_every = int(max(1, round(fps / max(1e-6, sample_fps))))
@@ -618,7 +633,6 @@ def _fi_extract_pose_sequence_movenet(
         if idx % sample_every != 0:
             continue
 
-        # Infer pose
         kps = _movenet_infer(interpreter, frame)  # (17,3) [x,y,score]
 
         pose_dict: Dict[str, Tuple[float, float, float]] = {}
@@ -634,12 +648,88 @@ def _fi_extract_pose_sequence_movenet(
     cap.release()
 
     meta = {
+        "engine": "movenet_tflite",
         "fps": float(fps),
         "frame_count": int(frame_count),
         "duration_sec": float(duration_sec),
         "sample_every": int(sample_every),
         "processed_frames": int(len(seq)),
         "model_path": model_path,
+    }
+    return seq, meta
+
+
+def _fi_extract_pose_sequence_mediapipe(
+    video_path: str,
+    max_frames: int = 1000,
+    sample_fps: float = 6.0,
+) -> Tuple[List[Dict[str, Tuple[float, float, float]]], Dict[str, Any]]:
+    if cv2 is None or np is None or not MP_HAS_SOLUTIONS:
+        return [], {"reason": "missing_libs_or_mediapipe"}
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return [], {"reason": "cannot_open_video"}
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    duration_sec = frame_count / fps if fps > 0 else 0.0
+
+    if fps <= 0:
+        fps = 25.0
+    sample_every = int(max(1, round(fps / max(1e-6, sample_fps))))
+
+    pose = mp.solutions.pose.Pose(
+        static_image_mode=False,
+        model_complexity=1,
+        enable_segmentation=False,
+        smooth_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+    seq: List[Dict[str, Tuple[float, float, float]]] = []
+    idx = 0
+    processed = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        idx += 1
+        if idx % sample_every != 0:
+            continue
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = pose.process(rgb)
+
+        pose_dict: Dict[str, Tuple[float, float, float]] = {}
+        if res and res.pose_landmarks and res.pose_landmarks.landmark:
+            lm = res.pose_landmarks.landmark
+            for name, i in MP_IDX.items():
+                if 0 <= i < len(lm):
+                    # mediapipe gives normalized x,y in [0..1], visibility in [0..1]
+                    pose_dict[name] = (float(lm[i].x), float(lm[i].y), float(lm[i].visibility))
+
+        seq.append(pose_dict)
+
+        processed += 1
+        if processed >= max_frames:
+            break
+
+    cap.release()
+    try:
+        pose.close()
+    except Exception:
+        pass
+
+    meta = {
+        "engine": "mediapipe_pose",
+        "fps": float(fps),
+        "frame_count": int(frame_count),
+        "duration_sec": float(duration_sec),
+        "sample_every": int(sample_every),
+        "processed_frames": int(len(seq)),
     }
     return seq, meta
 
@@ -970,13 +1060,25 @@ def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str)
 
 
 def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[FirstImpressionResult], Dict[str, Any]]:
-    debug: Dict[str, Any] = {"enabled": True}
+    """
+    Try MoveNet TFLite first. If it fails (common on Render due to tflite_runtime / python version / missing model),
+    fallback to MediaPipe Pose if available.
+    """
+    debug: Dict[str, Any] = {
+        "enabled": True,
+        "primary": "movenet_tflite",
+        "fallback": "mediapipe_pose",
+        "movenet_model_path": MOVENET_MODEL_PATH,
+        "movenet_model_exists": bool(os.path.exists(MOVENET_MODEL_PATH)),
+        "mediapipe_available": bool(MP_HAS_SOLUTIONS),
+    }
 
     if cv2 is None or np is None:
         debug["enabled"] = False
         debug["reason"] = "missing_libs"
         return None, debug
 
+    # ---- Primary: MoveNet TFLite
     try:
         seq, meta = _fi_extract_pose_sequence_movenet(
             video_path,
@@ -985,11 +1087,27 @@ def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[First
             sample_fps=POSE_SAMPLE_FPS,
         )
         debug["meta"] = meta
+        debug["engine_used"] = meta.get("engine", "movenet_tflite")
         debug["frames_with_pose"] = sum(1 for p in seq if p)
     except Exception as e:
-        debug["enabled"] = False
-        debug["reason"] = f"movenet_error: {e}"
-        return None, debug
+        # ---- Fallback: MediaPipe Pose
+        debug["primary_failed"] = True
+        debug["primary_error"] = f"{e}"
+        log.warning(f"First Impression primary (MoveNet) failed: {e}. Trying MediaPipe fallback...")
+
+        try:
+            seq, meta = _fi_extract_pose_sequence_mediapipe(
+                video_path,
+                max_frames=1000,
+                sample_fps=POSE_SAMPLE_FPS,
+            )
+            debug["meta"] = meta
+            debug["engine_used"] = meta.get("engine", "mediapipe_pose")
+            debug["frames_with_pose"] = sum(1 for p in seq if p)
+        except Exception as e2:
+            debug["enabled"] = False
+            debug["reason"] = f"both_failed: movenet_error={e}; mediapipe_error={e2}"
+            return None, debug
 
     if not seq or int(debug.get("frames_with_pose", 0) or 0) < 10:
         debug["enabled"] = False
@@ -1100,13 +1218,10 @@ def _docx_add_heading(doc, text: str, size: int = 12, bold: bool = True, before:
     return p
 
 def _docx_add_numbered_line(doc, number: str, text: str):
-    # Looks like: "1.    First impression"
     p = doc.add_paragraph()
     _docx_apply_para(p, left=0.35, first_line=0.0, before=0, after=4)
     run = p.add_run(f"{number}\t{text}")
     run.bold = False
-
-    # set a tab stop roughly like Word default
     try:
         p.paragraph_format.tab_stops.add_tab_stop(Inches(0.75))
     except Exception:
@@ -1114,22 +1229,18 @@ def _docx_add_numbered_line(doc, number: str, text: str):
     return p
 
 def _docx_add_subheading(doc, text: str):
-    # e.g. Eye Contact / Uprightness...
     p = doc.add_paragraph()
     _docx_apply_para(p, left=0.55, first_line=0.0, before=10, after=2)
     p.add_run(text)
     return p
 
 def _docx_add_bullet(doc, text: str):
-    # Bullet with hanging indent (•)
     p = doc.add_paragraph()
-    # left=0.85, first_line=-0.20 => bullet hangs like sample
     _docx_apply_para(p, left=0.85, first_line=-0.20, before=0, after=6)
     p.add_run("•  " + text)
     return p
 
 def _docx_add_impact_block(doc, label: str, text: str):
-    # label line aligned with bullet text start (no bullet)
     p1 = doc.add_paragraph()
     _docx_apply_para(p1, left=0.95, first_line=0.0, before=4, after=0)
     r = p1.add_run(label)
@@ -1192,7 +1303,7 @@ def build_docx_report(
     # Detailed Analysis heading
     _docx_add_heading(doc, _t(lang, "Detailed Analysis", "Detailed Analysis"), size=11, bold=True, before=6, after=10)
 
-    # 1. First impression (ALWAYS show heading; if FI missing -> show reason note)
+    # 1. First impression
     _docx_add_numbered_line(doc, "1.", _t(lang, "First impression", "First impression"))
 
     if report.first_impression is None:
@@ -1201,8 +1312,8 @@ def build_docx_report(
             doc,
             _t(
                 lang,
-                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MOVENET model exists.",
-                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MOVENET model exists.",
+                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MoveNet/MediaPipe is available.",
+                "Pose detection ไม่เพียงพอ หรือ model/runtime ใช้งานไม่ได้ กรุณาให้เห็นร่างกายชัดขึ้น และตรวจสอบว่า MoveNet/MediaPipe พร้อมใช้งาน",
             ),
         )
         _docx_add_impact_block(
@@ -1211,7 +1322,7 @@ def build_docx_report(
             _t(
                 lang,
                 "When the system cannot reliably detect posture/gaze/stance, we avoid over-interpreting presence or confidence.",
-                "เมื่อระบบตรวจจับท่าทาง/การมอง/การยืนได้ไม่ชัดเจน เราจะหลีกเลี่ยงการสรุปเรื่องความมั่นใจหรือความน่าเชื่อถือมากเกินไป",
+                "เมื่อระบบตรวจจับ posture/gaze/stance ไม่ได้อย่างน่าเชื่อถือ เราจะหลีกเลี่ยงการตีความเรื่อง presence หรือความมั่นใจมากเกินไป",
             ),
         )
     else:
@@ -1399,25 +1510,13 @@ def job_lang(job: dict) -> str:
     return "en"
 
 def include_first_impression(job: dict) -> bool:
-    """
-    ✅ Fix:
-      - Only boolean False disables.
-      - If job["first_impression"] is a dict/object (common schema), treat as enabled.
-    """
-    # explicit boolean only
-    if isinstance(job.get("include_first_impression"), bool):
-        return bool(job["include_first_impression"])
-
-    # job["first_impression"] might be a dict (config/result container) -> ENABLED
-    if isinstance(job.get("first_impression"), bool):
-        return bool(job["first_impression"])
-    if isinstance(job.get("first_impression"), dict):
-        return True
-
+    if "include_first_impression" in job:
+        return bool(job.get("include_first_impression"))
+    if "first_impression" in job:
+        return bool(job.get("first_impression"))
     opts = job.get("options") if isinstance(job.get("options"), dict) else {}
-    if isinstance(opts, dict) and isinstance(opts.get("first_impression"), bool):
-        return bool(opts["first_impression"])
-
+    if isinstance(opts, dict) and "first_impression" in opts:
+        return bool(opts.get("first_impression"))
     return True
 
 
@@ -1454,6 +1553,7 @@ def process_report_job(job_key: str):
             "docx": bool(Document),
             "ffmpeg": bool(shutil.which("ffmpeg")),
             "movenet_model_exists": bool(os.path.exists(MOVENET_MODEL_PATH)),
+            "mediapipe": bool(MP_HAS_SOLUTIONS),
         },
         "movenet_model_path": MOVENET_MODEL_PATH,
         "normalize_fps": NORMALIZE_FPS,
@@ -1516,19 +1616,19 @@ def process_report_job(job_key: str):
         client_name = str(job.get("client_name") or job.get("client") or "").strip()
         summary_comment = str(job.get("summary_comment") or "").strip()
 
-        # First Impression analysis (MoveNet) on normalized video
+        # First Impression analysis (REAL) on normalized video
         fi_obj: Optional[FirstImpressionResult] = None
-        fi_enabled = include_first_impression(job)
-        debug_payload["first_impression_enabled_by_job"] = bool(fi_enabled)
-
-        if fi_enabled:
+        if include_first_impression(job):
             fi_obj, fi_debug = analyze_first_impression(normalized_path, lang_code)
             debug_payload["first_impression"] = fi_debug
+
             if fi_obj is None:
-                log.warning(f"First Impression unavailable for job {job_id}: {fi_debug.get('reason')}")
+                log.warning(
+                    f"First Impression unavailable for job {job_id}: "
+                    f"{fi_debug.get('reason') or fi_debug.get('primary_error') or 'unknown'}"
+                )
         else:
             debug_payload["first_impression"] = {"enabled": False, "reason": "disabled_by_job"}
-            log.info(f"First Impression disabled by job for job {job_id}")
 
         # Generate graphs (optional)
         graph1_path: Optional[str] = os.path.join(tmp_dir, "Graph 1.png")
