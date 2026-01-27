@@ -1,24 +1,11 @@
-#export excel
-openpyxl==3.1.5
-
-# Core AWS / IO
 boto3
-
-# Report generation (DOCX only)
 python-docx
-
-# Data & math
 numpy
-pandas
-
-# Charts (for report graphs)
 matplotlib
-
-# Image processing
+pandas
 Pillow
-
-# Video reading (server-safe)
+reportlab
+openpyxl==3.1.5
+mediapipe>=0.10.30,<0.11
 opencv-python-headless==4.10.0.84
 
-# Pose estimation (MoveNet)
-tflite-runtime
