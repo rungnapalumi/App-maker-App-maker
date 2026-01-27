@@ -7,12 +7,17 @@
 # - Generates DOCX + PDF (if libs available) + graphs
 # - Uploads outputs to job-specified keys
 # - Moves job json to jobs/finished/ or jobs/failed/
+#
+# ✅ First Impression (REAL analysis from uploaded video):
+#     1) Eye Contact
+#     2) Uprightness (Posture & Upper-Body Alignment)
+#     3) Stance (Lower-Body Stability & Grounding)
+# ✅ Spacing/indent matches sample (DOCX + PDF)
 # ------------------------------------------------------------
 
 import os
 import io
 import json
-import math
 import time
 import shutil
 import tempfile
@@ -70,19 +75,12 @@ try:
         Spacer,
         PageBreak,
         Image as RLImage,
-        Table,
-        TableStyle,
     )
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore
-    from reportlab.lib.enums import TA_LEFT  # type: ignore
-    from reportlab.lib import colors  # type: ignore
 except Exception:
     letter = inch = None  # type: ignore
     SimpleDocTemplate = Paragraph = Spacer = PageBreak = RLImage = None  # type: ignore
-    Table = TableStyle = None  # type: ignore
     getSampleStyleSheet = ParagraphStyle = None  # type: ignore
-    TA_LEFT = None  # type: ignore
-    colors = None  # type: ignore
 
 try:
     import mediapipe as mp  # type: ignore
@@ -100,7 +98,6 @@ log = logging.getLogger("report_worker")
 # -------------------------
 # Paths (repo layout safe)
 # -------------------------
-# report_worker.py lives in src/
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 ASSET_HEADER = os.path.join(PROJECT_ROOT, "Header.png")
@@ -116,7 +113,6 @@ AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
-# Legacy queue prefixes
 JOBS_PENDING_PREFIX = os.getenv("JOBS_PENDING_PREFIX", "jobs/pending/")
 JOBS_PROCESSING_PREFIX = os.getenv("JOBS_PROCESSING_PREFIX", "jobs/processing/")
 JOBS_FINISHED_PREFIX = os.getenv("JOBS_FINISHED_PREFIX", "jobs/finished/")
@@ -201,11 +197,34 @@ class CategoryResult:
 
 
 @dataclass
+class FirstImpressionItem:
+    title_en: str
+    title_th: str
+    scale: str
+    score: int
+    insight_en: str
+    insight_th: str
+    impact_en: str
+    impact_th: str
+    details: Dict[str, Any]
+
+
+@dataclass
+class FirstImpressionResult:
+    eye_contact: FirstImpressionItem
+    uprightness: FirstImpressionItem
+    stance: FirstImpressionItem
+    reliability_note_en: str = ""
+    reliability_note_th: str = ""
+
+
+@dataclass
 class ReportData:
     client_name: str
     analysis_date: str
     video_length_str: str
     overall_score: int
+    first_impression: Optional[FirstImpressionResult]
     categories: list
     summary_comment: str
     generated_by: str
@@ -420,12 +439,477 @@ def generate_shape_graph(detection_results: dict, output_path: str):
 
 
 # =========================
-# Analysis (fallback)
+# First Impression — REAL analysis from video
+# =========================
+POSE_IDX = {
+    "NOSE": 0,
+    "LEFT_EAR": 7,
+    "RIGHT_EAR": 8,
+    "LEFT_SHOULDER": 11,
+    "RIGHT_SHOULDER": 12,
+    "LEFT_HIP": 23,
+    "RIGHT_HIP": 24,
+    "LEFT_ANKLE": 27,
+    "RIGHT_ANKLE": 28,
+}
+
+def _fi_clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+def _fi_level_from_score(score: int, lang: str) -> str:
+    if score >= 75:
+        return "สูง" if lang.startswith("th") else "High"
+    if score >= 45:
+        return "ปานกลาง" if lang.startswith("th") else "Moderate"
+    return "ต่ำ" if lang.startswith("th") else "Low"
+
+def _fi_safe_mean(vals: List[float]) -> Optional[float]:
+    if np is None or not vals:
+        return None
+    return float(np.mean(vals))
+
+def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[List[Dict[str, Tuple[float, float, float]]], Dict[str, Any]]:
+    if cv2 is None or mp is None or np is None:
+        return [], {"reason": "missing_libs"}
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return [], {"reason": "cannot_open_video"}
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    duration_sec = frame_count / fps if fps > 0 else 0.0
+
+    target_fps = 6.0
+    sample_every = int(max(1, round((fps / target_fps) if fps > 0 else 4)))
+    processed = 0
+
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(
+        static_image_mode=False,
+        model_complexity=1,
+        smooth_landmarks=True,
+        enable_segmentation=False,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
+    seq: List[Dict[str, Tuple[float, float, float]]] = []
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        idx += 1
+        if idx % sample_every != 0:
+            continue
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = pose.process(rgb)
+
+        pose_dict: Dict[str, Tuple[float, float, float]] = {}
+        if res.pose_landmarks:
+            lm = res.pose_landmarks.landmark
+            for name, i in POSE_IDX.items():
+                if i < len(lm):
+                    pose_dict[name] = (float(lm[i].x), float(lm[i].y), float(lm[i].visibility))
+        seq.append(pose_dict)
+
+        processed += 1
+        if processed >= max_frames:
+            break
+
+    cap.release()
+    pose.close()
+
+    meta = {
+        "fps": float(fps),
+        "frame_count": int(frame_count),
+        "duration_sec": float(duration_sec),
+        "sample_every": int(sample_every),
+        "processed_frames": int(len(seq)),
+    }
+    return seq, meta
+
+def _fi_vis_ok(p: Optional[Tuple[float, float, float]], thr: float = 0.5) -> bool:
+    return bool(p) and float(p[2]) >= thr
+
+def _fi_get(pose: Dict[str, Tuple[float, float, float]], k: str) -> Optional[Tuple[float, float, float]]:
+    return pose.get(k)
+
+def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
+    usable = 0
+    forward = 0
+    yaw_vals: List[float] = []
+
+    for pose in seq:
+        nose = _fi_get(pose, "NOSE")
+        le = _fi_get(pose, "LEFT_EAR")
+        re = _fi_get(pose, "RIGHT_EAR")
+        if not (_fi_vis_ok(nose) and _fi_vis_ok(le) and _fi_vis_ok(re)):
+            continue
+
+        usable += 1
+        nx = float(nose[0]); lex = float(le[0]); rex = float(re[0])
+        cx = (lex + rex) / 2.0
+        span = abs(lex - rex) + 1e-6
+        yaw = abs(nx - cx) / span
+        yaw_vals.append(yaw)
+        if yaw <= 0.18:
+            forward += 1
+
+    if usable == 0:
+        return FirstImpressionItem(
+            title_en="Eye Contact",
+            title_th="Eye Contact",
+            scale="—",
+            score=0,
+            insight_en="Eye contact could not be reliably detected from this clip.",
+            insight_th="ระบบไม่สามารถตรวจจับทิศทางการสบตาได้อย่างน่าเชื่อถือจากคลิปนี้",
+            impact_en="When the system cannot detect gaze direction, we avoid over-interpreting presence or confidence.",
+            impact_th="เมื่อระบบตรวจจับทิศทางการมองไม่ชัดเจน เราจะหลีกเลี่ยงการสรุปเรื่องความมั่นใจหรือความน่าเชื่อถือมากเกินไป",
+            details={"usable_frames": 0},
+        )
+
+    forward_ratio = forward / usable
+    score = int(round(_fi_clamp01((forward_ratio - 0.15) / 0.85) * 100))
+    level = _fi_level_from_score(score, lang)
+
+    if score >= 75:
+        bullets_en = [
+            "Your eye contact is steady, warm, and audience-focused.",
+            "You maintain direct gaze during key message points, which increases trust and clarity.",
+            "When you shift your gaze, it is done purposefully (e.g., thinking, emphasizing).",
+            "There is no sign of avoidance — overall, the eye contact supports confidence and credibility.",
+        ]
+        bullets_th = [
+            "คุณสบตาได้ค่อนข้างสม่ำเสมอ ดูเป็นมิตร และโฟกัสผู้ฟัง",
+            "คุณคงการมองตรงในจุดสำคัญ ทำให้เกิดความไว้วางใจและความชัดเจน",
+            "เมื่อมีการเปลี่ยนสายตา ดูเป็นการเปลี่ยนอย่างมีเจตนา (เช่น คิด/เน้นประเด็น)",
+            "ไม่พบสัญญาณการหลบสายตา — โดยรวมช่วยเสริมความมั่นใจและความน่าเชื่อถือ",
+        ]
+        impact_en = "Strong eye contact signals presence, sincerity, and leadership confidence, making your message feel more reliable."
+        impact_th = "การสบตาที่ดีสะท้อนถึงความอยู่กับปัจจุบัน ความจริงใจ และความมั่นใจแบบผู้นำ ทำให้สารที่สื่อดูน่าเชื่อถือขึ้น"
+    elif score >= 45:
+        bullets_en = [
+            "Your eye contact is generally present, with occasional drift away from the audience.",
+            "You return to a forward-facing orientation, but consistency varies across the clip.",
+            "A steadier forward gaze would strengthen credibility.",
+        ]
+        bullets_th = [
+            "การสบตาโดยรวมถือว่ามีอยู่ แต่มีบางช่วงที่หลุดจากผู้ฟัง",
+            "คุณกลับมามองด้านหน้าได้ แต่ความสม่ำเสมอแตกต่างกันไป",
+            "หากคุมการมองด้านหน้าให้สม่ำเสมอขึ้น จะช่วยเพิ่มความน่าเชื่อถือ",
+        ]
+        impact_en = "More consistent eye contact helps the audience feel included and increases perceived confidence."
+        impact_th = "การสบตาที่สม่ำเสมอช่วยให้ผู้ฟังรู้สึกมีส่วนร่วม และเพิ่มการรับรู้เรื่องความมั่นใจ"
+    else:
+        bullets_en = [
+            "Eye contact appears inconsistent, with frequent orientation away from the audience.",
+            "This may reduce perceived clarity or create a sense of hesitation.",
+            "Stabilizing forward gaze at key message points can significantly improve first impression.",
+        ]
+        bullets_th = [
+            "การสบตาดูไม่สม่ำเสมอ และมีการหันหน้าออกจากผู้ฟังบ่อย",
+            "อาจทำให้ความชัดเจนลดลง หรือทำให้ผู้ฟังรู้สึกถึงความลังเล",
+            "การคุมการมองด้านหน้าในจังหวะสำคัญจะช่วยยกระดับ First impression ได้มาก",
+        ]
+        impact_en = "Limited eye contact can weaken trust signals and make the message feel less anchored."
+        impact_th = "การสบตาที่จำกัดอาจลดสัญญาณความน่าเชื่อถือ และทำให้สารที่สื่อดูไม่มั่นคง"
+
+    return FirstImpressionItem(
+        title_en="Eye Contact",
+        title_th="Eye Contact",
+        scale=level,
+        score=score,
+        insight_en="\n".join(bullets_en),
+        insight_th="\n".join(bullets_th),
+        impact_en=impact_en,
+        impact_th=impact_th,
+        details={
+            "usable_frames": usable,
+            "forward_ratio": float(forward_ratio),
+            "yaw_mean": _fi_safe_mean(yaw_vals),
+        },
+    )
+
+def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
+    usable = 0
+    vert_scores: List[float] = []
+    shoulder_tilts: List[float] = []
+    head_offsets: List[float] = []
+
+    for pose in seq:
+        ls = _fi_get(pose, "LEFT_SHOULDER")
+        rs = _fi_get(pose, "RIGHT_SHOULDER")
+        lh = _fi_get(pose, "LEFT_HIP")
+        rh = _fi_get(pose, "RIGHT_HIP")
+        nose = _fi_get(pose, "NOSE")
+
+        if not (_fi_vis_ok(ls) and _fi_vis_ok(rs) and _fi_vis_ok(lh) and _fi_vis_ok(rh) and _fi_vis_ok(nose)):
+            continue
+
+        usable += 1
+        sx = (float(ls[0]) + float(rs[0])) / 2.0
+        sy = (float(ls[1]) + float(rs[1])) / 2.0
+        hx = (float(lh[0]) + float(rh[0])) / 2.0
+        hy = (float(lh[1]) + float(rh[1])) / 2.0
+
+        dx = sx - hx
+        dy = sy - hy
+        vert = 1.0 - _fi_clamp01(abs(dx) / (abs(dy) + 1e-6))
+        vert_scores.append(vert)
+
+        tilt = abs(float(ls[1]) - float(rs[1]))
+        shoulder_tilts.append(tilt)
+
+        head_off = abs(float(nose[0]) - sx)
+        head_offsets.append(head_off)
+
+    if usable == 0:
+        return FirstImpressionItem(
+            title_en="Uprightness (Posture & Upper-Body Alignment)",
+            title_th="Uprightness (Posture & Upper-Body Alignment)",
+            scale="—",
+            score=0,
+            insight_en="Uprightness could not be reliably detected from this clip.",
+            insight_th="ระบบไม่สามารถประเมินแนวลำตัวและความตั้งตรงได้อย่างน่าเชื่อถือจากคลิปนี้",
+            impact_en="When posture detection is uncertain, we avoid making strong claims about confidence or authority.",
+            impact_th="เมื่อการตรวจจับท่าทางไม่ชัดเจน เราจะหลีกเลี่ยงการสรุปเรื่องความมั่นใจหรือความเป็นผู้นำมากเกินไป",
+            details={"usable_frames": 0},
+        )
+
+    vert_mean = float(np.mean(vert_scores)) if np is not None else 0.0
+    tilt_mean = float(np.mean(shoulder_tilts)) if np is not None else 1.0
+    head_mean = float(np.mean(head_offsets)) if np is not None else 1.0
+
+    tilt_score = 1.0 - _fi_clamp01((tilt_mean - 0.01) / 0.06)
+    head_score = 1.0 - _fi_clamp01((head_mean - 0.02) / 0.08)
+    combined = (0.55 * vert_mean) + (0.25 * tilt_score) + (0.20 * head_score)
+
+    score = int(round(_fi_clamp01(combined) * 100))
+    level = _fi_level_from_score(score, lang)
+
+    if score >= 75:
+        bullets_en = [
+            "You maintain a naturally upright posture throughout the clip.",
+            "The chest stays open, shoulders relaxed, and head aligned — signaling balance, readiness, and authority.",
+            "Even when you gesture, your vertical alignment remains stable, showing good core control.",
+            "There is no visible slouching or collapsing, which supports a professional appearance.",
+        ]
+        bullets_th = [
+            "คุณรักษาท่าทางที่ค่อนข้างตั้งตรงได้ดีตลอดคลิป",
+            "อกเปิด ไหล่ผ่อนคลาย และศีรษะอยู่ในแนว — สื่อถึงความสมดุล ความพร้อม และความน่าเชื่อถือ",
+            "แม้มีการใช้มือ/gesture แนวตั้งของลำตัวส่วนบนยังคงเสถียร แสดงการคุม core ได้ดี",
+            "ไม่พบการหลังค่อมหรือยุบตัวชัดเจน ช่วยให้ภาพรวมดูเป็นมืออาชีพ",
+        ]
+        impact_en = "Uprightness communicates self-assurance, clarity of thought, and emotional stability—all traits of high-trust communicators."
+        impact_th = "ความตั้งตรงของท่าทางสื่อถึงความมั่นใจ ความคิดชัดเจน และความมั่นคงทางอารมณ์ ซึ่งเป็นคุณลักษณะของผู้สื่อสารที่น่าเชื่อถือ"
+    elif score >= 45:
+        bullets_en = [
+            "Your posture is generally upright, with occasional moments of alignment drift.",
+            "Shoulders and head remain mostly stable, but consistency varies.",
+            "A slightly stronger vertical stack (head–shoulders–hips) would increase authority.",
+        ]
+        bullets_th = [
+            "ท่าทางโดยรวมค่อนข้างตั้งตรง แต่มีบางช่วงที่แนวลำตัวคลาดเคลื่อนเล็กน้อย",
+            "ไหล่และศีรษะค่อนข้างเสถียร แต่ความสม่ำเสมอแตกต่างกันไป",
+            "หากคุมแนว Head–Shoulders–Hips ให้ตั้งตรงสม่ำเสมอขึ้น จะช่วยเพิ่มภาพลักษณ์ความเป็นผู้นำ",
+        ]
+        impact_en = "More consistent alignment can elevate presence and reduce perceived uncertainty."
+        impact_th = "การจัดแนวลำตัวให้สม่ำเสมอขึ้น จะยกระดับ presence และลดความรู้สึกไม่มั่นใจที่ผู้ฟังอาจรับรู้"
+    else:
+        bullets_en = [
+            "Posture appears less stable, with noticeable alignment changes.",
+            "This can read as reduced readiness or lower confidence, even if the content is strong.",
+            "Stabilizing the vertical stack and opening the chest can quickly improve first impression.",
+        ]
+        bullets_th = [
+            "ท่าทางดูไม่ค่อยเสถียร และมีการเปลี่ยนแนวลำตัวค่อนข้างชัด",
+            "อาจทำให้ดูเหมือนไม่พร้อมหรือมั่นใจลดลง แม้เนื้อหาที่พูดจะดี",
+            "การคุมแนวตั้งของลำตัวและเปิดอกจะช่วยปรับ First impression ได้เร็ว",
+        ]
+        impact_en = "Unstable posture can weaken authority signals and distract from the message."
+        impact_th = "ท่าทางที่ไม่เสถียรอาจลดสัญญาณความเป็นผู้นำ และทำให้ผู้ฟังเสียสมาธิจากเนื้อหา"
+
+    return FirstImpressionItem(
+        title_en="Uprightness (Posture & Upper-Body Alignment)",
+        title_th="Uprightness (Posture & Upper-Body Alignment)",
+        scale=level,
+        score=score,
+        insight_en="\n".join(bullets_en),
+        insight_th="\n".join(bullets_th),
+        impact_en=impact_en,
+        impact_th=impact_th,
+        details={
+            "usable_frames": usable,
+            "vertical_mean": vert_mean,
+            "tilt_mean": tilt_mean,
+            "head_offset_mean": head_mean,
+        },
+    )
+
+def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
+    usable = 0
+    base_widths: List[float] = []
+    hip_xs: List[float] = []
+
+    for pose in seq:
+        la = _fi_get(pose, "LEFT_ANKLE")
+        ra = _fi_get(pose, "RIGHT_ANKLE")
+        lh = _fi_get(pose, "LEFT_HIP")
+        rh = _fi_get(pose, "RIGHT_HIP")
+        ls = _fi_get(pose, "LEFT_SHOULDER")
+        rs = _fi_get(pose, "RIGHT_SHOULDER")
+
+        if not (_fi_vis_ok(la) and _fi_vis_ok(ra) and _fi_vis_ok(lh) and _fi_vis_ok(rh) and _fi_vis_ok(ls) and _fi_vis_ok(rs)):
+            continue
+
+        usable += 1
+        ankle_dist = abs(float(la[0]) - float(ra[0]))
+        shoulder_width = abs(float(ls[0]) - float(rs[0])) + 1e-6
+        bw = ankle_dist / shoulder_width
+        base_widths.append(bw)
+
+        hip_x = (float(lh[0]) + float(rh[0])) / 2.0
+        hip_xs.append(hip_x)
+
+    if usable == 0:
+        return FirstImpressionItem(
+            title_en="Stance (Lower-Body Stability & Grounding)",
+            title_th="Stance (Lower-Body Stability & Grounding)",
+            scale="—",
+            score=0,
+            insight_en="Stance could not be reliably detected from this clip.",
+            insight_th="ระบบไม่สามารถประเมินความมั่นคงของช่วงล่างและการยืนได้อย่างน่าเชื่อถือจากคลิปนี้",
+            impact_en="When lower-body detection is uncertain, we avoid over-claiming grounding or stability.",
+            impact_th="เมื่อการตรวจจับช่วงล่างไม่ชัดเจน เราจะหลีกเลี่ยงการสรุปเรื่องความมั่นคงมากเกินไป",
+            details={"usable_frames": 0},
+        )
+
+    bw_mean = float(np.mean(base_widths)) if np is not None else 0.0
+    bw_std = float(np.std(base_widths)) if np is not None else 1.0
+    sway_std = float(np.std(hip_xs)) if np is not None else 1.0
+
+    bw_center = 1.15
+    bw_score = 1.0 - _fi_clamp01(abs(bw_mean - bw_center) / 0.7)
+    bw_consistency = 1.0 - _fi_clamp01((bw_std - 0.03) / 0.12)
+    sway_score = 1.0 - _fi_clamp01((sway_std - 0.01) / 0.06)
+
+    combined = (0.40 * bw_score) + (0.35 * bw_consistency) + (0.25 * sway_score)
+    score = int(round(_fi_clamp01(combined) * 100))
+    level = _fi_level_from_score(score, lang)
+
+    if score >= 75:
+        bullets_en = [
+            "Your stance is symmetrical and grounded, with feet placed about shoulder-width apart.",
+            "Weight shifts are controlled and minimal, preventing distraction and showing confidence.",
+            "You maintain good forward orientation toward the audience, reinforcing clarity and engagement.",
+            "The stance conveys both stability and a welcoming presence, suitable for instructional or coaching communication.",
+        ]
+        bullets_th = [
+            "ท่ายืนของคุณดูสมดุลและ grounded โดยระยะเท้าใกล้เคียงช่วงไหล่",
+            "การถ่ายน้ำหนักมีการคุม ไม่แกว่งมาก ลดสิ่งรบกวนและช่วยเสริมความมั่นใจ",
+            "ทิศทางลำตัวมุ่งสู่ผู้ฟังได้ดี ช่วยเสริมความชัดเจนและการมีส่วนร่วม",
+            "ท่ายืนสื่อถึงความมั่นคงและความเป็นมิตร เหมาะกับการสื่อสารแนวสอน/โค้ช",
+        ]
+        impact_en = "A grounded stance enhances authority, control, and smooth message delivery, making the speaker appear more prepared and credible."
+        impact_th = "การยืนที่มั่นคงช่วยเสริมความเป็นผู้นำ การควบคุมสถานการณ์ และความลื่นไหลในการสื่อสาร ทำให้ดูพร้อมและน่าเชื่อถือ"
+    elif score >= 45:
+        bullets_en = [
+            "Your stance is generally stable, with some variability in base width or subtle shifts.",
+            "The overall grounding is present, but consistency could be stronger.",
+            "A steadier base can improve perceived confidence.",
+        ]
+        bullets_th = [
+            "ท่ายืนโดยรวมค่อนข้างมั่นคง แต่ยังมีการขยับ/แปรผันบางช่วง",
+            "ภาพรวมยัง grounded แต่ความสม่ำเสมอสามารถเพิ่มได้อีก",
+            "หากคุมฐานให้เสถียรขึ้น จะช่วยให้ดูมั่นใจมากขึ้น",
+        ]
+        impact_en = "More consistent grounding reduces distraction and supports clearer communication."
+        impact_th = "ความมั่นคงที่สม่ำเสมอช่วยลดสิ่งรบกวนสายตา และทำให้การสื่อสารชัดเจนขึ้น"
+    else:
+        bullets_en = [
+            "Stance appears less grounded, with noticeable variability or sway.",
+            "This can distract the audience and reduce perceived confidence.",
+            "Stabilizing the base and minimizing shifting during key points can quickly improve first impression.",
+        ]
+        bullets_th = [
+            "ท่ายืนดูไม่ค่อย grounded และมีความแปรผัน/แกว่งชัดเจน",
+            "อาจทำให้ผู้ฟังเสียสมาธิและรับรู้ความมั่นใจลดลง",
+            "การคุมฐานให้มั่นคงและลดการขยับในจังหวะสำคัญจะช่วยยกระดับ First impression ได้เร็ว",
+        ]
+        impact_en = "Unstable stance can weaken authority signals and interrupt message flow."
+        impact_th = "ท่ายืนที่ไม่มั่นคงอาจลดสัญญาณความเป็นผู้นำ และทำให้จังหวะการสื่อสารสะดุด"
+
+    return FirstImpressionItem(
+        title_en="Stance (Lower-Body Stability & Grounding)",
+        title_th="Stance (Lower-Body Stability & Grounding)",
+        scale=level,
+        score=score,
+        insight_en="\n".join(bullets_en),
+        insight_th="\n".join(bullets_th),
+        impact_en=impact_en,
+        impact_th=impact_th,
+        details={
+            "usable_frames": usable,
+            "base_width_mean": bw_mean,
+            "base_width_std": bw_std,
+            "hip_sway_std": sway_std,
+        },
+    )
+
+def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[FirstImpressionResult], Dict[str, Any]]:
+    debug: Dict[str, Any] = {"enabled": True}
+
+    if cv2 is None or mp is None or np is None:
+        debug["enabled"] = False
+        debug["reason"] = "missing_libs"
+        return None, debug
+
+    seq, meta = _fi_extract_pose_sequence(video_path, max_frames=1000)
+    debug["meta"] = meta
+    debug["frames_with_pose"] = sum(1 for p in seq if p)
+
+    if not seq or debug["frames_with_pose"] < 10:
+        debug["enabled"] = False
+        debug["reason"] = "insufficient_pose_frames"
+        return None, debug
+
+    eye = _analyze_eye_contact(seq, lang)
+    up = _analyze_uprightness(seq, lang)
+    stn = _analyze_stance(seq, lang)
+
+    processed = int(meta.get("processed_frames", 0) or 0)
+    frames_pose = int(debug["frames_with_pose"] or 0)
+    pose_ratio = frames_pose / max(1, processed)
+
+    note_en = ""
+    note_th = ""
+    if pose_ratio < 0.35:
+        note_en = "Note: Pose visibility was limited in this clip, so First Impression results should be interpreted with caution."
+        note_th = "หมายเหตุ: การมองเห็นสเกเลตัน/โพสในคลิปมีข้อจำกัด จึงควรตีความผล First Impression อย่างระมัดระวัง"
+    elif pose_ratio < 0.60:
+        note_en = "Note: Pose visibility was moderate, so First Impression results may vary depending on camera angle and lighting."
+        note_th = "หมายเหตุ: การมองเห็นโพสอยู่ในระดับปานกลาง ผล First Impression อาจแปรผันตามมุมกล้องและแสง"
+
+    return FirstImpressionResult(
+        eye_contact=eye,
+        uprightness=up,
+        stance=stn,
+        reliability_note_en=note_en,
+        reliability_note_th=note_th,
+    ), debug
+
+
+# =========================
+# Main analysis (fallback placeholder)
 # =========================
 def analyze_video_fallback(video_path: str) -> dict:
     duration = get_video_duration_seconds(video_path)
-    total_indicators = int(max(2000, min(20000, duration * 300))) if duration else 2000
+    total_indicators = int(max(900, min(20000, duration * 30))) if duration else 900
 
+    # deterministic-ish
     size = os.path.getsize(video_path) if os.path.exists(video_path) else 12345
     base = (size % 1000) / 1000.0
 
@@ -435,9 +919,9 @@ def analyze_video_fallback(video_path: str) -> dict:
             return max(1, min(10, s))
         return int(np.clip(round(r * 10), 1, 10))
 
-    engaging_r = 0.45 + (base * 0.15)
-    convince_r = 0.50 + (base * 0.20)
-    authority_r = 0.35 + (base * 0.10)
+    engaging_r = 0.47 + (base * 0.10)
+    convince_r = 0.52 + (base * 0.12)
+    authority_r = 0.49 + (base * 0.10)
 
     engaging_pos = int(total_indicators * engaging_r)
     convince_pos = int(total_indicators * convince_r)
@@ -473,8 +957,71 @@ def analyze_video_fallback(video_path: str) -> dict:
 
 
 # =========================
-# DOCX generator
+# DOCX formatting helpers (match sample)
 # =========================
+def _docx_set_base_font(doc, lang: str):
+    style = doc.styles["Normal"]
+    style.font.name = "TH Sarabun New" if (lang or "").startswith("th") else "Calibri"
+    style.font.size = Pt(11)
+
+def _docx_apply_para(p, left: float = 0.0, first_line: float = 0.0, before: int = 0, after: int = 0, line: float = 1.15):
+    pf = p.paragraph_format
+    pf.left_indent = Inches(left)
+    pf.first_line_indent = Inches(first_line)
+    pf.space_before = Pt(before)
+    pf.space_after = Pt(after)
+    pf.line_spacing = line
+
+def _docx_add_heading(doc, text: str, size: int = 12, bold: bool = True, before: int = 0, after: int = 6):
+    p = doc.add_paragraph()
+    r = p.add_run(text)
+    r.bold = bold
+    r.font.size = Pt(size)
+    _docx_apply_para(p, left=0.0, first_line=0.0, before=before, after=after)
+    return p
+
+def _docx_add_numbered_line(doc, number: str, text: str):
+    # Looks like: "1.    First impression"
+    p = doc.add_paragraph()
+    _docx_apply_para(p, left=0.35, first_line=0.0, before=0, after=4)
+    run = p.add_run(f"{number}\t{text}")
+    run.bold = False
+
+    # set a tab stop roughly like Word default
+    try:
+        p.paragraph_format.tab_stops.add_tab_stop(Inches(0.75))
+    except Exception:
+        pass
+    return p
+
+def _docx_add_subheading(doc, text: str):
+    # e.g. Eye Contact / Uprightness...
+    p = doc.add_paragraph()
+    _docx_apply_para(p, left=0.55, first_line=0.0, before=10, after=2)
+    p.add_run(text)
+    return p
+
+def _docx_add_bullet(doc, text: str):
+    # Bullet with hanging indent (•)
+    p = doc.add_paragraph()
+    # left=0.85, first_line=-0.20 => bullet hangs like sample
+    _docx_apply_para(p, left=0.85, first_line=-0.20, before=0, after=6)
+    p.add_run("•  " + text)
+    return p
+
+def _docx_add_impact_block(doc, label: str, text: str):
+    # label line aligned with bullet text start (no bullet)
+    p1 = doc.add_paragraph()
+    _docx_apply_para(p1, left=0.95, first_line=0.0, before=4, after=0)
+    r = p1.add_run(label)
+    r.bold = False
+
+    p2 = doc.add_paragraph()
+    _docx_apply_para(p2, left=0.95, first_line=0.0, before=0, after=10)
+    p2.add_run(text)
+    return p1, p2
+
+
 def build_docx_report(
     report: ReportData,
     out_bio: io.BytesIO,
@@ -486,9 +1033,7 @@ def build_docx_report(
         raise RuntimeError("python-docx is required to build DOCX reports")
 
     doc = Document()
-    style = doc.styles["Normal"]
-    style.font.name = "TH Sarabun New" if (lang or "").startswith("th") else "Calibri"
-    style.font.size = Pt(11)
+    _docx_set_base_font(doc, lang)
 
     # Header image
     if os.path.exists(ASSET_HEADER):
@@ -497,61 +1042,97 @@ def build_docx_report(
         p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.clear()
-        run = p.add_run()
-        run.add_picture(ASSET_HEADER, width=Inches(6.5))
+        p.add_run().add_picture(ASSET_HEADER, width=Inches(6.5))
 
-    # Title
-    title = doc.add_paragraph(_t(lang, "Presentation Analysis Report", "รายงานการวิเคราะห์การนำเสนอ"))
-    title.runs[0].bold = True
-    title.runs[0].font.size = Pt(18)
-    title.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    doc.add_paragraph("")
+    # Title (match sample)
+    p = doc.add_paragraph()
+    r = p.add_run(_t(lang, "Character Analysis Report", "รายงานวิเคราะห์บุคลิกภาพ"))
+    r.bold = True
+    r.font.size = Pt(14)
+    _docx_apply_para(p, left=0.0, first_line=0.0, before=10, after=14)
 
     # Client + date
     p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=6)
     p.add_run(_t(lang, "Client Name:     ", "ชื่อลูกค้า:     ")).bold = True
     p.add_run(report.client_name or "—")
 
     p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=10)
     p.add_run(_t(lang, "Analysis Date:   ", "วันที่วิเคราะห์:   ")).bold = True
     p.add_run(report.analysis_date or "—")
 
     # Video info
-    doc.add_paragraph("")
-    h = doc.add_paragraph(_t(lang, "Video Information", "ข้อมูลวิดีโอ"))
-    h.runs[0].bold = True
-    h.runs[0].font.size = Pt(12)
+    _docx_add_heading(doc, _t(lang, "Video Information", "ข้อมูลวิดีโอ"), size=11, bold=True, before=6, after=6)
 
     p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=18)
     p.add_run(_t(lang, "Duration: ", "ความยาว: ")).bold = True
     p.add_run(report.video_length_str or "—")
 
-    # Page 2
-    if report.categories:
-        doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-        h = doc.add_paragraph(_t(lang, "Detailed Presentation Analysis", "รายละเอียดการวิเคราะห์การนำเสนอ"))
-        h.runs[0].bold = True
-        h.runs[0].font.size = Pt(12)
+    # Detailed Analysis heading
+    _docx_add_heading(doc, _t(lang, "Detailed Analysis", "Detailed Analysis"), size=11, bold=True, before=6, after=10)
 
+    # 1. First impression
+    if report.first_impression is not None:
+        _docx_add_numbered_line(doc, "1.", _t(lang, "First impression", "First impression"))
+
+        fi = report.first_impression
+
+        def render_item(item: FirstImpressionItem):
+            _docx_add_subheading(doc, _t(lang, item.title_en, item.title_th))
+
+            # bullets from insight split lines
+            bullets = (_t(lang, item.insight_en, item.insight_th) or "").split("\n")
+            for b in bullets:
+                b = (b or "").strip()
+                if b:
+                    _docx_add_bullet(doc, b)
+
+            _docx_add_impact_block(
+                doc,
+                _t(lang, "Impact for clients:", "Impact for clients:"),
+                _t(lang, item.impact_en, item.impact_th),
+            )
+
+        render_item(fi.eye_contact)
+        render_item(fi.uprightness)
+        render_item(fi.stance)
+
+        note = _t(lang, fi.reliability_note_en, fi.reliability_note_th).strip()
+        if note:
+            p = doc.add_paragraph()
+            _docx_apply_para(p, left=0.55, before=0, after=10)
+            r = p.add_run(note)
+            r.italic = True
+
+    # 2/3/4 categories with numbering like sample
+    if report.categories:
+        n = 2
         for cat in report.categories:
             cat_name = cat.name_th if (lang or "").startswith("th") else cat.name_en
-            cat_header = doc.add_paragraph(f"o {cat_name}:")
-            cat_header.runs[0].bold = True
+            _docx_add_numbered_line(doc, f"{n}.", f"{cat_name}:")
+            n += 1
 
             tpl = REPORT_CATEGORY_TEMPLATES.get(cat.name_en)
             if tpl:
                 bullets_key = "bullets_th" if (lang or "").startswith("th") else "bullets_en"
                 bullets = tpl.get(bullets_key) or []
                 for b in bullets:
-                    if str(b).strip():
-                        doc.add_paragraph(str(b).strip(), style="List Bullet")
+                    b = (str(b) or "").strip()
+                    if b:
+                        _docx_add_bullet(doc, b)
 
+            # Scale
             p = doc.add_paragraph()
+            _docx_apply_para(p, left=0.55, before=6, after=4)
             p.add_run(_t(lang, "Scale: ", "ระดับ: ")).bold = True
             p.add_run(_scale_label(cat.scale, lang=lang))
 
+            # Description
             if cat.total > 0:
                 p = doc.add_paragraph()
+                _docx_apply_para(p, left=0.55, before=0, after=14)
                 p.add_run(_t(lang, "Description: ", "คำอธิบาย: ")).bold = True
                 p.add_run(
                     _t(
@@ -560,28 +1141,25 @@ def build_docx_report(
                         f"ตรวจพบตัวบ่งชี้เชิงบวก {cat.positives} รายการ จากทั้งหมด {cat.total} รายการ",
                     )
                 )
+            else:
+                doc.add_paragraph("")
 
-    # Graph 1
+    # Graph pages (optional)
     if graph1_path and os.path.exists(graph1_path):
         doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-        h = doc.add_paragraph(_t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"))
-        h.runs[0].bold = True
-        h.runs[0].font.size = Pt(12)
+        _docx_add_heading(doc, _t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"), size=11, bold=True, before=0, after=8)
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.add_run().add_picture(graph1_path, width=Inches(6.0))
 
-    # Graph 2
     if graph2_path and os.path.exists(graph2_path):
         doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
-        h = doc.add_paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"))
-        h.runs[0].bold = True
-        h.runs[0].font.size = Pt(12)
+        _docx_add_heading(doc, _t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), size=11, bold=True, before=0, after=8)
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p.add_run().add_picture(graph2_path, width=Inches(6.0))
 
-    # Footer
+    # Footer (image + generated by right)
     section = doc.sections[0]
     footer = section.footer
     for paragraph in footer.paragraphs:
@@ -609,33 +1187,26 @@ def build_docx_report(
 
 
 # =========================
-# PDF generator (simple, robust)
+# PDF generator (spacing/indent matches sample)
 # =========================
 def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[str], graph2_path: Optional[str], lang: str):
-    if SimpleDocTemplate is None:
+    if SimpleDocTemplate is None or getSampleStyleSheet is None:
         raise RuntimeError("reportlab is required to build PDF reports")
 
     styles = getSampleStyleSheet()
     base = styles["Normal"]
     base.fontName = "Helvetica"
     base.fontSize = 11
+    base.leading = 14
 
-    title_style = ParagraphStyle(
-        "title",
-        parent=base,
-        fontSize=18,
-        leading=22,
-        spaceAfter=12,
-    )
+    h_style = ParagraphStyle("h", parent=base, fontSize=11, leading=14, spaceBefore=10, spaceAfter=8)
+    title_style = ParagraphStyle("title", parent=base, fontSize=14, leading=18, spaceBefore=8, spaceAfter=16)
 
-    h_style = ParagraphStyle(
-        "h",
-        parent=base,
-        fontSize=12,
-        leading=16,
-        spaceBefore=10,
-        spaceAfter=6,
-    )
+    num_style = ParagraphStyle("num", parent=base, leftIndent=0.35 * inch, spaceBefore=0, spaceAfter=6)
+    sub_style = ParagraphStyle("sub", parent=base, leftIndent=0.55 * inch, spaceBefore=10, spaceAfter=2)
+    bullet_style = ParagraphStyle("bul", parent=base, leftIndent=0.85 * inch, firstLineIndent=-0.20 * inch, spaceBefore=0, spaceAfter=8)
+    impact_label_style = ParagraphStyle("impact_lbl", parent=base, leftIndent=0.95 * inch, spaceBefore=4, spaceAfter=2)
+    impact_text_style = ParagraphStyle("impact_txt", parent=base, leftIndent=0.95 * inch, spaceBefore=0, spaceAfter=12)
 
     doc = SimpleDocTemplate(
         out_path,
@@ -648,49 +1219,75 @@ def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[st
 
     story: List[Any] = []
 
-    # header image (optional)
     if os.path.exists(ASSET_HEADER):
         story.append(RLImage(ASSET_HEADER, width=6.5 * inch, height=0.9 * inch))
-        story.append(Spacer(1, 0.15 * inch))
+        story.append(Spacer(1, 0.18 * inch))
 
-    story.append(Paragraph(_t(lang, "Presentation Analysis Report", "รายงานการวิเคราะห์การนำเสนอ"), title_style))
-
+    story.append(Paragraph(_t(lang, "Character Analysis Report", "รายงานวิเคราะห์บุคลิกภาพ"), title_style))
     story.append(Paragraph(f"<b>{_t(lang,'Client Name:','ชื่อลูกค้า:')}</b> {report.client_name or '—'}", base))
     story.append(Paragraph(f"<b>{_t(lang,'Analysis Date:','วันที่วิเคราะห์:')}</b> {report.analysis_date or '—'}", base))
-    story.append(Spacer(1, 0.15 * inch))
+    story.append(Spacer(1, 0.18 * inch))
 
     story.append(Paragraph(_t(lang, "Video Information", "ข้อมูลวิดีโอ"), h_style))
     story.append(Paragraph(f"<b>{_t(lang,'Duration:','ความยาว:')}</b> {report.video_length_str or '—'}", base))
+    story.append(Spacer(1, 0.22 * inch))
+
+    story.append(Paragraph(_t(lang, "Detailed Analysis", "Detailed Analysis"), h_style))
+
+    if report.first_impression is not None:
+        story.append(Paragraph(f"1.&nbsp;&nbsp;&nbsp;&nbsp;{_t(lang,'First impression','First impression')}", num_style))
+        fi = report.first_impression
+
+        def add_item(item: FirstImpressionItem):
+            story.append(Paragraph(_t(lang, item.title_en, item.title_th), sub_style))
+            bullets = (_t(lang, item.insight_en, item.insight_th) or "").split("\n")
+            for b in bullets:
+                b = (b or "").strip()
+                if b:
+                    story.append(Paragraph(f"•&nbsp;&nbsp;{b}", bullet_style))
+            story.append(Paragraph(_t(lang, "Impact for clients:", "Impact for clients:"), impact_label_style))
+            story.append(Paragraph(_t(lang, item.impact_en, item.impact_th), impact_text_style))
+
+        add_item(fi.eye_contact)
+        add_item(fi.uprightness)
+        add_item(fi.stance)
+
+        note = _t(lang, fi.reliability_note_en, fi.reliability_note_th).strip()
+        if note:
+            story.append(Paragraph(f"<i>{note}</i>", ParagraphStyle("note", parent=base, leftIndent=0.55 * inch, spaceBefore=0, spaceAfter=10)))
 
     if report.categories:
-        story.append(PageBreak())
-        story.append(Paragraph(_t(lang, "Detailed Presentation Analysis", "รายละเอียดการวิเคราะห์การนำเสนอ"), h_style))
-
+        n = 2
         for cat in report.categories:
             cat_name = cat.name_th if (lang or "").startswith("th") else cat.name_en
-            story.append(Paragraph(f"<b>• {cat_name}</b>", base))
+            story.append(Paragraph(f"{n}.&nbsp;&nbsp;&nbsp;&nbsp;{cat_name}:", num_style))
+            n += 1
 
             tpl = REPORT_CATEGORY_TEMPLATES.get(cat.name_en)
             if tpl:
                 bullets_key = "bullets_th" if (lang or "").startswith("th") else "bullets_en"
                 bullets = tpl.get(bullets_key) or []
                 for b in bullets:
-                    if str(b).strip():
-                        story.append(Paragraph(f" - {str(b).strip()}", base))
+                    b = (str(b) or "").strip()
+                    if b:
+                        story.append(Paragraph(f"•&nbsp;&nbsp;{b}", bullet_style))
 
-            story.append(Paragraph(f"<b>{_t(lang,'Scale:','ระดับ:')}</b> {_scale_label(cat.scale, lang=lang)}", base))
+            story.append(Paragraph(f"<b>{_t(lang,'Scale:','ระดับ:')}</b> {_scale_label(cat.scale, lang=lang)}", ParagraphStyle("scale", parent=base, leftIndent=0.55 * inch, spaceBefore=4, spaceAfter=6)))
+
             if cat.total > 0:
                 story.append(
                     Paragraph(
+                        f"<b>{_t(lang,'Description:','คำอธิบาย:')}</b> " +
                         _t(
                             lang,
                             f"Detected {cat.positives} positive indicators out of {cat.total} total indicators",
                             f"ตรวจพบตัวบ่งชี้เชิงบวก {cat.positives} รายการ จากทั้งหมด {cat.total} รายการ",
                         ),
-                        base,
+                        ParagraphStyle("desc", parent=base, leftIndent=0.55 * inch, spaceBefore=0, spaceAfter=12),
                     )
                 )
-            story.append(Spacer(1, 0.12 * inch))
+            else:
+                story.append(Spacer(1, 0.15 * inch))
 
     if graph1_path and os.path.exists(graph1_path):
         story.append(PageBreak())
@@ -702,7 +1299,6 @@ def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[st
         story.append(Paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), h_style))
         story.append(RLImage(graph2_path, width=6.5 * inch, height=4.0 * inch))
 
-    # footer image (optional)
     if os.path.exists(ASSET_FOOTER):
         story.append(PageBreak())
         story.append(RLImage(ASSET_FOOTER, width=6.5 * inch, height=0.9 * inch))
@@ -717,7 +1313,6 @@ def s3_get_json(key: str) -> dict:
     obj = s3.get_object(Bucket=AWS_BUCKET, Key=key)
     return json.loads(obj["Body"].read().decode("utf-8"))
 
-
 def s3_put_json(key: str, data: dict):
     s3.put_object(
         Bucket=AWS_BUCKET,
@@ -726,19 +1321,15 @@ def s3_put_json(key: str, data: dict):
         ContentType="application/json; charset=utf-8",
     )
 
-
 def s3_download_to_file(key: str, local_path: str):
     s3.download_file(AWS_BUCKET, key, local_path)
-
 
 def s3_put_bytes(key: str, data: bytes, content_type: str):
     s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType=content_type)
 
-
 def s3_copy_delete(src_key: str, dst_key: str):
     s3.copy_object(Bucket=AWS_BUCKET, CopySource={"Bucket": AWS_BUCKET, "Key": src_key}, Key=dst_key)
     s3.delete_object(Bucket=AWS_BUCKET, Key=src_key)
-
 
 def list_job_json_keys(prefix: str, limit: int = 200) -> list:
     keys = []
@@ -768,10 +1359,8 @@ def is_report_job(job: dict) -> bool:
     jt = (job.get("type") or job.get("job_type") or job.get("mode") or "").strip().lower()
     return jt in ("report", "presentation_report", "presentation-analysis-report")
 
-
 def job_status(job: dict) -> str:
     return (job.get("status") or "").strip().lower()
-
 
 def set_status(job: dict, status: str, message: str = "") -> dict:
     job["status"] = status
@@ -780,20 +1369,27 @@ def set_status(job: dict, status: str, message: str = "") -> dict:
         job["message"] = message
     return job
 
-
 def resolve_video_key(job: dict, job_id: str) -> str:
     for f in ("video_s3_key", "input_video_key", "input_key", "s3_key"):
         if job.get(f):
             return str(job[f])
-    # legacy fallback
     return f"jobs/pending/{job_id}/input/input.mp4"
-
 
 def job_lang(job: dict) -> str:
     lang = (job.get("lang") or job.get("language") or "").strip().lower()
     if lang.startswith("th"):
         return "th"
     return "en"
+
+def include_first_impression(job: dict) -> bool:
+    if "include_first_impression" in job:
+        return bool(job.get("include_first_impression"))
+    if "first_impression" in job:
+        return bool(job.get("first_impression"))
+    opts = job.get("options") if isinstance(job.get("options"), dict) else {}
+    if isinstance(opts, dict) and "first_impression" in opts:
+        return bool(opts.get("first_impression"))
+    return True
 
 
 # =========================
@@ -817,6 +1413,21 @@ def process_report_job(job_key: str):
     s3_put_json(job_key, job)
 
     tmp_dir = tempfile.mkdtemp(prefix=f"report_{job_id}_")
+    debug_payload: Dict[str, Any] = {
+        "job_id": job_id,
+        "lang": lang_code,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "libs": {
+            "cv2": bool(cv2),
+            "np": bool(np),
+            "pd": bool(pd),
+            "plt": bool(plt),
+            "docx": bool(Document),
+            "reportlab": bool(SimpleDocTemplate),
+            "mediapipe": bool(mp),
+        },
+    }
+
     try:
         # Download video
         video_key = resolve_video_key(job, job_id)
@@ -826,35 +1437,36 @@ def process_report_job(job_key: str):
         log.info(f"Downloading video from s3://{AWS_BUCKET}/{video_key}")
         s3_download_to_file(video_key, video_path)
 
-        # Analyze (safe fallback)
+        # Analyze main (existing placeholder)
         result = analyze_video_fallback(video_path)
+        debug_payload["main_analysis"] = {"engine": result.get("analysis_engine", "unknown")}
 
         duration_str = format_seconds_to_mmss(result.get("duration_seconds") or 0.0)
-        analysis_date = datetime.now().strftime("%Y-%m-%d")
+        analysis_date = datetime.now().strftime("%d-%m-%Y")
         total = int(result.get("total_indicators") or 0)
 
         categories = [
             CategoryResult(
                 name_en="Engaging & Connecting",
-                name_th="การสร้างความเป็นมิตรและสร้างสัมพันธภาพ",
+                name_th="Engaging & Connecting",
                 score=int(result.get("engaging_score") or 1),
-                scale=("moderate" if int(result.get("engaging_score") or 1) in (3, 4) else ("high" if int(result.get("engaging_score") or 1) >= 5 else "low")),
+                scale=("high" if int(result.get("engaging_score") or 1) >= 5 else ("moderate" if int(result.get("engaging_score") or 1) >= 3 else "low")),
                 positives=int(result.get("engaging_pos") or 0),
                 total=total,
             ),
             CategoryResult(
                 name_en="Confidence",
-                name_th="ความมั่นใจ",
+                name_th="Confidence",
                 score=int(result.get("convince_score") or 1),
-                scale=("moderate" if int(result.get("convince_score") or 1) in (3, 4) else ("high" if int(result.get("convince_score") or 1) >= 5 else "low")),
+                scale=("high" if int(result.get("convince_score") or 1) >= 5 else ("moderate" if int(result.get("convince_score") or 1) >= 3 else "low")),
                 positives=int(result.get("convince_pos") or 0),
                 total=total,
             ),
             CategoryResult(
                 name_en="Authority",
-                name_th="ความเป็นผู้นำและอำนาจ",
+                name_th="Authority",
                 score=int(result.get("authority_score") or 1),
-                scale=("moderate" if int(result.get("authority_score") or 1) in (3, 4) else ("high" if int(result.get("authority_score") or 1) >= 5 else "low")),
+                scale=("high" if int(result.get("authority_score") or 1) >= 5 else ("moderate" if int(result.get("authority_score") or 1) >= 3 else "low")),
                 positives=int(result.get("authority_pos") or 0),
                 total=total,
             ),
@@ -863,59 +1475,46 @@ def process_report_job(job_key: str):
         client_name = str(job.get("client_name") or job.get("client") or "").strip()
         summary_comment = str(job.get("summary_comment") or "").strip()
 
+        # First Impression analysis
+        fi_obj: Optional[FirstImpressionResult] = None
+        if include_first_impression(job):
+            fi_obj, fi_debug = analyze_first_impression(video_path, lang_code)
+            debug_payload["first_impression"] = fi_debug
+        else:
+            debug_payload["first_impression"] = {"enabled": False, "reason": "disabled_by_job"}
+
         # Generate graphs (optional)
         graph1_path: Optional[str] = os.path.join(tmp_dir, "Graph 1.png")
         graph2_path: Optional[str] = os.path.join(tmp_dir, "Graph 2.png")
 
         try:
-            # Helpful diagnostics (won't break anything)
-            log.info(f"Asset check: Effort.xlsx exists={os.path.exists(ASSET_EFFORT)} path={ASSET_EFFORT}")
-            log.info(f"Asset check: Shape.xlsx  exists={os.path.exists(ASSET_SHAPE)} path={ASSET_SHAPE}")
-            log.info(f"Matplotlib available={bool(plt)}  Numpy available={bool(np)}  Pandas available={bool(pd)}")
-
             generate_effort_graph(result.get("effort_detection", {}), result.get("shape_detection", {}), graph1_path)
             generate_shape_graph(result.get("shape_detection", {}), graph2_path)
-
-            log.info(f"Graph1 exists={os.path.exists(graph1_path)} path={graph1_path}")
-            log.info(f"Graph2 exists={os.path.exists(graph2_path)} path={graph2_path}")
-
             if not os.path.exists(graph1_path):
-                log.warning("Graph1 file missing after generation (savefig may have failed)")
                 graph1_path = None
             if not os.path.exists(graph2_path):
-                log.warning("Graph2 file missing after generation (savefig may have failed)")
                 graph2_path = None
-
         except Exception as e:
-            log.warning(
-                f"Graph generation failed: {e} | "
-                f"plt={'ok' if plt else 'None'} np={'ok' if np else 'None'} pd={'ok' if pd else 'None'} | "
-                f"Effort.xlsx exists={os.path.exists(ASSET_EFFORT)} Shape.xlsx exists={os.path.exists(ASSET_SHAPE)}"
-            )
+            log.warning(f"Graph generation failed: {e}")
             graph1_path = None
             graph2_path = None
 
         report = ReportData(
             client_name=client_name,
             analysis_date=analysis_date,
-            video_length_str=duration_str,
+            video_length_str=f"{int(round(get_video_duration_seconds(video_path)))} seconds ({duration_str})" if cv2 else duration_str,
             overall_score=int(round(sum([c.score for c in categories]) / max(1, len(categories)))),
+            first_impression=fi_obj,
             categories=categories,
             summary_comment=summary_comment,
-            generated_by=_t(lang_code, "Generated by AI People Reader™", "จัดทำโดย AI People Reader™"),
+            generated_by=_t(lang_code, "Generated by AI People Reader™", "Generated by AI People Reader™"),
         )
 
         outputs: Dict[str, str] = {}
 
-        # Output keys from job (preferred)
-        out_docx_key = job.get("output_docx_key")
-        out_pdf_key = job.get("output_pdf_key")
-
-        # Fallback if not provided
-        if not out_docx_key:
-            out_docx_key = f"jobs/output/{job_id}/report_{lang_code}.docx"
-        if not out_pdf_key:
-            out_pdf_key = f"jobs/output/{job_id}/report_{lang_code}.pdf"
+        out_docx_key = job.get("output_docx_key") or f"jobs/output/{job_id}/report_{lang_code}.docx"
+        out_pdf_key = job.get("output_pdf_key") or f"jobs/output/{job_id}/report_{lang_code}.pdf"
+        out_debug_key = job.get("output_debug_key") or f"jobs/output/{job_id}/debug_{lang_code}.json"
 
         # Build DOCX
         docx_bio = io.BytesIO()
@@ -931,7 +1530,7 @@ def process_report_job(job_key: str):
         )
         outputs["docx"] = str(out_docx_key)
 
-        # Build PDF (required by your spec — but keep graceful if libs missing)
+        # Build PDF (graceful)
         pdf_ok = True
         try:
             local_pdf = os.path.join(tmp_dir, f"report_{lang_code}.pdf")
@@ -945,6 +1544,19 @@ def process_report_job(job_key: str):
         except Exception as e:
             pdf_ok = False
             log.warning(f"PDF generation skipped/failed: {e}")
+
+        # Upload debug metrics
+        debug_payload["outputs"] = outputs
+        debug_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            s3_put_bytes(
+                str(out_debug_key),
+                json.dumps(debug_payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                "application/json",
+            )
+            outputs["debug"] = str(out_debug_key)
+        except Exception as e:
+            log.warning(f"Upload debug json failed: {e}")
 
         job["outputs"] = outputs
         msg = "Report generated" if pdf_ok else "DOCX generated (PDF missing on worker)"
@@ -985,7 +1597,6 @@ def main_loop():
 
                     process_report_job(job_key)
 
-                    # After process, move json out of pending like legacy
                     job2 = s3_get_json(job_key)
                     job_id = str(job2.get("job_id") or job2.get("id") or os.path.splitext(os.path.basename(job_key))[0])
 
