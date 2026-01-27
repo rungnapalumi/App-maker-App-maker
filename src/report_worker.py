@@ -4,15 +4,17 @@
 # - Polls S3: jobs/pending/*.json
 # - Handles only mode=="report"
 # - Downloads shared input video via job["input_key"]
-# - Generates DOCX + PDF (if libs available) + graphs
-# - Uploads outputs to job-specified keys
-# - Moves job json to jobs/finished/ or jobs/failed/
-#
-# ✅ First Impression (REAL analysis from uploaded video):
+# - ✅ Normalizes video with FFmpeg (always) -> stable decode on Render
+# - ✅ First Impression (REAL analysis) via MoveNet TFLite:
 #     1) Eye Contact
 #     2) Uprightness (Posture & Upper-Body Alignment)
 #     3) Stance (Lower-Body Stability & Grounding)
-# ✅ Spacing/indent matches sample (DOCX + PDF)
+# - Generates DOCX + graphs
+# - Uploads outputs to job-specified keys
+# - Moves job json to jobs/finished/ or jobs/failed/
+#
+# ✅ DOCX only (PDF removed)
+# ✅ Spacing/indent matches sample (DOCX)
 # ------------------------------------------------------------
 
 import os
@@ -22,6 +24,7 @@ import time
 import shutil
 import tempfile
 import logging
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any, List
@@ -65,28 +68,6 @@ except Exception:
     Pt = Inches = None  # type: ignore
     WD_ALIGN_PARAGRAPH = WD_BREAK = None  # type: ignore
 
-# PDF (ReportLab)
-try:
-    from reportlab.lib.pagesizes import letter  # type: ignore
-    from reportlab.lib.units import inch  # type: ignore
-    from reportlab.platypus import (  # type: ignore
-        SimpleDocTemplate,
-        Paragraph,
-        Spacer,
-        PageBreak,
-        Image as RLImage,
-    )
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore
-except Exception:
-    letter = inch = None  # type: ignore
-    SimpleDocTemplate = Paragraph = Spacer = PageBreak = RLImage = None  # type: ignore
-    getSampleStyleSheet = ParagraphStyle = None  # type: ignore
-
-try:
-    import mediapipe as mp  # type: ignore
-except Exception:
-    mp = None  # type: ignore
-
 
 # -------------------------
 # Logging
@@ -104,6 +85,15 @@ ASSET_HEADER = os.path.join(PROJECT_ROOT, "Header.png")
 ASSET_FOOTER = os.path.join(PROJECT_ROOT, "Footer.png")
 ASSET_EFFORT = os.path.join(PROJECT_ROOT, "Effort.xlsx")
 ASSET_SHAPE = os.path.join(PROJECT_ROOT, "Shape.xlsx")
+
+# MoveNet model path (recommended: commit model into repo root or mount it)
+# You can override with env MOVENET_MODEL_PATH
+DEFAULT_MOVENET_MODEL = os.path.join(PROJECT_ROOT, "movenet_singlepose_lightning.tflite")
+MOVENET_MODEL_PATH = os.getenv("MOVENET_MODEL_PATH") or DEFAULT_MOVENET_MODEL
+
+# Normalize settings
+NORMALIZE_FPS = int(os.getenv("REPORT_NORMALIZE_FPS", "30"))
+POSE_SAMPLE_FPS = float(os.getenv("REPORT_POSE_SAMPLE_FPS", "6.0"))
 
 
 # -------------------------
@@ -255,6 +245,35 @@ def get_video_duration_seconds(video_path: str) -> float:
     if fps <= 0:
         return 0.0
     return float(frames / fps)
+
+
+# =========================
+# FFmpeg normalize (always)
+# =========================
+def ensure_ffmpeg() -> str:
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        raise RuntimeError("FFmpeg not found in PATH. Please add ffmpeg to the worker environment.")
+    return ff
+
+
+def normalize_video_with_ffmpeg(input_path: str, output_path: str, fps: int = 30) -> None:
+    ff = ensure_ffmpeg()
+    cmd = [
+        ff, "-y",
+        "-i", input_path,
+        "-vf", f"fps={fps},format=yuv420p",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-movflags", "+faststart",
+        "-an",
+        output_path,
+    ]
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        tail = (p.stderr or "")[-1800:]
+        raise RuntimeError(f"FFmpeg normalize failed. stderr tail:\n{tail}")
 
 
 # =========================
@@ -439,22 +458,102 @@ def generate_shape_graph(detection_results: dict, output_path: str):
 
 
 # =========================
-# First Impression — REAL analysis from video
+# First Impression — REAL analysis from video (MoveNet TFLite)
 # =========================
+# MoveNet keypoints (17):
+# 0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,
+# 5 left_shoulder, 6 right_shoulder, 7 left_elbow, 8 right_elbow,
+# 9 left_wrist, 10 right_wrist, 11 left_hip, 12 right_hip,
+# 13 left_knee, 14 right_knee, 15 left_ankle, 16 right_ankle
 POSE_IDX = {
     "NOSE": 0,
-    "LEFT_EAR": 7,
-    "RIGHT_EAR": 8,
-    "LEFT_SHOULDER": 11,
-    "RIGHT_SHOULDER": 12,
-    "LEFT_HIP": 23,
-    "RIGHT_HIP": 24,
-    "LEFT_ANKLE": 27,
-    "RIGHT_ANKLE": 28,
+    "LEFT_EAR": 3,
+    "RIGHT_EAR": 4,
+    "LEFT_SHOULDER": 5,
+    "RIGHT_SHOULDER": 6,
+    "LEFT_HIP": 11,
+    "RIGHT_HIP": 12,
+    "LEFT_ANKLE": 15,
+    "RIGHT_ANKLE": 16,
 }
+
+
+def _load_tflite_interpreter(model_path: str):
+    try:
+        from tflite_runtime.interpreter import Interpreter  # type: ignore
+    except Exception:
+        try:
+            from tensorflow.lite.python.interpreter import Interpreter  # type: ignore
+        except Exception as e:
+            raise RuntimeError(f"tflite interpreter not available: {e}")
+
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"MoveNet model not found at: {model_path}. "
+            f"Set env MOVENET_MODEL_PATH or include the .tflite file in the repo."
+        )
+
+    interpreter = Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    return interpreter
+
+
+def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
+    """
+    Returns keypoints in shape (17, 3) with columns [x, y, score] in normalized coords.
+    """
+    if np is None:
+        raise RuntimeError("numpy is required for MoveNet inference")
+
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    # MoveNet expects RGB
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+    # Common MoveNet lightning resolution is 192x192
+    in_h = int(input_details[0]["shape"][1])
+    in_w = int(input_details[0]["shape"][2])
+    resized = cv2.resize(rgb, (in_w, in_h), interpolation=cv2.INTER_AREA)
+
+    in_dtype = input_details[0]["dtype"]
+    x = resized
+
+    # Handle uint8 / int32 / float32 models
+    if str(in_dtype).endswith("uint8"):
+        x = x.astype(np.uint8)
+    elif str(in_dtype).endswith("int32"):
+        x = x.astype(np.int32)
+    else:
+        x = x.astype(np.float32) / 255.0
+
+    x = np.expand_dims(x, axis=0)
+
+    interpreter.set_tensor(input_details[0]["index"], x)
+    interpreter.invoke()
+
+    out = interpreter.get_tensor(output_details[0]["index"])
+
+    # Typical shapes:
+    # (1, 1, 17, 3) or (1, 17, 3)
+    if out.ndim == 4:
+        out = out[0, 0, :, :]
+    elif out.ndim == 3:
+        out = out[0, :, :]
+    else:
+        raise RuntimeError(f"Unexpected MoveNet output shape: {out.shape}")
+
+    # MoveNet output is [y, x, score]
+    y = out[:, 0]
+    x = out[:, 1]
+    s = out[:, 2]
+    kps = np.stack([x, y, s], axis=1)  # (17,3) -> [x,y,score]
+    return kps
+
 
 def _fi_clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
+
 
 def _fi_level_from_score(score: int, lang: str) -> str:
     if score >= 75:
@@ -463,13 +562,28 @@ def _fi_level_from_score(score: int, lang: str) -> str:
         return "ปานกลาง" if lang.startswith("th") else "Moderate"
     return "ต่ำ" if lang.startswith("th") else "Low"
 
+
 def _fi_safe_mean(vals: List[float]) -> Optional[float]:
     if np is None or not vals:
         return None
     return float(np.mean(vals))
 
-def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[List[Dict[str, Tuple[float, float, float]]], Dict[str, Any]]:
-    if cv2 is None or mp is None or np is None:
+
+def _fi_vis_ok(p: Optional[Tuple[float, float, float]], thr: float = 0.35) -> bool:
+    return bool(p) and float(p[2]) >= thr
+
+
+def _fi_get(pose: Dict[str, Tuple[float, float, float]], k: str) -> Optional[Tuple[float, float, float]]:
+    return pose.get(k)
+
+
+def _fi_extract_pose_sequence_movenet(
+    video_path: str,
+    model_path: str,
+    max_frames: int = 1000,
+    sample_fps: float = 6.0,
+) -> Tuple[List[Dict[str, Tuple[float, float, float]]], Dict[str, Any]]:
+    if cv2 is None or np is None:
         return [], {"reason": "missing_libs"}
 
     cap = cv2.VideoCapture(video_path)
@@ -480,22 +594,17 @@ def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration_sec = frame_count / fps if fps > 0 else 0.0
 
-    target_fps = 6.0
-    sample_every = int(max(1, round((fps / target_fps) if fps > 0 else 4)))
-    processed = 0
+    # sample every N frames
+    if fps <= 0:
+        fps = 25.0
+    sample_every = int(max(1, round(fps / max(1e-6, sample_fps))))
 
-    mp_pose = mp.solutions.pose
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        smooth_landmarks=True,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
+    interpreter = _load_tflite_interpreter(model_path)
 
     seq: List[Dict[str, Tuple[float, float, float]]] = []
     idx = 0
+    processed = 0
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -504,15 +613,13 @@ def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[
         if idx % sample_every != 0:
             continue
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        res = pose.process(rgb)
+        # Infer pose
+        kps = _movenet_infer(interpreter, frame)  # (17,3) [x,y,score]
 
         pose_dict: Dict[str, Tuple[float, float, float]] = {}
-        if res.pose_landmarks:
-            lm = res.pose_landmarks.landmark
-            for name, i in POSE_IDX.items():
-                if i < len(lm):
-                    pose_dict[name] = (float(lm[i].x), float(lm[i].y), float(lm[i].visibility))
+        for name, i in POSE_IDX.items():
+            if 0 <= i < kps.shape[0]:
+                pose_dict[name] = (float(kps[i, 0]), float(kps[i, 1]), float(kps[i, 2]))
         seq.append(pose_dict)
 
         processed += 1
@@ -520,7 +627,6 @@ def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[
             break
 
     cap.release()
-    pose.close()
 
     meta = {
         "fps": float(fps),
@@ -528,14 +634,10 @@ def _fi_extract_pose_sequence(video_path: str, max_frames: int = 1000) -> Tuple[
         "duration_sec": float(duration_sec),
         "sample_every": int(sample_every),
         "processed_frames": int(len(seq)),
+        "model_path": model_path,
     }
     return seq, meta
 
-def _fi_vis_ok(p: Optional[Tuple[float, float, float]], thr: float = 0.5) -> bool:
-    return bool(p) and float(p[2]) >= thr
-
-def _fi_get(pose: Dict[str, Tuple[float, float, float]], k: str) -> Optional[Tuple[float, float, float]]:
-    return pose.get(k)
 
 def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
     usable = 0
@@ -632,6 +734,7 @@ def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang:
             "yaw_mean": _fi_safe_mean(yaw_vals),
         },
     )
+
 
 def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
     usable = 0
@@ -749,6 +852,7 @@ def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang:
         },
     )
 
+
 def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
     usable = 0
     base_widths: List[float] = []
@@ -859,19 +963,30 @@ def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str)
         },
     )
 
+
 def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[FirstImpressionResult], Dict[str, Any]]:
     debug: Dict[str, Any] = {"enabled": True}
 
-    if cv2 is None or mp is None or np is None:
+    if cv2 is None or np is None:
         debug["enabled"] = False
         debug["reason"] = "missing_libs"
         return None, debug
 
-    seq, meta = _fi_extract_pose_sequence(video_path, max_frames=1000)
-    debug["meta"] = meta
-    debug["frames_with_pose"] = sum(1 for p in seq if p)
+    try:
+        seq, meta = _fi_extract_pose_sequence_movenet(
+            video_path,
+            model_path=MOVENET_MODEL_PATH,
+            max_frames=1000,
+            sample_fps=POSE_SAMPLE_FPS,
+        )
+        debug["meta"] = meta
+        debug["frames_with_pose"] = sum(1 for p in seq if p)
+    except Exception as e:
+        debug["enabled"] = False
+        debug["reason"] = f"movenet_error: {e}"
+        return None, debug
 
-    if not seq or debug["frames_with_pose"] < 10:
+    if not seq or int(debug.get("frames_with_pose", 0) or 0) < 10:
         debug["enabled"] = False
         debug["reason"] = "insufficient_pose_frames"
         return None, debug
@@ -880,8 +995,8 @@ def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[First
     up = _analyze_uprightness(seq, lang)
     stn = _analyze_stance(seq, lang)
 
-    processed = int(meta.get("processed_frames", 0) or 0)
-    frames_pose = int(debug["frames_with_pose"] or 0)
+    processed = int(debug.get("meta", {}).get("processed_frames", 0) or 0)
+    frames_pose = int(debug.get("frames_with_pose") or 0)
     pose_ratio = frames_pose / max(1, processed)
 
     note_en = ""
@@ -909,7 +1024,6 @@ def analyze_video_fallback(video_path: str) -> dict:
     duration = get_video_duration_seconds(video_path)
     total_indicators = int(max(900, min(20000, duration * 30))) if duration else 900
 
-    # deterministic-ish
     size = os.path.getsize(video_path) if os.path.exists(video_path) else 12345
     base = (size % 1000) / 1000.0
 
@@ -1082,7 +1196,6 @@ def build_docx_report(
         def render_item(item: FirstImpressionItem):
             _docx_add_subheading(doc, _t(lang, item.title_en, item.title_th))
 
-            # bullets from insight split lines
             bullets = (_t(lang, item.insight_en, item.insight_th) or "").split("\n")
             for b in bullets:
                 b = (b or "").strip()
@@ -1184,126 +1297,6 @@ def build_docx_report(
         out_bio.seek(0)
     except Exception:
         pass
-
-
-# =========================
-# PDF generator (spacing/indent matches sample)
-# =========================
-def build_pdf_report(report: ReportData, out_path: str, graph1_path: Optional[str], graph2_path: Optional[str], lang: str):
-    if SimpleDocTemplate is None or getSampleStyleSheet is None:
-        raise RuntimeError("reportlab is required to build PDF reports")
-
-    styles = getSampleStyleSheet()
-    base = styles["Normal"]
-    base.fontName = "Helvetica"
-    base.fontSize = 11
-    base.leading = 14
-
-    h_style = ParagraphStyle("h", parent=base, fontSize=11, leading=14, spaceBefore=10, spaceAfter=8)
-    title_style = ParagraphStyle("title", parent=base, fontSize=14, leading=18, spaceBefore=8, spaceAfter=16)
-
-    num_style = ParagraphStyle("num", parent=base, leftIndent=0.35 * inch, spaceBefore=0, spaceAfter=6)
-    sub_style = ParagraphStyle("sub", parent=base, leftIndent=0.55 * inch, spaceBefore=10, spaceAfter=2)
-    bullet_style = ParagraphStyle("bul", parent=base, leftIndent=0.85 * inch, firstLineIndent=-0.20 * inch, spaceBefore=0, spaceAfter=8)
-    impact_label_style = ParagraphStyle("impact_lbl", parent=base, leftIndent=0.95 * inch, spaceBefore=4, spaceAfter=2)
-    impact_text_style = ParagraphStyle("impact_txt", parent=base, leftIndent=0.95 * inch, spaceBefore=0, spaceAfter=12)
-
-    doc = SimpleDocTemplate(
-        out_path,
-        pagesize=letter,
-        leftMargin=0.75 * inch,
-        rightMargin=0.75 * inch,
-        topMargin=0.75 * inch,
-        bottomMargin=0.75 * inch,
-    )
-
-    story: List[Any] = []
-
-    if os.path.exists(ASSET_HEADER):
-        story.append(RLImage(ASSET_HEADER, width=6.5 * inch, height=0.9 * inch))
-        story.append(Spacer(1, 0.18 * inch))
-
-    story.append(Paragraph(_t(lang, "Character Analysis Report", "รายงานวิเคราะห์บุคลิกภาพ"), title_style))
-    story.append(Paragraph(f"<b>{_t(lang,'Client Name:','ชื่อลูกค้า:')}</b> {report.client_name or '—'}", base))
-    story.append(Paragraph(f"<b>{_t(lang,'Analysis Date:','วันที่วิเคราะห์:')}</b> {report.analysis_date or '—'}", base))
-    story.append(Spacer(1, 0.18 * inch))
-
-    story.append(Paragraph(_t(lang, "Video Information", "ข้อมูลวิดีโอ"), h_style))
-    story.append(Paragraph(f"<b>{_t(lang,'Duration:','ความยาว:')}</b> {report.video_length_str or '—'}", base))
-    story.append(Spacer(1, 0.22 * inch))
-
-    story.append(Paragraph(_t(lang, "Detailed Analysis", "Detailed Analysis"), h_style))
-
-    if report.first_impression is not None:
-        story.append(Paragraph(f"1.&nbsp;&nbsp;&nbsp;&nbsp;{_t(lang,'First impression','First impression')}", num_style))
-        fi = report.first_impression
-
-        def add_item(item: FirstImpressionItem):
-            story.append(Paragraph(_t(lang, item.title_en, item.title_th), sub_style))
-            bullets = (_t(lang, item.insight_en, item.insight_th) or "").split("\n")
-            for b in bullets:
-                b = (b or "").strip()
-                if b:
-                    story.append(Paragraph(f"•&nbsp;&nbsp;{b}", bullet_style))
-            story.append(Paragraph(_t(lang, "Impact for clients:", "Impact for clients:"), impact_label_style))
-            story.append(Paragraph(_t(lang, item.impact_en, item.impact_th), impact_text_style))
-
-        add_item(fi.eye_contact)
-        add_item(fi.uprightness)
-        add_item(fi.stance)
-
-        note = _t(lang, fi.reliability_note_en, fi.reliability_note_th).strip()
-        if note:
-            story.append(Paragraph(f"<i>{note}</i>", ParagraphStyle("note", parent=base, leftIndent=0.55 * inch, spaceBefore=0, spaceAfter=10)))
-
-    if report.categories:
-        n = 2
-        for cat in report.categories:
-            cat_name = cat.name_th if (lang or "").startswith("th") else cat.name_en
-            story.append(Paragraph(f"{n}.&nbsp;&nbsp;&nbsp;&nbsp;{cat_name}:", num_style))
-            n += 1
-
-            tpl = REPORT_CATEGORY_TEMPLATES.get(cat.name_en)
-            if tpl:
-                bullets_key = "bullets_th" if (lang or "").startswith("th") else "bullets_en"
-                bullets = tpl.get(bullets_key) or []
-                for b in bullets:
-                    b = (str(b) or "").strip()
-                    if b:
-                        story.append(Paragraph(f"•&nbsp;&nbsp;{b}", bullet_style))
-
-            story.append(Paragraph(f"<b>{_t(lang,'Scale:','ระดับ:')}</b> {_scale_label(cat.scale, lang=lang)}", ParagraphStyle("scale", parent=base, leftIndent=0.55 * inch, spaceBefore=4, spaceAfter=6)))
-
-            if cat.total > 0:
-                story.append(
-                    Paragraph(
-                        f"<b>{_t(lang,'Description:','คำอธิบาย:')}</b> " +
-                        _t(
-                            lang,
-                            f"Detected {cat.positives} positive indicators out of {cat.total} total indicators",
-                            f"ตรวจพบตัวบ่งชี้เชิงบวก {cat.positives} รายการ จากทั้งหมด {cat.total} รายการ",
-                        ),
-                        ParagraphStyle("desc", parent=base, leftIndent=0.55 * inch, spaceBefore=0, spaceAfter=12),
-                    )
-                )
-            else:
-                story.append(Spacer(1, 0.15 * inch))
-
-    if graph1_path and os.path.exists(graph1_path):
-        story.append(PageBreak())
-        story.append(Paragraph(_t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"), h_style))
-        story.append(RLImage(graph1_path, width=6.5 * inch, height=4.0 * inch))
-
-    if graph2_path and os.path.exists(graph2_path):
-        story.append(PageBreak())
-        story.append(Paragraph(_t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), h_style))
-        story.append(RLImage(graph2_path, width=6.5 * inch, height=4.0 * inch))
-
-    if os.path.exists(ASSET_FOOTER):
-        story.append(PageBreak())
-        story.append(RLImage(ASSET_FOOTER, width=6.5 * inch, height=0.9 * inch))
-
-    doc.build(story)
 
 
 # =========================
@@ -1423,22 +1416,34 @@ def process_report_job(job_key: str):
             "pd": bool(pd),
             "plt": bool(plt),
             "docx": bool(Document),
-            "reportlab": bool(SimpleDocTemplate),
-            "mediapipe": bool(mp),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "movenet_model_exists": bool(os.path.exists(MOVENET_MODEL_PATH)),
         },
+        "movenet_model_path": MOVENET_MODEL_PATH,
+        "normalize_fps": NORMALIZE_FPS,
+        "pose_sample_fps": POSE_SAMPLE_FPS,
     }
 
     try:
         # Download video
         video_key = resolve_video_key(job, job_id)
         ext = os.path.splitext(video_key)[1] or ".mp4"
-        video_path = os.path.join(tmp_dir, "input_video" + ext)
+        raw_video_path = os.path.join(tmp_dir, "input_video_raw" + ext)
 
         log.info(f"Downloading video from s3://{AWS_BUCKET}/{video_key}")
-        s3_download_to_file(video_key, video_path)
+        s3_download_to_file(video_key, raw_video_path)
 
-        # Analyze main (existing placeholder)
-        result = analyze_video_fallback(video_path)
+        # Always normalize with FFmpeg for stable decode on Render
+        normalized_path = os.path.join(tmp_dir, "input_video_normalized.mp4")
+        log.info("Normalizing video with FFmpeg…")
+        normalize_video_with_ffmpeg(raw_video_path, normalized_path, fps=NORMALIZE_FPS)
+        debug_payload["normalized_video"] = {
+            "path": "input_video_normalized.mp4",
+            "size_bytes": os.path.getsize(normalized_path) if os.path.exists(normalized_path) else None,
+        }
+
+        # Analyze main (existing placeholder) - run on normalized video
+        result = analyze_video_fallback(normalized_path)
         debug_payload["main_analysis"] = {"engine": result.get("analysis_engine", "unknown")}
 
         duration_str = format_seconds_to_mmss(result.get("duration_seconds") or 0.0)
@@ -1475,10 +1480,10 @@ def process_report_job(job_key: str):
         client_name = str(job.get("client_name") or job.get("client") or "").strip()
         summary_comment = str(job.get("summary_comment") or "").strip()
 
-        # First Impression analysis
+        # First Impression analysis (MoveNet) on normalized video
         fi_obj: Optional[FirstImpressionResult] = None
         if include_first_impression(job):
-            fi_obj, fi_debug = analyze_first_impression(video_path, lang_code)
+            fi_obj, fi_debug = analyze_first_impression(normalized_path, lang_code)
             debug_payload["first_impression"] = fi_debug
         else:
             debug_payload["first_impression"] = {"enabled": False, "reason": "disabled_by_job"}
@@ -1502,7 +1507,7 @@ def process_report_job(job_key: str):
         report = ReportData(
             client_name=client_name,
             analysis_date=analysis_date,
-            video_length_str=f"{int(round(get_video_duration_seconds(video_path)))} seconds ({duration_str})" if cv2 else duration_str,
+            video_length_str=f"{int(round(get_video_duration_seconds(normalized_path)))} seconds ({duration_str})" if cv2 else duration_str,
             overall_score=int(round(sum([c.score for c in categories]) / max(1, len(categories)))),
             first_impression=fi_obj,
             categories=categories,
@@ -1513,7 +1518,6 @@ def process_report_job(job_key: str):
         outputs: Dict[str, str] = {}
 
         out_docx_key = job.get("output_docx_key") or f"jobs/output/{job_id}/report_{lang_code}.docx"
-        out_pdf_key = job.get("output_pdf_key") or f"jobs/output/{job_id}/report_{lang_code}.pdf"
         out_debug_key = job.get("output_debug_key") or f"jobs/output/{job_id}/debug_{lang_code}.json"
 
         # Build DOCX
@@ -1530,21 +1534,6 @@ def process_report_job(job_key: str):
         )
         outputs["docx"] = str(out_docx_key)
 
-        # Build PDF (graceful)
-        pdf_ok = True
-        try:
-            local_pdf = os.path.join(tmp_dir, f"report_{lang_code}.pdf")
-            build_pdf_report(report, local_pdf, graph1_path, graph2_path, lang=lang_code)
-            with open(local_pdf, "rb") as f:
-                pdf_bytes = f.read()
-            if not pdf_bytes:
-                raise RuntimeError("PDF generation produced empty output")
-            s3_put_bytes(str(out_pdf_key), pdf_bytes, "application/pdf")
-            outputs["pdf"] = str(out_pdf_key)
-        except Exception as e:
-            pdf_ok = False
-            log.warning(f"PDF generation skipped/failed: {e}")
-
         # Upload debug metrics
         debug_payload["outputs"] = outputs
         debug_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -1559,8 +1548,7 @@ def process_report_job(job_key: str):
             log.warning(f"Upload debug json failed: {e}")
 
         job["outputs"] = outputs
-        msg = "Report generated" if pdf_ok else "DOCX generated (PDF missing on worker)"
-        job = set_status(job, "finished", msg)
+        job = set_status(job, "finished", "DOCX report generated")
         s3_put_json(job_key, job)
 
         log.info(f"Finished report job {job_id} -> {outputs}")
