@@ -15,6 +15,11 @@
 #
 # ✅ DOCX only (PDF removed)
 # ✅ Spacing/indent matches sample (DOCX)
+#
+# FIX (First Impression missing):
+#   1) include_first_impression(): treat dict/object under "first_impression" as ENABLED
+#      (only boolean False disables)
+#   2) DOCX: Always print "1. First impression" header; if FI unavailable, show a short note
 # ------------------------------------------------------------
 
 import os
@@ -1187,10 +1192,29 @@ def build_docx_report(
     # Detailed Analysis heading
     _docx_add_heading(doc, _t(lang, "Detailed Analysis", "Detailed Analysis"), size=11, bold=True, before=6, after=10)
 
-    # 1. First impression
-    if report.first_impression is not None:
-        _docx_add_numbered_line(doc, "1.", _t(lang, "First impression", "First impression"))
+    # 1. First impression (ALWAYS show heading; if FI missing -> show reason note)
+    _docx_add_numbered_line(doc, "1.", _t(lang, "First impression", "First impression"))
 
+    if report.first_impression is None:
+        _docx_add_subheading(doc, _t(lang, "First Impression not available", "First Impression not available"))
+        _docx_add_bullet(
+            doc,
+            _t(
+                lang,
+                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MOVENET model exists.",
+                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MOVENET model exists.",
+            ),
+        )
+        _docx_add_impact_block(
+            doc,
+            _t(lang, "Impact for clients:", "Impact for clients:"),
+            _t(
+                lang,
+                "When the system cannot reliably detect posture/gaze/stance, we avoid over-interpreting presence or confidence.",
+                "เมื่อระบบตรวจจับท่าทาง/การมอง/การยืนได้ไม่ชัดเจน เราจะหลีกเลี่ยงการสรุปเรื่องความมั่นใจหรือความน่าเชื่อถือมากเกินไป",
+            ),
+        )
+    else:
         fi = report.first_impression
 
         def render_item(item: FirstImpressionItem):
@@ -1375,13 +1399,25 @@ def job_lang(job: dict) -> str:
     return "en"
 
 def include_first_impression(job: dict) -> bool:
-    if "include_first_impression" in job:
-        return bool(job.get("include_first_impression"))
-    if "first_impression" in job:
-        return bool(job.get("first_impression"))
+    """
+    ✅ Fix:
+      - Only boolean False disables.
+      - If job["first_impression"] is a dict/object (common schema), treat as enabled.
+    """
+    # explicit boolean only
+    if isinstance(job.get("include_first_impression"), bool):
+        return bool(job["include_first_impression"])
+
+    # job["first_impression"] might be a dict (config/result container) -> ENABLED
+    if isinstance(job.get("first_impression"), bool):
+        return bool(job["first_impression"])
+    if isinstance(job.get("first_impression"), dict):
+        return True
+
     opts = job.get("options") if isinstance(job.get("options"), dict) else {}
-    if isinstance(opts, dict) and "first_impression" in opts:
-        return bool(opts.get("first_impression"))
+    if isinstance(opts, dict) and isinstance(opts.get("first_impression"), bool):
+        return bool(opts["first_impression"])
+
     return True
 
 
@@ -1482,11 +1518,17 @@ def process_report_job(job_key: str):
 
         # First Impression analysis (MoveNet) on normalized video
         fi_obj: Optional[FirstImpressionResult] = None
-        if include_first_impression(job):
+        fi_enabled = include_first_impression(job)
+        debug_payload["first_impression_enabled_by_job"] = bool(fi_enabled)
+
+        if fi_enabled:
             fi_obj, fi_debug = analyze_first_impression(normalized_path, lang_code)
             debug_payload["first_impression"] = fi_debug
+            if fi_obj is None:
+                log.warning(f"First Impression unavailable for job {job_id}: {fi_debug.get('reason')}")
         else:
             debug_payload["first_impression"] = {"enabled": False, "reason": "disabled_by_job"}
+            log.info(f"First Impression disabled by job for job {job_id}")
 
         # Generate graphs (optional)
         graph1_path: Optional[str] = os.path.join(tmp_dir, "Graph 1.png")
