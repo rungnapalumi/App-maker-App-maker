@@ -281,9 +281,21 @@ def normalize_video_with_ffmpeg(input_path: str, output_path: str, fps: int = 30
         output_path,
     ]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # ✅ PATCH: soft-fail on Render
+    # If ffmpeg returns non-zero BUT output file was created, continue.
     if p.returncode != 0:
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            tail = (p.stderr or "")[-1200:]
+            log.warning(
+                "FFmpeg normalize returned non-zero but output exists; continuing. "
+                f"stderr tail:\n{tail}"
+            )
+            return
+
         tail = (p.stderr or "")[-1800:]
         raise RuntimeError(f"FFmpeg normalize failed. stderr tail:\n{tail}")
+
 
 
 # =========================
