@@ -50,7 +50,7 @@ except Exception:
     Document = None  # type: ignore
 
 # ⭐ Classical CV proxy analysis
-from src.cv_proxy_pose import analyze_cv_proxy
+from cv_proxy_pose import analyze_cv_proxy
 
 # ------------------------------------------------------------
 # Logging
