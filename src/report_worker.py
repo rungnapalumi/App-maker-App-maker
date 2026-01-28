@@ -1,6 +1,26 @@
+# =========================
+# PART 1/4 — Imports + Config + Data models + Video utils + FFmpeg normalize
+# =========================
+
 # src/report_worker.py
 # ------------------------------------------------------------
 # AI People Reader - Report Worker (TH/EN)  [LEGACY QUEUE]
+# - Polls S3: jobs/pending/*.json
+# - Handles only mode=="report"
+# - Downloads shared input video via job["input_key"]
+# - ✅ Normalizes video with FFmpeg (always) -> stable decode on Render
+# - ✅ First Impression (REAL analysis):
+#     Primary: MoveNet TFLite (if available)
+#     Fallback: MediaPipe Pose (if available)
+#     1) Eye Contact
+#     2) Uprightness (Posture & Upper-Body Alignment)
+#     3) Stance (Lower-Body Stability & Grounding)
+# - Generates DOCX + graphs
+# - Uploads outputs to job-specified keys
+# - Moves job json to jobs/finished/ or jobs/failed/
+#
+# ✅ DOCX only (PDF removed)
+# ✅ Spacing/indent matches sample (DOCX)
 # ------------------------------------------------------------
 
 import os
@@ -17,8 +37,9 @@ from typing import Optional, Tuple, Dict, Any, List
 
 import boto3
 
+
 # -------------------------
-# Optional heavy libs (safe import)
+# Optional heavy libs (worker must not crash if missing)
 # -------------------------
 try:
     import cv2  # type: ignore
@@ -35,6 +56,7 @@ try:
 except Exception:
     pd = None  # type: ignore
 
+# MediaPipe (optional) — used as fallback for First Impression if MoveNet/TFLite not available
 try:
     import mediapipe as mp  # type: ignore
     MP_HAS_SOLUTIONS = hasattr(mp, "solutions")
@@ -42,7 +64,7 @@ except Exception:
     mp = None  # type: ignore
     MP_HAS_SOLUTIONS = False
 
-# Headless matplotlib (Render-safe)
+# ⭐ IMPORTANT: Headless backend for Render/Worker environments
 try:
     import matplotlib  # type: ignore
     matplotlib.use("Agg")
@@ -67,15 +89,12 @@ except Exception:
 # -------------------------
 # Logging
 # -------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("report_worker")
 
 
 # -------------------------
-# Paths / Assets
+# Paths (repo layout safe)
 # -------------------------
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -84,22 +103,20 @@ ASSET_FOOTER = os.path.join(PROJECT_ROOT, "Footer.png")
 ASSET_EFFORT = os.path.join(PROJECT_ROOT, "Effort.xlsx")
 ASSET_SHAPE = os.path.join(PROJECT_ROOT, "Shape.xlsx")
 
-DEFAULT_MOVENET_MODEL = os.path.join(
-    PROJECT_ROOT,
-    "movenet_singlepose_lightning.tflite"
-)
+# MoveNet model path (recommended: commit model into repo root or mount it)
+DEFAULT_MOVENET_MODEL = os.path.join(PROJECT_ROOT, "movenet_singlepose_lightning.tflite")
 MOVENET_MODEL_PATH = os.getenv("MOVENET_MODEL_PATH") or DEFAULT_MOVENET_MODEL
 
+# Normalize settings
 NORMALIZE_FPS = int(os.getenv("REPORT_NORMALIZE_FPS", "30"))
 POSE_SAMPLE_FPS = float(os.getenv("REPORT_POSE_SAMPLE_FPS", "6.0"))
 
 
 # -------------------------
-# S3 config
+# S3 config (IMPORTANT FIX: do NOT hard-crash at import time)
 # -------------------------
 AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
-
 JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "10"))
 
 JOBS_PENDING_PREFIX = os.getenv("JOBS_PENDING_PREFIX", "jobs/pending/")
@@ -107,74 +124,72 @@ JOBS_PROCESSING_PREFIX = os.getenv("JOBS_PROCESSING_PREFIX", "jobs/processing/")
 JOBS_FINISHED_PREFIX = os.getenv("JOBS_FINISHED_PREFIX", "jobs/finished/")
 JOBS_FAILED_PREFIX = os.getenv("JOBS_FAILED_PREFIX", "jobs/failed/")
 
-if not AWS_BUCKET:
-    raise RuntimeError("Missing AWS_BUCKET or S3_BUCKET env var")
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+def get_s3_client():
+    # lazily create client so worker doesn't crash during module import
+    return boto3.client("s3", region_name=AWS_REGION)
 
 
 # =========================
 # Text helpers
 # =========================
 def _t(lang: str, en: str, th: str) -> str:
-    lang = (lang or "en").lower()
+    lang = (lang or "en").strip().lower()
     return th if lang.startswith("th") else en
 
 
-def _scale_label(scale: str, lang: str) -> str:
-    s = (scale or "").lower()
+def _scale_label(scale: str, lang: str = "en") -> str:
+    s = (scale or "").strip().lower()
+    lang = (lang or "en").strip().lower()
     if s.startswith("high"):
         return "สูง" if lang.startswith("th") else "High"
     if s.startswith("mod"):
         return "ปานกลาง" if lang.startswith("th") else "Moderate"
     if s.startswith("low"):
         return "ต่ำ" if lang.startswith("th") else "Low"
-    return "—"
+    return (scale or "—").strip() or "—"
 
 
-# =========================
-# Category templates
-# =========================
 REPORT_CATEGORY_TEMPLATES = {
     "Engaging & Connecting": {
         "bullets_en": [
             "Approachability",
             "Relatability",
-            "Engagement and instant rapport",
+            "Engagement, connect and build instant rapport with team",
         ],
         "bullets_th": [
             "ความเป็นกันเอง",
             "ความเข้าถึงได้",
-            "การมีส่วนร่วมและสร้างความคุ้นเคยได้รวดเร็ว",
+            "การมีส่วนร่วม เชื่อมโยง และสร้างความคุ้นเคยกับทีมอย่างรวดเร็ว",
         ],
     },
     "Confidence": {
         "bullets_en": [
-            "Optimistic presence",
+            "Optimistic Presence",
             "Focus",
-            "Ability to persuade",
+            "Ability to persuade and stand one’s ground, in order to convince others.",
         ],
         "bullets_th": [
-            "บุคลิกเชิงบวก",
+            "บุคลิกภาพเชิงบวก",
             "ความมีสมาธิ",
-            "ความสามารถในการโน้มน้าว",
+            "ความสามารถในการโน้มน้าวและยืนหยัดในจุดยืนเพื่อให้ผู้อื่นคล้อยตาม",
         ],
     },
     "Authority": {
         "bullets_en": [
-            "Sense of importance",
+            "Showing sense of importance and urgency in subject matter",
             "Pressing for action",
         ],
         "bullets_th": [
-            "ความสำคัญของประเด็น",
-            "การผลักดันให้เกิดการลงมือทำ",
+            "แสดงให้เห็นถึงความสำคัญและความเร่งด่วนของประเด็น",
+            "ผลักดันให้เกิดการลงมือทำ",
         ],
     },
 }
 
 
 # =========================
-# Data models
+# Data model
 # =========================
 @dataclass
 class CategoryResult:
@@ -222,22 +237,22 @@ class ReportData:
 
 
 # =========================
-# Video helpers
+# Video utils
 # =========================
-def format_seconds_to_mmss(sec: float) -> str:
-    sec = max(0.0, float(sec))
-    m = int(sec // 60)
-    s = int(round(sec - m * 60))
-    if s == 60:
-        m += 1
-        s = 0
-    return f"{m:02d}:{s:02d}"
+def format_seconds_to_mmss(total_seconds: float) -> str:
+    total_seconds = max(0, float(total_seconds))
+    mm = int(total_seconds // 60)
+    ss = int(round(total_seconds - mm * 60))
+    if ss == 60:
+        mm += 1
+        ss = 0
+    return f"{mm:02d}:{ss:02d}"
 
 
-def get_video_duration_seconds(path: str) -> float:
+def get_video_duration_seconds(video_path: str) -> float:
     if cv2 is None:
         return 0.0
-    cap = cv2.VideoCapture(path)
+    cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return 0.0
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
@@ -245,22 +260,20 @@ def get_video_duration_seconds(path: str) -> float:
     cap.release()
     if fps <= 0:
         return 0.0
-    return frames / fps
+    return float(frames / fps)
+
+
 # =========================
 # FFmpeg normalize (always)
 # =========================
 def ensure_ffmpeg() -> str:
     ff = shutil.which("ffmpeg")
     if not ff:
-        raise RuntimeError("FFmpeg not found in PATH")
+        raise RuntimeError("FFmpeg not found in PATH. Please add ffmpeg to the worker environment.")
     return ff
 
 
-def normalize_video_with_ffmpeg(
-    input_path: str,
-    output_path: str,
-    fps: int = 30,
-) -> None:
+def normalize_video_with_ffmpeg(input_path: str, output_path: str, fps: int = 30) -> None:
     ff = ensure_ffmpeg()
     cmd = [
         ff, "-y",
@@ -273,181 +286,211 @@ def normalize_video_with_ffmpeg(
         "-an",
         output_path,
     ]
-    p = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-    # Render-safe: allow soft fail if output exists
+    # ✅ PATCH: soft-fail on Render
+    # If ffmpeg returns non-zero BUT output file was created, continue.
     if p.returncode != 0:
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            log.warning("FFmpeg returned non-zero but output exists; continuing")
+            tail = (p.stderr or "")[-1200:]
+            log.warning(
+                "FFmpeg normalize returned non-zero but output exists; continuing. "
+                f"stderr tail:\n{tail}"
+            )
             return
-        raise RuntimeError(f"FFmpeg failed:\n{p.stderr[-1500:]}")
 
+        tail = (p.stderr or "")[-1800:]
+        raise RuntimeError(f"FFmpeg normalize failed. stderr tail:\n{tail}")
+# =========================
+# PART 2/4 — Excel loaders + Graph generators + First Impression (MoveNet/MediaPipe) + Fallback analysis
+# =========================
 
 # =========================
-# Excel loaders (Effort / Shape)
+# Excel loaders (Effort/Shape)
 # =========================
-def load_effort_reference(path: str = ASSET_EFFORT):
+def load_effort_reference(excel_path: str = ASSET_EFFORT):
     if pd is None:
-        raise RuntimeError("pandas required for Effort.xlsx")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Effort.xlsx not found: {path}")
-
-    df = pd.read_excel(path, header=None)
-    df.columns = [
-        "Motion Type",
-        "Direction",
-        "Body Part Involvement",
-        "Pathway",
-        "Timing",
-        "Other Motion Clues",
-    ]
-    return df.iloc[2:].reset_index(drop=True)
+        raise RuntimeError("pandas is required to read Effort.xlsx")
+    if not os.path.exists(excel_path):
+        raise FileNotFoundError(f"Effort.xlsx not found at {excel_path}")
+    df = pd.read_excel(excel_path, header=None)
+    df.columns = ['Motion Type', 'Direction', 'Body Part Involvement', 'Pathway', 'Timing', 'Other Motion Clues']
+    df = df.iloc[2:].reset_index(drop=True)
+    return df
 
 
-def load_shape_reference(path: str = ASSET_SHAPE):
+def load_shape_reference(excel_path: str = ASSET_SHAPE):
     if pd is None:
-        raise RuntimeError("pandas required for Shape.xlsx")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Shape.xlsx not found: {path}")
-
-    df = pd.read_excel(path, header=None)
-    df.columns = [
-        "Motion Type",
-        "Direction",
-        "Body Part Involvement",
-        "Pathway",
-        "Timing",
-        "Other Motion Clues",
-    ]
-    return df.iloc[2:].reset_index(drop=True)
+        raise RuntimeError("pandas is required to read Shape.xlsx")
+    if not os.path.exists(excel_path):
+        raise FileNotFoundError(f"Shape.xlsx not found at {excel_path}")
+    df = pd.read_excel(excel_path, header=None)
+    df.columns = ['Motion Type', 'Direction', 'Body Part Involvement', 'Pathway', 'Timing', 'Other Motion Clues']
+    df = df.iloc[2:].reset_index(drop=True)
+    return df
 
 
 # =========================
 # Graph generators
 # =========================
-def generate_effort_graph(
-    effort_detection: dict,
-    shape_detection: dict,
-    output_path: str,
-):
+def generate_effort_graph(effort_detection: dict, shape_detection: dict, output_path: str):
     if plt is None or np is None:
-        raise RuntimeError("matplotlib/numpy required")
+        raise RuntimeError("matplotlib/numpy required for graph generation")
 
     effort_df = load_effort_reference()
     shape_df = load_shape_reference()
 
-    effort_motions = [
-        m for m in effort_df["Motion Type"].tolist()
-        if m not in ("Floating", "Slashing", "Wringing")
-    ]
-    shape_motions = shape_df["Motion Type"].tolist()
+    effort_motions = effort_df['Motion Type'].tolist()
+    excluded_motions = ['Floating', 'Slashing', 'Wringing']
+    effort_motions = [m for m in effort_motions if m not in excluded_motions]
+    shape_motions = shape_df['Motion Type'].tolist()
+    all_motion_types = effort_motions + shape_motions
 
-    motions = effort_motions + shape_motions
-    counts = []
+    all_counts = []
+    for motion in all_motion_types:
+        count = 0
+        if motion in effort_motions:
+            count = effort_detection.get(motion, 0) or effort_detection.get(f"{motion.lower()}_count", 0)
+        else:
+            count = shape_detection.get(motion, 0) or shape_detection.get(f"{motion.lower()}_count", 0)
+        all_counts.append(int(count) if count else 0)
 
-    for m in motions:
-        c = (
-            effort_detection.get(m)
-            or effort_detection.get(f"{m.lower()}_count")
-            or shape_detection.get(m)
-            or shape_detection.get(f"{m.lower()}_count")
-            or 0
-        )
-        counts.append(int(c))
+    total = sum(all_counts) if sum(all_counts) > 0 else 1
+    percentages = [(c / total) * 100 for c in all_counts]
 
-    total = sum(counts) or 1
-    pcts = [(c / total) * 100 for c in counts]
+    sorted_data = sorted(zip(all_motion_types, percentages), key=lambda x: x[1], reverse=True)
+    sorted_motions = [x[0] for x in sorted_data]
+    sorted_percentages = [x[1] for x in sorted_data]
+    top3_motions = sorted_motions[:3]
+    top3_percentages = sorted_percentages[:3]
 
-    sorted_data = sorted(zip(motions, pcts), key=lambda x: x[1], reverse=True)
-    motions, pcts = zip(*sorted_data)
+    fig_width = 14
+    fig_height = max(7, len(sorted_motions) * 0.45)
+    fig, (ax1, ax2) = plt.subplots(
+        1,
+        2,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={'width_ratios': [1.2, 0.8], 'wspace': 0.4},
+    )
 
-    fig, ax = plt.subplots(figsize=(14, max(7, len(motions) * 0.45)))
-    bars = ax.barh(motions, pcts)
+    bar_h = 0.7
+    y_all = range(len(sorted_motions))
+    bars_all = ax1.barh(y_all, sorted_percentages, height=bar_h)
 
-    ax.set_xlim(0, 100)
-    ax.set_xlabel("Percentage (%)", fontweight="bold")
-    ax.set_title("Effort Summary", fontweight="bold")
-    ax.grid(axis="x", alpha=0.3)
-    ax.invert_yaxis()
+    ax1.set_yticks(list(y_all))
+    ax1.set_yticklabels(sorted_motions, fontsize=11)
+    ax1.set_xlabel('Percentage (%)', fontsize=12, fontweight='bold')
+    ax1.set_xlim(0, 100)
+    ax1.set_xticks([0, 20, 40, 60, 80, 100])
+    ax1.set_title('Effort Summary', fontsize=14, fontweight='bold', pad=15)
+    ax1.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax1.set_axisbelow(True)
+    ax1.invert_yaxis()
 
-    for bar in bars:
-        w = bar.get_width()
-        if w > 0:
-            ax.text(
-                w + 1,
-                bar.get_y() + bar.get_height() / 2,
-                f"{w:.1f}%",
-                va="center",
-                fontweight="bold",
+    for bar, pct in zip(bars_all, sorted_percentages):
+        if pct > 0:
+            ax1.text(
+                bar.get_width() + 1,
+                bar.get_y() + bar.get_height() / 2.0,
+                f'{pct:.1f}%',
+                ha='left',
+                va='center',
+                fontsize=11,
+                fontweight='bold',
+            )
+
+    top3_labels = [f"{m} - Rank #{i+1}" for i, m in enumerate(top3_motions)]
+    y_top = [0, 1, 2]
+    bars_top = ax2.barh(y_top, top3_percentages, height=bar_h)
+
+    ax2.set_ylim(-0.5, len(sorted_motions) - 0.5)
+    ax2.set_yticks(y_top)
+    ax2.set_yticklabels(top3_labels, fontsize=11)
+    ax2.set_xlabel('Percentage (%)', fontsize=12, fontweight='bold')
+    ax2.set_xlim(0, 100)
+    ax2.set_xticks([0, 20, 40, 60, 80, 100])
+    ax2.set_title('Top Movement Efforts', fontsize=14, fontweight='bold', pad=15)
+    ax2.grid(axis='x', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax2.set_axisbelow(True)
+    ax2.invert_yaxis()
+
+    for bar, pct in zip(bars_top, top3_percentages):
+        if pct > 0:
+            ax2.text(
+                bar.get_width() + 1,
+                bar.get_y() + bar.get_height() / 2.0,
+                f'{pct:.1f}%',
+                ha='left',
+                va='center',
+                fontsize=11,
+                fontweight='bold',
             )
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def generate_shape_graph(
-    detection_results: dict,
-    output_path: str,
-):
+def generate_shape_graph(detection_results: dict, output_path: str):
     if plt is None or np is None:
-        raise RuntimeError("matplotlib/numpy required")
+        raise RuntimeError("matplotlib/numpy required for graph generation")
 
     shape_df = load_shape_reference()
-    motions = shape_df["Motion Type"].tolist()
+    motion_types = shape_df['Motion Type'].tolist()
 
-    counts = [
-        int(
-            detection_results.get(m)
-            or detection_results.get(f"{m.lower()}_count")
-            or 0
-        )
-        for m in motions
-    ]
+    counts = []
+    for motion in motion_types:
+        count = detection_results.get(motion, 0) or detection_results.get(f"{motion.lower()}_count", 0)
+        counts.append(int(count) if count else 0)
 
-    total = sum(counts) or 1
-    pcts = [(c / total) * 100 for c in counts]
+    total = sum(counts) if sum(counts) > 0 else 1
+    percentages = [(c / total) * 100 for c in counts]
 
-    fig, ax = plt.subplots(figsize=(max(12, len(motions) * 1.5), 7))
+    sorted_data = sorted(zip(motion_types, percentages), key=lambda x: x[1], reverse=True)
+    motions = [x[0] for x in sorted_data]
+    pcts = [x[1] for x in sorted_data]
+
+    fig_width = max(12, len(motions) * 1.5)
+    fig_height = 7.14
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     bars = ax.bar(motions, pcts)
 
-    ax.set_ylim(0, min(100, max(pcts) * 1.15 if pcts else 100))
-    ax.set_ylabel("Percentage (%)", fontweight="bold")
-    ax.set_title("Shape Motion Detection Results", fontweight="bold")
-    ax.grid(axis="y", alpha=0.3)
+    ax.set_xlabel('Shape Motion Type', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Percentage (%)', fontsize=12, fontweight='bold')
+    ax.set_title('Shape Motion Detection Results', fontsize=14, fontweight='bold', pad=20)
+    ax.grid(axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
+    ax.set_axisbelow(True)
 
     for bar in bars:
         h = bar.get_height()
         if h > 0:
             ax.text(
-                bar.get_x() + bar.get_width() / 2,
+                bar.get_x() + bar.get_width() / 2.0,
                 h,
-                f"{h:.1f}%",
-                ha="center",
-                va="bottom",
-                fontweight="bold",
+                f'{h:.1f}%',
+                ha='center',
+                va='bottom',
+                fontsize=11,
+                fontweight='bold',
             )
 
-    plt.xticks(rotation=15, ha="right")
+    if len(motions) > 6:
+        plt.xticks(rotation=15, ha='right', fontsize=10)
+    else:
+        plt.xticks(rotation=0, fontsize=11)
+
+    mx = max(pcts) if pcts else 100
+    ax.set_ylim(bottom=0, top=min(100, mx * 1.15))
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
+
+
 # =========================
 # First Impression — REAL analysis from video
 # Primary: MoveNet TFLite
 # Fallback: MediaPipe Pose
 # =========================
-
-# MoveNet keypoints (17):
-# 0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,
-# 5 left_shoulder, 6 right_shoulder, 7 left_elbow, 8 right_elbow,
-# 9 left_wrist, 10 right_wrist, 11 left_hip, 12 right_hip,
-# 13 left_knee, 14 right_knee, 15 left_ankle, 16 right_ankle
 POSE_IDX = {
     "NOSE": 0,
     "LEFT_EAR": 3,
@@ -460,7 +503,6 @@ POSE_IDX = {
     "RIGHT_ANKLE": 16,
 }
 
-# MediaPipe Pose landmark indices (BlazePose)
 MP_IDX = {
     "NOSE": 0,
     "LEFT_EAR": 7,
@@ -495,12 +537,10 @@ def _load_tflite_interpreter(model_path: str):
 
 
 def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
-    """
-    Returns keypoints in shape (17, 3) with columns [x, y, score] in normalized coords.
-    MoveNet output is [y, x, score] per keypoint -> we convert to [x,y,score]
-    """
-    if np is None or cv2 is None:
-        raise RuntimeError("numpy/opencv required for MoveNet inference")
+    if np is None:
+        raise RuntimeError("numpy is required for MoveNet inference")
+    if cv2 is None:
+        raise RuntimeError("opencv is required for MoveNet inference")
 
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
@@ -513,6 +553,7 @@ def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
 
     in_dtype = input_details[0]["dtype"]
     x = resized
+
     if str(in_dtype).endswith("uint8"):
         x = x.astype(np.uint8)
     elif str(in_dtype).endswith("int32"):
@@ -534,11 +575,11 @@ def _movenet_infer(interpreter, frame_bgr: "np.ndarray") -> "np.ndarray":
     else:
         raise RuntimeError(f"Unexpected MoveNet output shape: {out.shape}")
 
-    # out: (17,3) [y,x,score]
+    # MoveNet output is [y, x, score]
     y = out[:, 0]
-    xx = out[:, 1]
+    x = out[:, 1]
     s = out[:, 2]
-    kps = np.stack([xx, y, s], axis=1)  # -> [x,y,score]
+    kps = np.stack([x, y, s], axis=1)  # (17,3) -> [x,y,score]
     return kps
 
 
@@ -547,7 +588,6 @@ def _fi_clamp01(x: float) -> float:
 
 
 def _fi_level_from_score(score: int, lang: str) -> str:
-    lang = (lang or "en").lower()
     if score >= 75:
         return "สูง" if lang.startswith("th") else "High"
     if score >= 45:
@@ -705,7 +745,6 @@ def _fi_extract_pose_sequence_mediapipe(
 
 
 def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
-    lang = (lang or "en").lower()
     usable = 0
     forward = 0
     yaw_vals: List[float] = []
@@ -803,7 +842,6 @@ def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang:
 
 
 def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
-    lang = (lang or "en").lower()
     usable = 0
     vert_scores: List[float] = []
     shoulder_tilts: List[float] = []
@@ -921,7 +959,6 @@ def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang:
 
 
 def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str) -> FirstImpressionItem:
-    lang = (lang or "en").lower()
     usable = 0
     base_widths: List[float] = []
     hip_xs: List[float] = []
@@ -1033,10 +1070,6 @@ def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str)
 
 
 def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[FirstImpressionResult], Dict[str, Any]]:
-    """
-    Try MoveNet TFLite first. If it fails, fallback to MediaPipe Pose if available.
-    """
-    lang = (lang or "en").lower()
     debug: Dict[str, Any] = {
         "enabled": True,
         "primary": "movenet_tflite",
@@ -1051,7 +1084,6 @@ def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[First
         debug["reason"] = "missing_libs"
         return None, debug
 
-    # Primary: MoveNet
     try:
         seq, meta = _fi_extract_pose_sequence_movenet(
             video_path,
@@ -1110,6 +1142,8 @@ def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[First
         reliability_note_en=note_en,
         reliability_note_th=note_th,
     ), debug
+
+
 # =========================
 # Main analysis (fallback placeholder)
 # =========================
@@ -1161,29 +1195,20 @@ def analyze_video_fallback(video_path: str) -> dict:
         "shape_detection": shape_detection,
         "analysis_engine": "fallback",
     }
-
+# =========================
+# PART 3/4 — DOCX formatting helpers + build_docx_report
+# =========================
 
 # =========================
 # DOCX formatting helpers (match sample)
 # =========================
 def _docx_set_base_font(doc, lang: str):
-    if Pt is None:
-        return
     style = doc.styles["Normal"]
     style.font.name = "TH Sarabun New" if (lang or "").startswith("th") else "Calibri"
     style.font.size = Pt(11)
 
 
-def _docx_apply_para(
-    p,
-    left: float = 0.0,
-    first_line: float = 0.0,
-    before: int = 0,
-    after: int = 0,
-    line: float = 1.15
-):
-    if Pt is None or Inches is None:
-        return
+def _docx_apply_para(p, left: float = 0.0, first_line: float = 0.0, before: int = 0, after: int = 0, line: float = 1.15):
     pf = p.paragraph_format
     pf.left_indent = Inches(left)
     pf.first_line_indent = Inches(first_line)
@@ -1196,8 +1221,7 @@ def _docx_add_heading(doc, text: str, size: int = 12, bold: bool = True, before:
     p = doc.add_paragraph()
     r = p.add_run(text)
     r.bold = bold
-    if Pt is not None:
-        r.font.size = Pt(size)
+    r.font.size = Pt(size)
     _docx_apply_para(p, left=0.0, first_line=0.0, before=before, after=after)
     return p
 
@@ -1251,3 +1275,528 @@ def _docx_clear_paragraph(p) -> None:
         p.text = ""
     except Exception:
         pass
+
+
+def build_docx_report(
+    report: ReportData,
+    out_bio: io.BytesIO,
+    graph1_path: Optional[str],
+    graph2_path: Optional[str],
+    lang: str,
+):
+    if Document is None:
+        raise RuntimeError("python-docx is required to build DOCX reports")
+
+    doc = Document()
+    _docx_set_base_font(doc, lang)
+
+    # Header image
+    if os.path.exists(ASSET_HEADER):
+        section = doc.sections[0]
+        header = section.header
+        p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _docx_clear_paragraph(p)
+        p.add_run().add_picture(ASSET_HEADER, width=Inches(6.5))
+
+    # Title
+    p = doc.add_paragraph()
+    r = p.add_run(_t(lang, "Character Analysis Report", "รายงานวิเคราะห์บุคลิกภาพ"))
+    r.bold = True
+    r.font.size = Pt(14)
+    _docx_apply_para(p, left=0.0, first_line=0.0, before=10, after=14)
+
+    # Client + date
+    p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=6)
+    p.add_run(_t(lang, "Client Name:     ", "ชื่อลูกค้า:     ")).bold = True
+    p.add_run(report.client_name or "—")
+
+    p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=10)
+    p.add_run(_t(lang, "Analysis Date:   ", "วันที่วิเคราะห์:   ")).bold = True
+    p.add_run(report.analysis_date or "—")
+
+    # Video info
+    _docx_add_heading(doc, _t(lang, "Video Information", "ข้อมูลวิดีโอ"), size=11, bold=True, before=6, after=6)
+
+    p = doc.add_paragraph()
+    _docx_apply_para(p, before=0, after=18)
+    p.add_run(_t(lang, "Duration: ", "ความยาว: ")).bold = True
+    p.add_run(report.video_length_str or "—")
+
+    # Detailed Analysis
+    _docx_add_heading(doc, _t(lang, "Detailed Analysis", "Detailed Analysis"), size=11, bold=True, before=6, after=10)
+
+    # 1. First impression
+    _docx_add_numbered_line(doc, "1.", _t(lang, "First impression", "First impression"))
+
+    if report.first_impression is None:
+        _docx_add_subheading(doc, _t(lang, "First Impression not available", "First Impression not available"))
+        _docx_add_bullet(
+            doc,
+            _t(
+                lang,
+                "Pose detection was insufficient or the model/runtime was unavailable. Please ensure the full body is visible and MoveNet/MediaPipe is available.",
+                "Pose detection ไม่เพียงพอ หรือ model/runtime ใช้งานไม่ได้ กรุณาให้เห็นร่างกายชัดขึ้น และตรวจสอบว่า MoveNet/MediaPipe พร้อมใช้งาน",
+            ),
+        )
+        _docx_add_impact_block(
+            doc,
+            _t(lang, "Impact for clients:", "Impact for clients:"),
+            _t(
+                lang,
+                "When the system cannot reliably detect posture/gaze/stance, we avoid over-interpreting presence or confidence.",
+                "เมื่อระบบตรวจจับ posture/gaze/stance ไม่ได้อย่างน่าเชื่อถือ เราจะหลีกเลี่ยงการตีความเรื่อง presence หรือความมั่นใจมากเกินไป",
+            ),
+        )
+    else:
+        fi = report.first_impression
+
+        def render_item(item: FirstImpressionItem):
+            _docx_add_subheading(doc, _t(lang, item.title_en, item.title_th))
+
+            bullets = (_t(lang, item.insight_en, item.insight_th) or "").split("\n")
+            for b in bullets:
+                b = (b or "").strip()
+                if b:
+                    _docx_add_bullet(doc, b)
+
+            _docx_add_impact_block(
+                doc,
+                _t(lang, "Impact for clients:", "Impact for clients:"),
+                _t(lang, item.impact_en, item.impact_th),
+            )
+
+        render_item(fi.eye_contact)
+        render_item(fi.uprightness)
+        render_item(fi.stance)
+
+        note = _t(lang, fi.reliability_note_en, fi.reliability_note_th).strip()
+        if note:
+            p = doc.add_paragraph()
+            _docx_apply_para(p, left=0.55, before=0, after=10)
+            r = p.add_run(note)
+            r.italic = True
+
+    # 2/3/4 categories
+    if report.categories:
+        n = 2
+        for cat in report.categories:
+            cat_name = cat.name_th if (lang or "").startswith("th") else cat.name_en
+            _docx_add_numbered_line(doc, f"{n}.", f"{cat_name}:")
+            n += 1
+
+            tpl = REPORT_CATEGORY_TEMPLATES.get(cat.name_en)
+            if tpl:
+                bullets_key = "bullets_th" if (lang or "").startswith("th") else "bullets_en"
+                bullets = tpl.get(bullets_key) or []
+                for b in bullets:
+                    b = (str(b) or "").strip()
+                    if b:
+                        _docx_add_bullet(doc, b)
+
+            p = doc.add_paragraph()
+            _docx_apply_para(p, left=0.55, before=6, after=4)
+            p.add_run(_t(lang, "Scale: ", "ระดับ: ")).bold = True
+            p.add_run(_scale_label(cat.scale, lang=lang))
+
+            if cat.total > 0:
+                p = doc.add_paragraph()
+                _docx_apply_para(p, left=0.55, before=0, after=14)
+                p.add_run(_t(lang, "Description: ", "คำอธิบาย: ")).bold = True
+                p.add_run(
+                    _t(
+                        lang,
+                        f"Detected {cat.positives} positive indicators out of {cat.total} total indicators",
+                        f"ตรวจพบตัวบ่งชี้เชิงบวก {cat.positives} รายการ จากทั้งหมด {cat.total} รายการ",
+                    )
+                )
+            else:
+                doc.add_paragraph("")
+
+    # Graph pages (optional)
+    if graph1_path and os.path.exists(graph1_path):
+        doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        _docx_add_heading(doc, _t(lang, "Effort Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Effort"), size=11, bold=True, before=0, after=8)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(graph1_path, width=Inches(6.0))
+
+    if graph2_path and os.path.exists(graph2_path):
+        doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        _docx_add_heading(doc, _t(lang, "Shape Motion Detection Results", "ผลการตรวจจับการเคลื่อนไหวแบบ Shape"), size=11, bold=True, before=0, after=8)
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run().add_picture(graph2_path, width=Inches(6.0))
+
+    # Footer
+    section = doc.sections[0]
+    footer = section.footer
+
+    if footer.paragraphs:
+        for fp in footer.paragraphs:
+            _docx_clear_paragraph(fp)
+    else:
+        footer.add_paragraph()
+
+    if os.path.exists(ASSET_FOOTER):
+        fp = footer.paragraphs[0]
+        fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        _docx_clear_paragraph(fp)
+        fp.add_run().add_picture(ASSET_FOOTER, width=Inches(6.5))
+        tp = footer.add_paragraph()
+    else:
+        tp = footer.paragraphs[0]
+
+    tp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    r = tp.add_run(report.generated_by or "")
+    r.italic = True
+
+    doc.save(out_bio)
+    try:
+        out_bio.seek(0)
+    except Exception:
+        pass
+# =========================
+# PART 4/4 — S3 helpers + Job schema + Core processing + Main loop (IMPORTANT FIXES)
+# =========================
+
+# =========================
+# S3 helpers
+# =========================
+def s3_get_json(s3, bucket: str, key: str) -> dict:
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    return json.loads(obj["Body"].read().decode("utf-8"))
+
+
+def s3_put_json(s3, bucket: str, key: str, data: dict):
+    s3.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=json.dumps(data, ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json; charset=utf-8",
+    )
+
+
+def s3_download_to_file(s3, bucket: str, key: str, local_path: str):
+    s3.download_file(bucket, key, local_path)
+
+
+def s3_put_bytes(s3, bucket: str, key: str, data: bytes, content_type: str):
+    s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+
+
+def s3_copy_delete(s3, bucket: str, src_key: str, dst_key: str):
+    s3.copy_object(Bucket=bucket, CopySource={"Bucket": bucket, "Key": src_key}, Key=dst_key)
+    s3.delete_object(Bucket=bucket, Key=src_key)
+
+
+def list_job_json_keys(s3, bucket: str, prefix: str, limit: int = 200) -> list:
+    keys = []
+    token = None
+    while True:
+        kwargs = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1000}
+        if token:
+            kwargs["ContinuationToken"] = token
+        resp = s3.list_objects_v2(**kwargs)
+        for it in resp.get("Contents", []):
+            k = it.get("Key", "")
+            if k.endswith(".json"):
+                keys.append(k)
+                if len(keys) >= limit:
+                    return keys
+        if resp.get("IsTruncated"):
+            token = resp.get("NextContinuationToken")
+        else:
+            break
+    return keys
+
+
+# =========================
+# Job schema (tolerant)
+# =========================
+def is_report_job(job: dict) -> bool:
+    jt = (job.get("type") or job.get("job_type") or job.get("mode") or "").strip().lower()
+    return jt in ("report", "presentation_report", "presentation-analysis-report")
+
+
+def job_status(job: dict) -> str:
+    return (job.get("status") or "").strip().lower()
+
+
+def set_status(job: dict, status: str, message: str = "") -> dict:
+    job["status"] = status
+    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if message:
+        job["message"] = message
+    return job
+
+
+def resolve_video_key(job: dict, job_id: str) -> str:
+    for f in ("video_s3_key", "input_video_key", "input_key", "s3_key"):
+        if job.get(f):
+            return str(job[f])
+    return f"jobs/pending/{job_id}/input/input.mp4"
+
+
+def job_lang(job: dict) -> str:
+    lang = (job.get("lang") or job.get("language") or "").strip().lower()
+    if lang.startswith("th"):
+        return "th"
+    return "en"
+
+
+def include_first_impression(job: dict) -> bool:
+    if "include_first_impression" in job:
+        return bool(job.get("include_first_impression"))
+    if "first_impression" in job:
+        return bool(job.get("first_impression"))
+    opts = job.get("options") if isinstance(job.get("options"), dict) else {}
+    if isinstance(opts, dict) and "first_impression" in opts:
+        return bool(opts.get("first_impression"))
+    return True
+
+
+# =========================
+# Core processing
+# =========================
+def process_report_job(s3, bucket: str, job_key: str):
+    job = s3_get_json(s3, bucket, job_key)
+    job_id = str(job.get("job_id") or job.get("id") or os.path.splitext(os.path.basename(job_key))[0])
+
+    if not is_report_job(job):
+        return
+
+    stt = job_status(job)
+    if stt in ("processing", "finished", "done", "failed", "error"):
+        return
+
+    lang_code = job_lang(job)
+
+    log.info(f"Processing report job: {job_id} ({lang_code}) ({job_key})")
+    job = set_status(job, "processing", "Generating report…")
+    s3_put_json(s3, bucket, job_key, job)
+
+    tmp_dir = tempfile.mkdtemp(prefix=f"report_{job_id}_")
+    debug_payload: Dict[str, Any] = {
+        "job_id": job_id,
+        "lang": lang_code,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "libs": {
+            "cv2": bool(cv2),
+            "np": bool(np),
+            "pd": bool(pd),
+            "plt": bool(plt),
+            "docx": bool(Document),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "movenet_model_exists": bool(os.path.exists(MOVENET_MODEL_PATH)),
+            "mediapipe": bool(MP_HAS_SOLUTIONS),
+        },
+        "movenet_model_path": MOVENET_MODEL_PATH,
+        "normalize_fps": NORMALIZE_FPS,
+        "pose_sample_fps": POSE_SAMPLE_FPS,
+    }
+
+    try:
+        # Download video
+        video_key = resolve_video_key(job, job_id)
+        ext = os.path.splitext(video_key)[1] or ".mp4"
+        raw_video_path = os.path.join(tmp_dir, "input_video_raw" + ext)
+
+        log.info(f"Downloading video from s3://{bucket}/{video_key}")
+        s3_download_to_file(s3, bucket, video_key, raw_video_path)
+
+        # Always normalize with FFmpeg
+        normalized_path = os.path.join(tmp_dir, "input_video_normalized.mp4")
+        log.info("Normalizing video with FFmpeg…")
+        normalize_video_with_ffmpeg(raw_video_path, normalized_path, fps=NORMALIZE_FPS)
+        debug_payload["normalized_video"] = {
+            "path": "input_video_normalized.mp4",
+            "size_bytes": os.path.getsize(normalized_path) if os.path.exists(normalized_path) else None,
+        }
+
+        # Analyze main (placeholder) - run on normalized video
+        result = analyze_video_fallback(normalized_path)
+        debug_payload["main_analysis"] = {"engine": result.get("analysis_engine", "unknown")}
+
+        duration_str = format_seconds_to_mmss(result.get("duration_seconds") or 0.0)
+        analysis_date = datetime.now().strftime("%d-%m-%Y")
+        total = int(result.get("total_indicators") or 0)
+
+        categories = [
+            CategoryResult(
+                name_en="Engaging & Connecting",
+                name_th="Engaging & Connecting",
+                score=int(result.get("engaging_score") or 1),
+                scale=("high" if int(result.get("engaging_score") or 1) >= 5 else ("moderate" if int(result.get("engaging_score") or 1) >= 3 else "low")),
+                positives=int(result.get("engaging_pos") or 0),
+                total=total,
+            ),
+            CategoryResult(
+                name_en="Confidence",
+                name_th="Confidence",
+                score=int(result.get("convince_score") or 1),
+                scale=("high" if int(result.get("convince_score") or 1) >= 5 else ("moderate" if int(result.get("convince_score") or 1) >= 3 else "low")),
+                positives=int(result.get("convince_pos") or 0),
+                total=total,
+            ),
+            CategoryResult(
+                name_en="Authority",
+                name_th="Authority",
+                score=int(result.get("authority_score") or 1),
+                scale=("high" if int(result.get("authority_score") or 1) >= 5 else ("moderate" if int(result.get("authority_score") or 1) >= 3 else "low")),
+                positives=int(result.get("authority_pos") or 0),
+                total=total,
+            ),
+        ]
+
+        client_name = str(job.get("client_name") or job.get("client") or "").strip()
+        summary_comment = str(job.get("summary_comment") or "").strip()
+
+        # First Impression (REAL) on normalized video
+        fi_obj: Optional[FirstImpressionResult] = None
+        if include_first_impression(job):
+            fi_obj, fi_debug = analyze_first_impression(normalized_path, lang_code)
+            debug_payload["first_impression"] = fi_debug
+            if fi_obj is None:
+                log.warning(
+                    f"First Impression unavailable for job {job_id}: "
+                    f"{fi_debug.get('reason') or fi_debug.get('primary_error') or 'unknown'}"
+                )
+        else:
+            debug_payload["first_impression"] = {"enabled": False, "reason": "disabled_by_job"}
+
+        # Graphs (optional)
+        graph1_path: Optional[str] = os.path.join(tmp_dir, "Graph 1.png")
+        graph2_path: Optional[str] = os.path.join(tmp_dir, "Graph 2.png")
+
+        try:
+            generate_effort_graph(result.get("effort_detection", {}), result.get("shape_detection", {}), graph1_path)
+            generate_shape_graph(result.get("shape_detection", {}), graph2_path)
+            if not os.path.exists(graph1_path):
+                graph1_path = None
+            if not os.path.exists(graph2_path):
+                graph2_path = None
+        except Exception as e:
+            log.warning(f"Graph generation failed: {e}")
+            graph1_path = None
+            graph2_path = None
+
+        report = ReportData(
+            client_name=client_name,
+            analysis_date=analysis_date,
+            video_length_str=f"{int(round(get_video_duration_seconds(normalized_path)))} seconds ({duration_str})" if cv2 else duration_str,
+            overall_score=int(round(sum([c.score for c in categories]) / max(1, len(categories)))),
+            first_impression=fi_obj,
+            categories=categories,
+            summary_comment=summary_comment,
+            generated_by=_t(lang_code, "Generated by AI People Reader™", "Generated by AI People Reader™"),
+        )
+
+        outputs: Dict[str, str] = {}
+
+        out_docx_key = job.get("output_docx_key") or f"jobs/output/{job_id}/report_{lang_code}.docx"
+        out_debug_key = job.get("output_debug_key") or f"jobs/output/{job_id}/debug_{lang_code}.json"
+
+        # Build DOCX
+        docx_bio = io.BytesIO()
+        build_docx_report(report, docx_bio, graph1_path, graph2_path, lang=lang_code)
+        docx_bytes = docx_bio.getvalue()
+        if not docx_bytes:
+            raise RuntimeError("DOCX generation produced empty output")
+
+        s3_put_bytes(
+            s3,
+            bucket,
+            str(out_docx_key),
+            docx_bytes,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        outputs["docx"] = str(out_docx_key)
+
+        # Upload debug
+        debug_payload["outputs"] = outputs
+        debug_payload["finished_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            s3_put_bytes(
+                s3,
+                bucket,
+                str(out_debug_key),
+                json.dumps(debug_payload, ensure_ascii=False, indent=2).encode("utf-8"),
+                "application/json",
+            )
+            outputs["debug"] = str(out_debug_key)
+        except Exception as e:
+            log.warning(f"Upload debug json failed: {e}")
+
+        job["outputs"] = outputs
+        job = set_status(job, "finished", "DOCX report generated")
+        s3_put_json(s3, bucket, job_key, job)
+
+        log.info(f"Finished report job {job_id} -> {outputs}")
+
+    except Exception as e:
+        log.exception(f"Report job failed: {job_key}: {e}")
+        try:
+            job = set_status(job, "failed", str(e))
+            s3_put_json(s3, bucket, job_key, job)
+        except Exception:
+            pass
+
+    finally:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def main_loop():
+    global AWS_BUCKET
+
+    # ✅ IMPORTANT FIX: do not crash; keep service alive and log missing env
+    if not AWS_BUCKET:
+        log.error("Missing AWS_BUCKET (or S3_BUCKET). Set it in Render Environment. Worker will keep waiting.")
+        while True:
+            time.sleep(30)
+
+    s3 = get_s3_client()
+
+    log.info(f"Report worker started. Bucket={AWS_BUCKET}, pending_prefix={JOBS_PENDING_PREFIX}")
+
+    while True:
+        try:
+            keys = list_job_json_keys(s3, AWS_BUCKET, JOBS_PENDING_PREFIX, limit=200)
+            for job_key in sorted(keys):
+                try:
+                    job = s3_get_json(s3, AWS_BUCKET, job_key)
+                    if not is_report_job(job):
+                        continue
+
+                    stt = job_status(job)
+                    if stt in ("processing", "finished", "done", "failed", "error"):
+                        continue
+
+                    process_report_job(s3, AWS_BUCKET, job_key)
+
+                    job2 = s3_get_json(s3, AWS_BUCKET, job_key)
+                    job_id = str(job2.get("job_id") or job2.get("id") or os.path.splitext(os.path.basename(job_key))[0])
+
+                    if job_status(job2) in ("finished", "done"):
+                        dst = f"{JOBS_FINISHED_PREFIX}{job_id}.json"
+                        s3_copy_delete(s3, AWS_BUCKET, job_key, dst)
+                    elif job_status(job2) in ("failed", "error"):
+                        dst = f"{JOBS_FAILED_PREFIX}{job_id}.json"
+                        s3_copy_delete(s3, AWS_BUCKET, job_key, dst)
+
+                except Exception as e:
+                    log.warning(f"Skip job {job_key}: {e}")
+
+        except Exception as e:
+            log.warning(f"Polling error: {e}")
+
+        time.sleep(JOB_POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    main_loop()
