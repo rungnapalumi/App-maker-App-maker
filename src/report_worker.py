@@ -758,7 +758,7 @@ def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang:
     if usable == 0:
         return FirstImpressionItem(
             title_en="Eye Contact",
-            title_th="Eye Contact",
+            title_th="การสบตา (Eye Contact)",
             scale="—",
             score=0,
             insight_en="Eye contact could not be reliably detected from this clip.",
@@ -816,7 +816,7 @@ def _analyze_eye_contact(seq: List[Dict[str, Tuple[float, float, float]]], lang:
 
     return FirstImpressionItem(
         title_en="Eye Contact",
-        title_th="Eye Contact",
+        title_th="การสบตา (Eye Contact)",
         scale=level,
         score=score,
         insight_en="\n".join(bullets_en),
@@ -867,7 +867,7 @@ def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang:
     if usable == 0:
         return FirstImpressionItem(
             title_en="Uprightness (Posture & Upper-Body Alignment)",
-            title_th="Uprightness (Posture & Upper-Body Alignment)",
+            title_th="ความตั้งตรง (ท่าทางและแนวลำตัวส่วนบน)",
             scale="—",
             score=0,
             insight_en="Uprightness could not be reliably detected from this clip.",
@@ -932,7 +932,7 @@ def _analyze_uprightness(seq: List[Dict[str, Tuple[float, float, float]]], lang:
 
     return FirstImpressionItem(
         title_en="Uprightness (Posture & Upper-Body Alignment)",
-        title_th="Uprightness (Posture & Upper-Body Alignment)",
+        title_th="ความตั้งตรง (ท่าทางและแนวลำตัวส่วนบน)",
         scale=level,
         score=score,
         insight_en="\n".join(bullets_en),
@@ -976,7 +976,7 @@ def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str)
     if usable == 0:
         return FirstImpressionItem(
             title_en="Stance (Lower-Body Stability & Grounding)",
-            title_th="Stance (Lower-Body Stability & Grounding)",
+            title_th="ความมั่นคงของการยืน (ช่วงล่างและการยืนให้ grounded)",
             scale="—",
             score=0,
             insight_en="Stance could not be reliably detected from this clip.",
@@ -1043,7 +1043,7 @@ def _analyze_stance(seq: List[Dict[str, Tuple[float, float, float]]], lang: str)
 
     return FirstImpressionItem(
         title_en="Stance (Lower-Body Stability & Grounding)",
-        title_th="Stance (Lower-Body Stability & Grounding)",
+        title_th="ความมั่นคงของการยืน (ช่วงล่างและการยืนให้ grounded)",
         scale=level,
         score=score,
         insight_en="\n".join(bullets_en),
@@ -1218,6 +1218,7 @@ def _docx_add_heading(doc, text: str, size: int = 12, bold: bool = True, before:
     return p
 
 def _docx_add_numbered_line(doc, number: str, text: str):
+    # Match sample: number + single tab + text, consistent indent, single tab stop
     p = doc.add_paragraph()
     _docx_apply_para(p, left=0.35, first_line=0.0, before=0, after=4)
     run = p.add_run(f"{number}\t{text}")
@@ -1230,7 +1231,8 @@ def _docx_add_numbered_line(doc, number: str, text: str):
 
 def _docx_add_subheading(doc, text: str):
     p = doc.add_paragraph()
-    _docx_apply_para(p, left=0.55, first_line=0.0, before=10, after=2)
+    # Slightly less space than before to match sample block flow
+    _docx_apply_para(p, left=0.55, first_line=0.0, before=8, after=2)
     p.add_run(text)
     return p
 
@@ -1241,8 +1243,9 @@ def _docx_add_bullet(doc, text: str):
     return p
 
 def _docx_add_impact_block(doc, label: str, text: str):
+    # Match sample: visible gap before Impact block, label on its own line, then text line, same indent.
     p1 = doc.add_paragraph()
-    _docx_apply_para(p1, left=0.95, first_line=0.0, before=4, after=0)
+    _docx_apply_para(p1, left=0.95, first_line=0.0, before=10, after=0)
     r = p1.add_run(label)
     r.bold = False
 
