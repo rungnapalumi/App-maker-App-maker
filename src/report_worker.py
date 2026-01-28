@@ -1109,7 +1109,7 @@ def analyze_first_impression(video_path: str, lang: str) -> Tuple[Optional[First
             debug["reason"] = f"both_failed: movenet_error={e}; mediapipe_error={e2}"
             return None, debug
 
-    if not seq or int(debug.get("frames_with_pose", 0) or 0) < 10:
+    if not seq or int(debug.get("frames_with_pose", 0) or 0) < 5:
         debug["enabled"] = False
         debug["reason"] = "insufficient_pose_frames"
         return None, debug
