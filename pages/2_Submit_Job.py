@@ -1,27 +1,26 @@
 # pages/2_Submit_Job.py — Video Analysis (วิเคราะห์วิดีโอ)
+# ------------------------------------------------------------
 # Upload once (shared key) -> get downloads:
-#   1) Dots video
-#   2) Skeleton video
+#   1) Dots video (MP4)
+#   2) Skeleton video (MP4)
 #   3) English report (DOCX)
 #   4) Thai report (DOCX)
 #
-# Uses LEGACY queue:
-#   jobs/pending/<job_id>.json
-# Workers must read:
-#   - job["input_key"]
-#   - job["mode"]
-#   - and output keys:
-#       video worker: job["output_key"]
-#       report worker: job["output_docx_key"]
-#
-# Shared input:
-#   jobs/groups/<group_id>/input/input.mp4
+# ✅ DOCX only (NO PDF)
+# ✅ LEGACY queue:
+#     jobs/pending/<job_id>.json
+# ✅ Self-healing submit:
+#     - Writes manifest to S3 for the group
+#     - Enqueues 4 jobs with verification
+#     - Auto-repairs missing jobs from manifest on refresh/page load
+# ------------------------------------------------------------
 
 import os
 import json
 import uuid
+import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import streamlit as st
 import boto3
@@ -32,9 +31,11 @@ import boto3
 # -------------------------
 st.set_page_config(page_title="Video Analysis (วิเคราะห์วิดีโอ)", layout="wide")
 
+
 # -------------------------
 # Env / S3
 # -------------------------
+# Keep compatibility with your current Render env names.
 AWS_BUCKET = os.getenv("AWS_BUCKET") or os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 
@@ -51,6 +52,8 @@ JOBS_FAILED_PREFIX = "jobs/failed/"
 
 JOBS_OUTPUT_PREFIX = "jobs/output/"
 JOBS_GROUP_PREFIX = "jobs/groups/"
+
+MANIFEST_REL = "meta/manifest.json"  # stored under jobs/groups/<group_id>/meta/manifest.json
 
 
 # -------------------------
@@ -70,6 +73,20 @@ def new_group_id() -> str:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:6]
     return f"{ts}_{rand}"
+
+
+def safe_slug(text: str, fallback: str = "user") -> str:
+    t = (text or "").strip()
+    if not t:
+        return fallback
+    out: List[str] = []
+    for ch in t:
+        if ch.isalnum() or ch in ("_", "-"):
+            out.append(ch)
+        elif ch.isspace():
+            out.append("_")
+    s = "".join(out).strip("_")
+    return s if s else fallback
 
 
 def guess_content_type(filename: str) -> str:
@@ -95,6 +112,16 @@ def s3_put_bytes(key: str, data: bytes, content_type: str) -> None:
 
 def s3_put_json(key: str, payload: Dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    s3.put_object(
+        Bucket=AWS_BUCKET,
+        Key=key,
+        Body=body,
+        ContentType="application/json; charset=utf-8",
+    )
+
+
+def s3_put_json_pretty(key: str, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     s3.put_object(
         Bucket=AWS_BUCKET,
         Key=key,
@@ -133,55 +160,39 @@ def presigned_get_url(key: str, expires: int = 3600, filename: Optional[str] = N
     )
 
 
-def enqueue_legacy_job(job: Dict[str, Any]) -> str:
+def manifest_key_for_group(group_id: str) -> str:
+    return f"{JOBS_GROUP_PREFIX}{group_id}/{MANIFEST_REL}"
+
+
+def write_manifest(group_id: str, manifest: Dict[str, Any]) -> str:
+    k = manifest_key_for_group(group_id)
+    s3_put_json_pretty(k, manifest)
+    return k
+
+
+def read_manifest(group_id: str) -> Optional[Dict[str, Any]]:
+    return s3_read_json(manifest_key_for_group(group_id))
+
+
+def enqueue_with_verify(job: Dict[str, Any], retries: int = 5, delay_s: float = 0.25) -> str:
     """
-    Legacy queue format:
-      jobs/pending/<job_id>.json
+    Put job json -> verify head_object -> retry.
+    Guarantees the job json exists in S3 when returned (or raises).
     """
     job_id = str(job["job_id"])
-    job_json_key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
-    s3_put_json(job_json_key, job)
-    return job_json_key
+    key = f"{JOBS_PENDING_PREFIX}{job_id}.json"
+    last_err: Optional[Exception] = None
 
+    for _ in range(retries):
+        try:
+            s3_put_json(key, job)
+            if s3_key_exists(key):
+                return key
+        except Exception as e:
+            last_err = e
+        time.sleep(delay_s)
 
-def safe_slug(text: str, fallback: str = "user") -> str:
-    t = (text or "").strip()
-    if not t:
-        return fallback
-    out = []
-    for ch in t:
-        if ch.isalnum() or ch in ("_", "-"):
-            out.append(ch)
-        elif ch.isspace():
-            out.append("_")
-    s = "".join(out).strip("_")
-    return s if s else fallback
-
-
-def build_output_keys(group_id: str) -> Dict[str, str]:
-    """
-    Keep outputs under jobs/output/groups/<group_id>/...
-    """
-    base = f"{JOBS_OUTPUT_PREFIX}groups/{group_id}/"
-    return {
-        "dots_video": base + "dots.mp4",
-        "skeleton_video": base + "skeleton.mp4",
-        "report_en_docx": base + "report_en.docx",
-        "report_th_docx": base + "report_th.docx",
-        "debug_en": base + "debug_en.json",
-        "debug_th": base + "debug_th.json",
-    }
-
-
-def ensure_session_defaults() -> None:
-    if "last_group_id" not in st.session_state:
-        st.session_state["last_group_id"] = None
-    if "last_outputs" not in st.session_state:
-        st.session_state["last_outputs"] = None
-    if "last_jobs" not in st.session_state:
-        st.session_state["last_jobs"] = None
-    if "last_job_json_keys" not in st.session_state:
-        st.session_state["last_job_json_keys"] = None
+    raise RuntimeError(f"enqueue_with_verify failed for {job_id}: {last_err}")
 
 
 def find_job_json(job_id: str) -> Optional[str]:
@@ -212,13 +223,76 @@ def infer_job_bucket_status(job_key: str) -> str:
     return "unknown"
 
 
+def job_exists_anywhere(job_id: str) -> bool:
+    return find_job_json(job_id) is not None
+
+
+def repair_from_manifest(group_id: str) -> Dict[str, Any]:
+    """
+    If any job described in manifest is missing from all buckets,
+    re-enqueue it to pending. Returns repair report.
+    """
+    mf = read_manifest(group_id) or {}
+    jobs_obj = mf.get("jobs") or {}
+    repaired: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    errors: List[Dict[str, Any]] = []
+
+    for name, job in jobs_obj.items():
+        try:
+            jid = str(job.get("job_id") or "")
+            if not jid:
+                continue
+
+            if job_exists_anywhere(jid):
+                skipped.append(name)
+                continue
+
+            k = enqueue_with_verify(job)
+            repaired.append({"name": name, "job_id": jid, "key": k})
+
+        except Exception as e:
+            errors.append({"name": name, "error": str(e)})
+
+    return {"repaired": repaired, "skipped": skipped, "errors": errors}
+
+
+def build_output_keys(group_id: str) -> Dict[str, str]:
+    """
+    Keep outputs under jobs/output/groups/<group_id>/...
+    """
+    base = f"{JOBS_OUTPUT_PREFIX}groups/{group_id}/"
+    return {
+        "dots_video": base + "dots.mp4",
+        "skeleton_video": base + "skeleton.mp4",
+        "report_en_docx": base + "report_en.docx",
+        "report_th_docx": base + "report_th.docx",
+        "debug_en": base + "debug_en.json",
+        "debug_th": base + "debug_th.json",
+    }
+
+
+def ensure_session_defaults() -> None:
+    if "last_group_id" not in st.session_state:
+        st.session_state["last_group_id"] = None
+    if "last_outputs" not in st.session_state:
+        st.session_state["last_outputs"] = None
+    if "last_jobs" not in st.session_state:
+        st.session_state["last_jobs"] = None
+    if "last_job_json_keys" not in st.session_state:
+        st.session_state["last_job_json_keys"] = None
+    if "manifest_key" not in st.session_state:
+        st.session_state["manifest_key"] = None
+
+
 # -------------------------
 # UI
 # -------------------------
 ensure_session_defaults()
 
 st.markdown("# Video Analysis (วิเคราะห์วิดีโอ)")
-st.caption("Upload your video once, then click **Video Analysis** to generate dots + skeleton + reports (EN/TH). (DOCX only)")
+st.caption("Upload once, then click **Video Analysis** to generate dots + skeleton + reports (EN/TH). ✅ DOCX only (NO PDF)")
+st.caption(f"Using S3 bucket: `{AWS_BUCKET}` | region: `{AWS_REGION}`")
 
 with st.expander("Optional: User Name (ชื่อผู้ใช้) — ใช้สำหรับติดตามงาน", expanded=False):
     user_name = st.text_input("Enter User Name", value="", placeholder="e.g., Rung / Founder / Co-Founder")
@@ -238,8 +312,12 @@ with colB:
 
 note = st.empty()
 
+if refresh:
+    st.rerun()
+
+
 # -------------------------
-# Submit jobs
+# Submit jobs (Self-healing)
 # -------------------------
 if run:
     if not uploaded:
@@ -250,7 +328,7 @@ if run:
     group_id = f"{new_group_id()}__{base_user}"
     input_key = f"{JOBS_GROUP_PREFIX}{group_id}/input/input.mp4"
 
-    # upload shared input
+    # Upload shared input
     try:
         s3_put_bytes(
             key=input_key,
@@ -318,12 +396,50 @@ if run:
         "include_first_impression": True,
     }
 
+    # Manifest: single source of truth for this group
+    manifest = {
+        "group_id": group_id,
+        "created_at": created_at,
+        "bucket": AWS_BUCKET,
+        "region": AWS_REGION,
+        "input_key": input_key,
+        "outputs": outputs,
+        "jobs": {
+            "dots": job_dots,
+            "skeleton": job_skel,
+            "report_en": job_rep_en,
+            "report_th": job_rep_th,
+        },
+        "state": "created",
+    }
+
     try:
-        k1 = enqueue_legacy_job(job_dots)
-        k2 = enqueue_legacy_job(job_skel)
-        k3 = enqueue_legacy_job(job_rep_en)
-        k4 = enqueue_legacy_job(job_rep_th)
+        manifest_s3_key = write_manifest(group_id, manifest)
+
+        # Enqueue with verification (never silently missing)
+        k1 = enqueue_with_verify(job_dots)
+        k2 = enqueue_with_verify(job_skel)
+        k3 = enqueue_with_verify(job_rep_en)
+        k4 = enqueue_with_verify(job_rep_th)
+
+        manifest["state"] = "enqueued"
+        manifest["enqueued_at"] = utc_now_iso()
+        manifest["job_json_keys"] = {
+            "dots": k1,
+            "skeleton": k2,
+            "report_en": k3,
+            "report_th": k4,
+        }
+        write_manifest(group_id, manifest)
+
     except Exception as e:
+        # Keep manifest for repair, even if enqueue failed mid-way
+        manifest["state"] = "enqueue_error"
+        manifest["error"] = str(e)
+        try:
+            write_manifest(group_id, manifest)
+        except Exception:
+            pass
         note.error(f"Enqueue job failed: {e}")
         st.stop()
 
@@ -341,6 +457,7 @@ if run:
         "report_en": k3,
         "report_th": k4,
     }
+    st.session_state["manifest_key"] = manifest_s3_key
 
     note.success(f"Submitted! group_id = {group_id}")
     st.info("Wait a bit, then press Refresh. (We will show job status + outputs.)")
@@ -353,6 +470,7 @@ group_id = st.session_state.get("last_group_id")
 outputs = st.session_state.get("last_outputs") or {}
 jobs = st.session_state.get("last_jobs") or {}
 job_json_keys = st.session_state.get("last_job_json_keys") or {}
+manifest_key = st.session_state.get("manifest_key")
 
 st.divider()
 st.subheader("Downloads (ผลลัพธ์สำหรับดาวน์โหลด)")
@@ -362,6 +480,13 @@ if not group_id:
     st.stop()
 
 st.caption(f"Group: `{group_id}`")
+
+# Auto-repair: ensures all 4 jobs exist even if submit got interrupted
+rep = repair_from_manifest(group_id)
+if rep.get("repaired"):
+    st.info(f"🛠️ Auto-repaired missing jobs: {[x['name'] for x in rep['repaired']]}")
+if rep.get("errors"):
+    st.warning(f"Repair errors: {rep['errors']}")
 
 
 def download_block(title: str, key: str, filename: str) -> None:
@@ -395,11 +520,11 @@ def job_status_block(label: str, job_id: str) -> None:
     inner_status = (payload.get("status") or "").strip() or "—"
     msg = (payload.get("message") or "").strip()
 
-    if bucket_status in ("failed",):
+    if bucket_status == "failed":
         st.error(f"🧨 {label}: {bucket_status} (job.status={inner_status})")
-    elif bucket_status in ("finished",):
+    elif bucket_status == "finished":
         st.success(f"✅ {label}: {bucket_status} (job.status={inner_status})")
-    elif bucket_status in ("processing",):
+    elif bucket_status == "processing":
         st.info(f"🟦 {label}: {bucket_status} (job.status={inner_status})")
     else:
         st.warning(f"⏳ {label}: {bucket_status} (job.status={inner_status})")
@@ -418,9 +543,16 @@ with st.expander("🔎 Job Status Inspector (ดูสถานะงานจ�
         job_status_block("Dots", jobs.get("dots", ""))
         job_status_block("Skeleton", jobs.get("skeleton", ""))
     with cB:
-        st.markdown("**Report jobs**")
+        st.markdown("**Report jobs (DOCX only)**")
         job_status_block("Report EN", jobs.get("report_en", ""))
         job_status_block("Report TH", jobs.get("report_th", ""))
+
+    if manifest_key:
+        st.markdown("**Manifest key (source of truth)**")
+        st.code(manifest_key, language="text")
+        mf = s3_read_json(manifest_key) or {}
+        if mf:
+            st.json({"state": mf.get("state"), "created_at": mf.get("created_at"), "enqueued_at": mf.get("enqueued_at")})
 
     if job_json_keys:
         st.markdown("**Enqueued JSON keys (ตอน submit ล่าสุด)**")
