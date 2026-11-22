@@ -327,17 +327,13 @@ Be specific, actionable, and use the user's own language where possible."""
             next_action = user_input.get("next_action", next_action)
             success_indicator = user_input.get("success_indicator", success_indicator)
         
-        # NEVER invent a target date - use None and require user to set it
+        # NEVER invent a target date - leave as None, require user to set it
         target_date_obj = None
         if user_input and user_input.get("target_date"):
             try:
                 target_date_obj = date.fromisoformat(user_input["target_date"])
             except:
                 target_date_obj = None
-        
-        # If no target date, set to today + 7 as placeholder (will be replaced in UI)
-        if target_date_obj is None:
-            target_date_obj = date.today() + timedelta(days=7)
         
         return ActionPlan(
             user_id=session.user_id,

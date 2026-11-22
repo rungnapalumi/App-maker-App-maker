@@ -13,6 +13,34 @@ from models import CoachingSession, ActionPlan
 def show_coaching_workspace():
     """Main coaching workspace with chat interface"""
     
+    # Mobile-friendly navigation bar
+    st.markdown("""
+    <style>
+    @media (max-width: 768px) {
+        h1 { font-size: 1.5rem !important; }
+        h2 { font-size: 1.3rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        .stButton button { font-size: 0.9rem; padding: 0.5rem; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Mobile quick navigation
+    with st.expander("📱 Quick Navigation", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🏠 Home", key="mobile_nav_home", use_container_width=True):
+                st.session_state.navigation = "Home"
+                st.rerun()
+        with col2:
+            if st.button("💡 Coach Info", key="mobile_nav_coach", use_container_width=True):
+                st.session_state.navigation = "AIHive Coach"
+                st.rerun()
+        with col3:
+            if st.button("📋 My Plans", key="mobile_nav_plans", use_container_width=True):
+                st.session_state.navigation = "My Action Plans"
+                st.rerun()
+    
     st.title("💬 Coaching Workspace")
     
     # Initialize or load session
@@ -172,13 +200,14 @@ def show_action_plan_creation_form(session: CoachingSession):
             help="Measurable outcome (number, frequency, or observable result - e.g., 'Complete 3 out of 5 tasks' or 'Receive positive feedback from manager')"
         )
         
-        st.markdown("**📅 Target Completion Date** (required)")
-        st.caption("Please confirm or change the target date:")
+        st.markdown("**📅 Target Completion Date**")
+        st.info("⚠️ **Please set a target date.** No default date has been chosen for you.")
+        target_date_value = draft.target_date if draft.target_date else date.today() + timedelta(days=7)
         target_date = st.date_input(
             "When will you complete this?",
-            value=draft.target_date,
+            value=target_date_value,
             min_value=date.today(),
-            help="Choose a realistic deadline",
+            help="Choose a realistic deadline - this is YOUR choice",
             label_visibility="collapsed"
         )
         

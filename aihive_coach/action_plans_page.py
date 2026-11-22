@@ -11,6 +11,34 @@ from models import ActionPlan
 def show_action_plans():
     """Display user's action plans"""
     
+    # Mobile-friendly styling
+    st.markdown("""
+    <style>
+    @media (max-width: 768px) {
+        h1 { font-size: 1.5rem !important; }
+        h2 { font-size: 1.3rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        .stButton button { font-size: 0.9rem; padding: 0.5rem; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Mobile quick navigation
+    with st.expander("📱 Quick Navigation", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🏠 Home", key="mobile_nav_home_plans", use_container_width=True):
+                st.session_state.navigation = "Home"
+                st.rerun()
+        with col2:
+            if st.button("💬 Start Coaching", key="mobile_nav_coaching_plans", use_container_width=True):
+                st.session_state.navigation = "Start Coaching"
+                st.rerun()
+        with col3:
+            if st.button("💡 Coach Info", key="mobile_nav_coach_plans", use_container_width=True):
+                st.session_state.navigation = "AIHive Coach"
+                st.rerun()
+    
     st.title("📋 My Action Plans")
     
     # Load user's action plans

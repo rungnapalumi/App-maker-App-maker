@@ -111,7 +111,8 @@ def test_action_plan_generation_demo_mode(coach, test_session):
     assert plan.session_id == test_session.id
     assert len(plan.goal) > 0
     assert len(plan.next_action) > 0
-    assert isinstance(plan.target_date, date)
+    # target_date should be None (not auto-filled) per CEO requirement
+    assert plan.target_date is None, "Target date should be None (user must set it)"
 
 
 def test_action_plan_with_user_overrides(coach, test_session):

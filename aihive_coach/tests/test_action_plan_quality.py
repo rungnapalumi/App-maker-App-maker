@@ -218,10 +218,8 @@ def test_action_plan_quality_demo_mode(coach, scenario):
     assert len(plan.next_action) > 10, f"[{scenario['name']}] Next Action too short"
     assert len(plan.success_indicator) > 10, f"[{scenario['name']}] Success Indicator too short"
     
-    # Test 5: Target date exists but is set to a default (since we don't invent specific dates)
-    assert plan.target_date is not None, f"[{scenario['name']}] Target date should exist"
-    # Should be in the future
-    assert plan.target_date >= date.today(), f"[{scenario['name']}] Target date should be future"
+    # Test 5: Target date should NOT be auto-filled (CEO requirement: do not invent deadlines)
+    assert plan.target_date is None, f"[{scenario['name']}] Target date should be None (not auto-filled), user must set it"
     
     print(f"\n✅ [{scenario['category']}] {scenario['name']}")
     print(f"   Next Action: {plan.next_action[:80]}...")

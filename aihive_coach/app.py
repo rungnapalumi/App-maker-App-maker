@@ -108,14 +108,28 @@ def show_coach_landing_page():
     st.markdown("</div>", unsafe_allow_html=True)
     
     # Intro
-    st.markdown("""
+    # Intro text changes based on mode
+    if config.is_demo_mode():
+        intro_text = "A coaching conversation tool that helps you clarify your thinking, challenge your assumptions, and turn insights into action. <strong>(Demo Mode: Scripted responses)</strong>"
+    else:
+        intro_text = "An AI coaching experience that helps you clarify your thinking, challenge your assumptions, and turn insights into action."
+    
+    st.markdown(f"""
     <div class='card'>
     <p style='font-size: 1.1rem; text-align: center;'>
-    An AI coaching experience that helps you clarify your thinking, challenge your assumptions, 
-    and turn insights into action.
+    {intro_text}
     </p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Prominent CTA above fold
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 Start Your First Session", use_container_width=True, type="primary", key="start_first_top"):
+            st.session_state.navigation = "Start Coaching"
+            st.rerun()
+    
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     
     # Important disclaimer
     st.info("""
@@ -186,10 +200,15 @@ def show_coach_landing_page():
     
     st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     
-    # CTA
-    if st.button("✨ Start Your First Session", key="cta_start", use_container_width=True):
-        st.session_state.navigation = "Start Coaching"
-        st.rerun()
+    # CTA with mobile nav hint
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("✨ Start Coaching Now", key="cta_start", use_container_width=True, type="primary"):
+            st.session_state.navigation = "Start Coaching"
+            st.rerun()
+    
+    # Mobile navigation helper
+    st.caption("📱 Mobile? Use the ☰ menu (top-left) to navigate")
     
     st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
     st.markdown("---")

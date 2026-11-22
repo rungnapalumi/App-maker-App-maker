@@ -51,7 +51,7 @@ class ActionPlan(BaseModel):
     goal: str
     key_insight: str
     next_action: str
-    target_date: date
+    target_date: Optional[date] = None  # User must set this
     success_indicator: str
     
     # Metadata
