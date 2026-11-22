@@ -288,20 +288,37 @@ Be specific, actionable, and use the user's own language where possible."""
             return self._generate_demo_action_plan(session, user_input)
     
     def _generate_demo_action_plan(self, session: CoachingSession, user_input: Optional[Dict] = None) -> ActionPlan:
-        """Generate a demo action plan"""
+        """Generate a demo action plan with specific, measurable fields"""
         # Extract key themes from conversation
         user_messages = [m.content for m in session.messages if m.role == "user"]
         conversation_text = " ".join(user_messages[-5:])  # Last 5 user messages
         
-        # Simple extraction
-        goal = "Clarify and work toward my goal"
-        key_insight = "I need to take action and reflect on my progress"
-        next_action = "Identify my first concrete step forward"
-        success_indicator = "I will know by reviewing my progress weekly"
+        # Generate specific, measurable defaults
+        goal = "Define clear goal based on conversation"
+        key_insight = "Identify key realization from coaching session"
+        # Next Action: verb + concrete deliverable + scope
+        next_action = "Schedule 30-minute session to outline first three steps"
+        # Success Indicator: measurable outcome
+        success_indicator = "Complete at least 2 of 3 outlined steps within one week"
         
-        # Try to extract topic
-        if len(conversation_text) > 20:
-            goal = f"Make progress on: {conversation_text[:60]}..."
+        # Try to extract specific actions from conversation
+        conversation_lower = conversation_text.lower()
+        if any(word in conversation_lower for word in ["speak", "talk", "say", "communicate"]):
+            goal = f"Improve communication in specific context"
+            next_action = "Prepare one talking point and share it in next team interaction"
+            success_indicator = "Speak up at least once in next 3 meetings or conversations"
+        elif any(word in conversation_lower for word in ["habit", "routine", "practice"]):
+            goal = f"Build sustainable habit or routine"
+            next_action = "Set calendar reminder and complete action once tomorrow"
+            success_indicator = "Complete action 5 out of 7 days this week"
+        elif any(word in conversation_lower for word in ["decide", "choice", "option"]):
+            goal = f"Make informed decision on pending choice"
+            next_action = "List pros and cons for top 2 options by end of day"
+            success_indicator = "Make final decision and communicate it within 3 days"
+        elif len(conversation_text) > 20:
+            # Extract topic and make it specific
+            topic = conversation_text[:60].strip()
+            goal = f"Take concrete action on: {topic}..."
         
         # Override with user input if provided
         if user_input:
@@ -310,13 +327,16 @@ Be specific, actionable, and use the user's own language where possible."""
             next_action = user_input.get("next_action", next_action)
             success_indicator = user_input.get("success_indicator", success_indicator)
         
-        target_date_str = user_input.get("target_date") if user_input else None
-        if target_date_str:
+        # NEVER invent a target date - use None and require user to set it
+        target_date_obj = None
+        if user_input and user_input.get("target_date"):
             try:
-                target_date_obj = date.fromisoformat(target_date_str)
+                target_date_obj = date.fromisoformat(user_input["target_date"])
             except:
-                target_date_obj = date.today() + timedelta(days=7)
-        else:
+                target_date_obj = None
+        
+        # If no target date, set to today + 7 as placeholder (will be replaced in UI)
+        if target_date_obj is None:
             target_date_obj = date.today() + timedelta(days=7)
         
         return ActionPlan(

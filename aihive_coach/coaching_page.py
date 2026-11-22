@@ -136,6 +136,12 @@ def show_action_plan_creation_form(session: CoachingSession):
     
     draft = st.session_state.draft_plan
     
+    st.markdown("""
+    <div style='background: #fef3c7; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;'>
+    <p style='margin: 0; font-size: 0.9rem;'><strong>✏️ Please review and edit:</strong> Make your Next Action specific (verb + what + scope) and Success Indicator measurable (number/frequency). Set your Target Date below.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # Editable form
     with st.form(key="action_plan_form"):
         goal = st.text_area(
@@ -156,27 +162,24 @@ def show_action_plan_creation_form(session: CoachingSession):
             "✅ My Next Action",
             value=draft.next_action,
             height=100,
-            help="Concrete first step with specific details"
+            help="Specific action with verb + concrete deliverable + scope (e.g., 'Schedule 30-min meeting to discuss project timeline')"
         )
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            target_date = st.date_input(
-                "📅 Target Completion Date",
-                value=draft.target_date,
-                min_value=date.today(),
-                help="Realistic timeline"
-            )
-        
-        with col2:
-            st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
         
         success_indicator = st.text_area(
             "🎉 Success Indicator",
             value=draft.success_indicator,
             height=100,
-            help="How will you know you succeeded?"
+            help="Measurable outcome (number, frequency, or observable result - e.g., 'Complete 3 out of 5 tasks' or 'Receive positive feedback from manager')"
+        )
+        
+        st.markdown("**📅 Target Completion Date** (required)")
+        st.caption("Please confirm or change the target date:")
+        target_date = st.date_input(
+            "When will you complete this?",
+            value=draft.target_date,
+            min_value=date.today(),
+            help="Choose a realistic deadline",
+            label_visibility="collapsed"
         )
         
         col1, col2 = st.columns(2)

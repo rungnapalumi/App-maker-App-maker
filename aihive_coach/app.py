@@ -81,9 +81,9 @@ with st.sidebar:
     # Mode indicator
     mode_text = config.get_model_info()
     if config.is_demo_mode():
-        st.info(f"🔧 **{mode_text}**\n\nAdd `OPENAI_API_KEY` for real AI.")
+        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)\n\nAdd `OPENAI_API_KEY` for real AI.")
     else:
-        st.success(f"✅ **AI Active**\n\n{mode_text}")
+        st.success(f"✅ **Real AI Active**\n\n{mode_text}")
     
     st.markdown("---")
     
@@ -93,57 +93,9 @@ with st.sidebar:
 
 # Main content area
 def show_home_page():
-    """AIHiveHQ Company Home Page"""
-    
-    # Hero section
-    st.markdown("<div style='text-align: center; padding: 2rem 0 1rem 0;'>", unsafe_allow_html=True)
-    st.title("Welcome to AIHiveHQ")
-    st.subheader("Think Clearly. Act Confidently. Grow Daily.")
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Company intro
-    st.markdown("""
-    <div class='card'>
-    <p style='font-size: 1.1rem; line-height: 1.8;'>
-    Founded by <strong>Rungnapa Mukdasanit</strong>, AIHiveHQ builds practical AI tools 
-    that help you <strong>think clearly</strong>, <strong>act confidently</strong>, 
-    and <strong>grow daily</strong>.
-    </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Product introduction
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("### 🎯 Introducing AIHive Coach")
-        st.markdown("""
-        Your AI personal development coach. Clarify goals, overcome obstacles, 
-        make confident decisions, and commit to meaningful action.
-        
-        **Key Features:**
-        - Thoughtful, adaptive coaching conversations
-        - Challenge assumptions and explore perspectives  
-        - Create concrete Action Plans
-        - Track progress over time
-        """)
-        
-        if st.button("Try AIHive Coach →", key="cta_coach", use_container_width=True):
-            st.session_state.navigation = "AIHive Coach"
-            st.rerun()
-    
-    with col2:
-        st.info("""
-        **💡 What makes it different?**
-        
-        AIHive Coach doesn't just agree with you or offer generic advice. 
-        It asks insightful questions, respectfully challenges your thinking, 
-        and helps you discover your own answers.
-        
-        It's not a therapist—it's a thinking partner for your goals and decisions.
-        """)
-    
-    st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
+    """AIHiveHQ Platform Homepage"""
+    from homepage import show_homepage
+    show_homepage()
 
 
 def show_coach_landing_page():
@@ -238,6 +190,56 @@ def show_coach_landing_page():
     if st.button("✨ Start Your First Session", key="cta_start", use_container_width=True):
         st.session_state.navigation = "Start Coaching"
         st.rerun()
+    
+    st.markdown("<div style='height: 2rem;'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+    
+    # Example Coaching Journey
+    st.markdown("## 📖 Example Coaching Journey")
+    st.info("**Note:** This is sample data showing how a typical coaching session unfolds. Your actual coaching will be personalized to your goals.")
+    
+    # Journey Steps
+    st.markdown("### 1️⃣ User Goal")
+    st.markdown("""
+    <div style='background: #f8fafc; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #2563eb;'>
+    <p style='margin: 0; font-size: 1.05rem;'><em>"I want to become more confident speaking up in team meetings."</em></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 2️⃣ Coaching Conversation")
+    st.markdown("""
+    <div style='background: #f8fafc; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;'>
+    <p style='margin: 0 0 0.5rem 0;'><strong>Coach:</strong> "What specifically makes it difficult to speak up?"</p>
+    <p style='margin: 0 0 0.5rem 0;'><strong>User:</strong> "I worry I'll say something wrong or that my ideas aren't good enough."</p>
+    <p style='margin: 0 0 0.5rem 0;'><strong>Coach:</strong> "What evidence do you have that your ideas aren't good enough?"</p>
+    <p style='margin: 0;'><strong>User:</strong> "Actually... when I have shared ideas, they've usually been well-received. I guess I'm assuming they're not good before I even try."</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 3️⃣ Key Insight")
+    st.markdown("""
+    <div style='background: #fef3c7; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #f59e0b;'>
+    <p style='margin: 0;'><strong>Insight:</strong> "I'm letting fear of judgment stop me, but my actual track record shows my contributions are valued. The barrier is my assumption, not reality."</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 4️⃣ Action Plan")
+    st.markdown("""
+    <div style='background: #f0fdf4; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #10b981;'>
+    <p style='margin: 0 0 0.5rem 0;'><strong>Goal:</strong> Share at least one idea in every team meeting</p>
+    <p style='margin: 0 0 0.5rem 0;'><strong>Next Action:</strong> Prepare one talking point before tomorrow's standup and share it in the first 10 minutes</p>
+    <p style='margin: 0 0 0.5rem 0;'><strong>Target Date:</strong> Next week</p>
+    <p style='margin: 0;'><strong>Success Indicator:</strong> I speak up at least once per meeting without overthinking it</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 5️⃣ Progress Review")
+    st.markdown("""
+    <div style='background: #f8fafc; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #7c3aed;'>
+    <p style='margin: 0 0 0.5rem 0;'><strong>After One Week:</strong></p>
+    <p style='margin: 0;'>"I shared ideas in 3 out of 4 meetings this week! It still feels a bit scary, but it's getting easier. My manager even built on one of my suggestions. I'm realizing my voice does add value."</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def show_coaching_page():
