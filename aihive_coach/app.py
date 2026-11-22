@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="AIHiveHQ - Think Clearly. Act Confidently. Grow Daily.",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",  # Collapsed on mobile, expanded on desktop
     menu_items={
         'Get Help': None,
         'Report a bug': None,
