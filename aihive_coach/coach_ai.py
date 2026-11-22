@@ -1,0 +1,350 @@
+"""
+AI Coach Logic
+Handles conversation with OpenAI API and demo mode fallback
+"""
+import random
+import re
+from typing import List, Dict, Optional
+from datetime import datetime, date, timedelta
+from openai import OpenAI
+from config import config
+from models import Message, CoachingSession, ActionPlan, APIUsageLog
+from prompts import COACH_SYSTEM_PROMPT, CATEGORY_PROMPTS, DEMO_MODE_RESPONSES
+from database import db
+
+
+class CoachAI:
+    """AI Coach with OpenAI integration and demo mode"""
+    
+    def __init__(self):
+        self.demo_mode = config.is_demo_mode()
+        self.client = None
+        
+        if not self.demo_mode:
+            try:
+                self.client = OpenAI(
+                    api_key=config.OPENAI_API_KEY,
+                    base_url=config.OPENAI_API_BASE
+                )
+            except Exception as e:
+                print(f"OpenAI initialization failed: {e}. Falling back to demo mode.")
+                self.demo_mode = True
+    
+    def get_welcome_message(self, category: Optional[str] = None) -> str:
+        """Generate welcome message"""
+        base = "Hello! I'm your AIHive Coach. What would you like to work on today?"
+        
+        if category and category in CATEGORY_PROMPTS:
+            base = f"Hello! I'm your AIHive Coach. I see you've chosen to work on **{category}**. What specifically would you like to explore in this area today?"
+        
+        return base
+    
+    async def get_response(self, session: CoachingSession, user_message: str) -> str:
+        """
+        Get coach response to user message
+        Returns the assistant's response text
+        """
+        # Add user message to session
+        session.add_message("user", user_message)
+        
+        # Check for crisis keywords
+        if self._detect_crisis(user_message):
+            response = self._get_crisis_response()
+            session.add_message("assistant", response)
+            return response
+        
+        # Get response based on mode
+        if self.demo_mode:
+            response = self._get_demo_response(session, user_message)
+        else:
+            response = await self._get_ai_response(session)
+        
+        # Add assistant response to session
+        session.add_message("assistant", response)
+        
+        # Save session to database
+        db.save_session(session)
+        
+        return response
+    
+    def _detect_crisis(self, text: str) -> bool:
+        """Detect potential crisis language"""
+        crisis_keywords = [
+            "suicide", "suicidal", "kill myself", "end my life",
+            "self-harm", "hurt myself", "want to die", "no reason to live"
+        ]
+        text_lower = text.lower()
+        return any(keyword in text_lower for keyword in crisis_keywords)
+    
+    def _get_crisis_response(self) -> str:
+        """Return crisis support response"""
+        return f"""I hear that you're in distress, and I want you to know that your feelings are important. However, I'm an AI coaching tool and not equipped to provide the emergency support you need right now.
+
+**Please reach out for immediate help:**
+
+🇹🇭 **Thailand Mental Health Hotline:** {config.THAILAND_MENTAL_HEALTH_HOTLINE} (available 24/7)
+
+🌍 **International:**
+- Emergency services: 911 (US) or your local emergency number
+- Crisis Text Line (US): Text HOME to 741741
+- Samaritans (UK): 116 123
+
+**Please consider speaking with a licensed mental health professional.** They are trained to provide the support you deserve.
+
+If you're in immediate danger, please call emergency services right away. Your life matters."""
+    
+    async def _get_ai_response(self, session: CoachingSession) -> str:
+        """Get response from OpenAI API"""
+        try:
+            # Build messages for API
+            messages = self._build_message_history(session)
+            
+            # Call OpenAI
+            response = self.client.chat.completions.create(
+                model=config.OPENAI_MODEL,
+                messages=messages,
+                temperature=config.TEMPERATURE,
+                max_tokens=config.MAX_TOKENS
+            )
+            
+            # Extract response
+            assistant_message = response.choices[0].message.content
+            
+            # Log usage
+            if config.LOG_API_USAGE:
+                usage = response.usage
+                cost = self._estimate_cost(
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                    config.OPENAI_MODEL
+                )
+                
+                log = APIUsageLog(
+                    session_id=session.id,
+                    model=config.OPENAI_MODEL,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    estimated_cost_usd=cost
+                )
+                db.log_api_usage(log)
+            
+            return assistant_message
+            
+        except Exception as e:
+            print(f"AI API error: {e}")
+            # Fallback to demo mode on error
+            return self._get_demo_response(session, session.messages[-1].content)
+    
+    def _get_demo_response(self, session: CoachingSession, user_message: str) -> str:
+        """Generate demo mode response (heuristic)"""
+        # Simple heuristic coaching responses
+        message_count = len([m for m in session.messages if m.role == "user"])
+        
+        # Early conversation: explore
+        if message_count <= 2:
+            templates = [
+                f"Thank you for sharing that. What specifically about this feels most important to address right now?",
+                f"I hear you. Can you tell me more about what's behind this?",
+                f"That's interesting. What does success look like for you here?"
+            ]
+        # Mid conversation: challenge and explore options
+        elif message_count <= 5:
+            templates = [
+                f"What have you already tried to address this?",
+                f"What do you think is really stopping you from making progress?",
+                f"If you could change one thing about this situation, what would it be?",
+                f"What evidence do you have for that belief?"
+            ]
+        # Later: action and commitment
+        else:
+            templates = [
+                f"Based on what you've shared, what feels like the most important next step?",
+                f"What's one concrete action you could take this week?",
+                f"How will you know when you've made progress on this?",
+                f"What resources do you have available that could help?"
+            ]
+        
+        # Add some variation
+        response = random.choice(templates)
+        
+        # Occasionally reflect back
+        if random.random() < 0.3 and len(user_message.split()) > 5:
+            key_phrase = " ".join(user_message.split()[:7])
+            response = f"You mentioned '{key_phrase}...' - {response}"
+        
+        return response
+    
+    def _build_message_history(self, session: CoachingSession) -> List[Dict[str, str]]:
+        """Build message history for API call"""
+        messages = [
+            {"role": "system", "content": COACH_SYSTEM_PROMPT}
+        ]
+        
+        # Add category context if present
+        if session.category and session.category in CATEGORY_PROMPTS:
+            messages.append({
+                "role": "system",
+                "content": CATEGORY_PROMPTS[session.category]
+            })
+        
+        # Add conversation history
+        for msg in session.messages:
+            if msg.role != "system":
+                messages.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
+        
+        return messages
+    
+    def generate_action_plan(self, session: CoachingSession, user_input: Optional[Dict] = None) -> ActionPlan:
+        """
+        Generate action plan from session
+        user_input can override specific fields
+        """
+        if self.demo_mode or not self.client:
+            return self._generate_demo_action_plan(session, user_input)
+        
+        try:
+            # Build prompt to extract action plan
+            conversation_summary = "\n".join([
+                f"{m.role.upper()}: {m.content}"
+                for m in session.messages[-10:]  # Last 10 messages
+                if m.role != "system"
+            ])
+            
+            prompt = f"""Based on this coaching conversation, generate a structured action plan with these exact fields:
+
+CONVERSATION SUMMARY:
+{conversation_summary}
+
+Please extract and synthesize into this format:
+GOAL: [Clear, specific outcome the user wants to achieve]
+KEY_INSIGHT: [Main realization or learning from our conversation]
+NEXT_ACTION: [Concrete first step with specific details]
+TARGET_DATE: [Realistic date in YYYY-MM-DD format]
+SUCCESS_INDICATOR: [How the user will know they succeeded]
+
+Be specific, actionable, and use the user's own language where possible."""
+
+            response = self.client.chat.completions.create(
+                model=config.OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500
+            )
+            
+            plan_text = response.choices[0].message.content
+            parsed = self._parse_action_plan_text(plan_text)
+            
+            # Override with user input if provided
+            if user_input:
+                parsed.update(user_input)
+            
+            # Create ActionPlan object
+            target_date_str = parsed.get("target_date", (date.today() + timedelta(days=7)).isoformat())
+            try:
+                target_date_obj = date.fromisoformat(target_date_str)
+            except:
+                target_date_obj = date.today() + timedelta(days=7)
+            
+            action_plan = ActionPlan(
+                user_id=session.user_id,
+                session_id=session.id,
+                goal=parsed.get("goal", "Define my goal clearly"),
+                key_insight=parsed.get("key_insight", "Reflection from our conversation"),
+                next_action=parsed.get("next_action", "Take the first step"),
+                target_date=target_date_obj,
+                success_indicator=parsed.get("success_indicator", "Track my progress")
+            )
+            
+            return action_plan
+            
+        except Exception as e:
+            print(f"Action plan generation error: {e}")
+            return self._generate_demo_action_plan(session, user_input)
+    
+    def _generate_demo_action_plan(self, session: CoachingSession, user_input: Optional[Dict] = None) -> ActionPlan:
+        """Generate a demo action plan"""
+        # Extract key themes from conversation
+        user_messages = [m.content for m in session.messages if m.role == "user"]
+        conversation_text = " ".join(user_messages[-5:])  # Last 5 user messages
+        
+        # Simple extraction
+        goal = "Clarify and work toward my goal"
+        key_insight = "I need to take action and reflect on my progress"
+        next_action = "Identify my first concrete step forward"
+        success_indicator = "I will know by reviewing my progress weekly"
+        
+        # Try to extract topic
+        if len(conversation_text) > 20:
+            goal = f"Make progress on: {conversation_text[:60]}..."
+        
+        # Override with user input if provided
+        if user_input:
+            goal = user_input.get("goal", goal)
+            key_insight = user_input.get("key_insight", key_insight)
+            next_action = user_input.get("next_action", next_action)
+            success_indicator = user_input.get("success_indicator", success_indicator)
+        
+        target_date_str = user_input.get("target_date") if user_input else None
+        if target_date_str:
+            try:
+                target_date_obj = date.fromisoformat(target_date_str)
+            except:
+                target_date_obj = date.today() + timedelta(days=7)
+        else:
+            target_date_obj = date.today() + timedelta(days=7)
+        
+        return ActionPlan(
+            user_id=session.user_id,
+            session_id=session.id,
+            goal=goal,
+            key_insight=key_insight,
+            next_action=next_action,
+            target_date=target_date_obj,
+            success_indicator=success_indicator
+        )
+    
+    def _parse_action_plan_text(self, text: str) -> Dict[str, str]:
+        """Parse action plan from AI response text"""
+        result = {}
+        
+        patterns = {
+            "goal": r"GOAL:\s*(.+?)(?=\nKEY_INSIGHT:|\nNEXT_ACTION:|\Z)",
+            "key_insight": r"KEY_INSIGHT:\s*(.+?)(?=\nNEXT_ACTION:|\nTARGET_DATE:|\Z)",
+            "next_action": r"NEXT_ACTION:\s*(.+?)(?=\nTARGET_DATE:|\nSUCCESS_INDICATOR:|\Z)",
+            "target_date": r"TARGET_DATE:\s*(.+?)(?=\nSUCCESS_INDICATOR:|\Z)",
+            "success_indicator": r"SUCCESS_INDICATOR:\s*(.+?)(?=\Z)"
+        }
+        
+        for key, pattern in patterns.items():
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                result[key] = match.group(1).strip()
+        
+        return result
+    
+    def _estimate_cost(self, prompt_tokens: int, completion_tokens: int, model: str) -> float:
+        """Estimate cost in USD based on token usage"""
+        # Pricing as of Nov 2024 (approximate)
+        pricing = {
+            "gpt-4": {"prompt": 0.03 / 1000, "completion": 0.06 / 1000},
+            "gpt-4-turbo": {"prompt": 0.01 / 1000, "completion": 0.03 / 1000},
+            "gpt-4o": {"prompt": 0.005 / 1000, "completion": 0.015 / 1000},
+            "gpt-4o-mini": {"prompt": 0.00015 / 1000, "completion": 0.0006 / 1000},
+            "gpt-3.5-turbo": {"prompt": 0.0005 / 1000, "completion": 0.0015 / 1000},
+        }
+        
+        # Default to gpt-4o-mini pricing if model not found
+        model_pricing = pricing.get(model, pricing["gpt-4o-mini"])
+        
+        cost = (prompt_tokens * model_pricing["prompt"] + 
+                completion_tokens * model_pricing["completion"])
+        
+        return round(cost, 6)
+
+
+# Global coach instance
+coach = CoachAI()

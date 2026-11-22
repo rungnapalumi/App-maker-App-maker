@@ -1,0 +1,11 @@
+# AIHive Coach MVP Dependencies
+streamlit>=1.30.0
+openai>=1.0.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+sqlalchemy>=2.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+playwright>=1.40.0

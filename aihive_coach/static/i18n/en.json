@@ -1,0 +1,67 @@
+{
+  "site_title": "AIHiveHQ",
+  "site_tagline": "Think Clearly. Act Confidently. Grow Daily.",
+  "product_name": "AIHive Coach",
+  
+  "nav": {
+    "home": "Home",
+    "coach_landing": "AIHive Coach",
+    "coaching": "Start Coaching",
+    "action_plans": "My Action Plans"
+  },
+  
+  "home": {
+    "hero_title": "Welcome to AIHiveHQ",
+    "hero_subtitle": "AI Software Company. Revenue First. Scale the AI Army Later.",
+    "company_intro": "Founded by Rungnapa Mukdasanit, AIHiveHQ builds practical AI tools that help you think clearly, act confidently, and grow daily.",
+    "product_title": "Introducing AIHive Coach",
+    "product_description": "Your AI personal development coach. Clarify goals, overcome obstacles, make confident decisions, and commit to meaningful action.",
+    "cta_button": "Try AIHive Coach"
+  },
+  
+  "coach_landing": {
+    "hero_title": "AIHive Coach",
+    "hero_subtitle": "Think Clearly. Act Confidently. Grow Daily.",
+    "intro": "An AI coaching experience that helps you clarify your thinking, challenge your assumptions, and turn insights into action.",
+    "not_a_therapist": "AIHive Coach is not a licensed therapist or counselor. For mental health support, please consult a qualified professional.",
+    "benefits_title": "How It Works",
+    "benefit_1_title": "Thoughtful Conversation",
+    "benefit_1_desc": "One meaningful question at a time. No rigid questionnaires. The coach adapts to your unique situation.",
+    "benefit_2_title": "Challenge Your Thinking",
+    "benefit_2_desc": "Distinguish facts from assumptions. Explore alternatives. The coach respectfully challenges you to think deeper.",
+    "benefit_3_title": "Your Action Plan",
+    "benefit_3_desc": "Turn insights into concrete actions. Set target dates. Track progress. The coach helps you commit and follow through.",
+    "categories_title": "What You Can Work On",
+    "category_career": "Career & Leadership",
+    "category_growth": "Personal Growth",
+    "category_goals": "Goals & Productivity",
+    "category_decisions": "Decision Making",
+    "cta_button": "Start Your First Session"
+  },
+  
+  "coaching": {
+    "title": "Coaching Workspace",
+    "category_prompt": "What would you like to work on today?",
+    "placeholder": "Type your message here...",
+    "send_button": "Send",
+    "action_plan_button": "Create Action Plan",
+    "new_session_button": "Start New Session",
+    "mode_indicator": "Mode"
+  },
+  
+  "action_plans": {
+    "title": "My Action Plans",
+    "no_plans": "You haven't created any action plans yet. Start a coaching session to create your first plan!",
+    "goal_label": "My Goal",
+    "insight_label": "My Key Insight",
+    "action_label": "My Next Action",
+    "target_date_label": "Target Completion Date",
+    "success_label": "Success Indicator",
+    "edit_button": "Edit",
+    "save_button": "Save Changes",
+    "review_button": "Review Progress",
+    "mark_complete_button": "Mark Complete",
+    "created_label": "Created",
+    "last_reviewed_label": "Last Reviewed"
+  }
+}
