@@ -138,42 +138,64 @@ If you're in immediate danger, please call emergency services right away. Your l
     
     def _get_demo_response(self, session: CoachingSession, user_message: str) -> str:
         """Generate demo mode response (heuristic)"""
-        # Simple heuristic coaching responses
+        # Count user messages
         message_count = len([m for m in session.messages if m.role == "user"])
         
-        # Early conversation: explore
+        # Extract key themes from user message
+        message_lower = user_message.lower()
+        
+        # Early conversation: explore and clarify
         if message_count <= 2:
-            templates = [
-                f"Thank you for sharing that. What specifically about this feels most important to address right now?",
-                f"I hear you. Can you tell me more about what's behind this?",
-                f"That's interesting. What does success look like for you here?"
-            ]
-        # Mid conversation: challenge and explore options
+            if any(word in message_lower for word in ["want", "goal", "improve", "change"]):
+                responses = [
+                    "What specifically about that feels most important to you right now?",
+                    "When you imagine that working out well, what does that look like?",
+                    "What would be different in your life if you made progress on this?",
+                ]
+            elif any(word in message_lower for word in ["stuck", "struggling", "difficult", "hard"]):
+                responses = [
+                    "What's making this feel so challenging for you?",
+                    "When did you first notice this becoming difficult?",
+                    "What have you tried so far?",
+                ]
+            else:
+                responses = [
+                    "Tell me more about what brought this to mind today.",
+                    "What makes this important to you right now?",
+                    "Help me understand what you're hoping to explore here.",
+                ]
+        
+        # Mid conversation: probe deeper
         elif message_count <= 5:
-            templates = [
-                f"What have you already tried to address this?",
-                f"What do you think is really stopping you from making progress?",
-                f"If you could change one thing about this situation, what would it be?",
-                f"What evidence do you have for that belief?"
-            ]
-        # Later: action and commitment
+            if any(word in message_lower for word in ["because", "think", "feel", "believe"]):
+                responses = [
+                    "What evidence supports that view?",
+                    "How certain are you about that? What would it take to test it?",
+                    "Is that a fact, or could it be an assumption?",
+                ]
+            elif any(word in message_lower for word in ["can't", "won't", "never", "always"]):
+                responses = [
+                    "What's making you certain about that?",
+                    "Has there ever been an exception to that rule?",
+                    "What would need to change for a different outcome to be possible?",
+                ]
+            else:
+                responses = [
+                    "What else have you considered?",
+                    "If you weren't the one facing this, what advice would you give?",
+                    "What's really stopping you from taking action?",
+                ]
+        
+        # Later conversation: move toward action
         else:
-            templates = [
-                f"Based on what you've shared, what feels like the most important next step?",
-                f"What's one concrete action you could take this week?",
-                f"How will you know when you've made progress on this?",
-                f"What resources do you have available that could help?"
+            responses = [
+                "What feels like the most important next step for you?",
+                "If you were to take action this week, what would that look like?",
+                "What would you need in place to move forward with confidence?",
+                "How will you know when you're making progress?",
             ]
         
-        # Add some variation
-        response = random.choice(templates)
-        
-        # Occasionally reflect back
-        if random.random() < 0.3 and len(user_message.split()) > 5:
-            key_phrase = " ".join(user_message.split()[:7])
-            response = f"You mentioned '{key_phrase}...' - {response}"
-        
-        return response
+        return random.choice(responses)
     
     def _build_message_history(self, session: CoachingSession) -> List[Dict[str, str]]:
         """Build message history for API call"""

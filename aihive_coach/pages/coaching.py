@@ -80,56 +80,42 @@ def show_coaching_workspace():
     
     st.markdown("---")
     
-    # Display conversation
-    chat_container = st.container()
-    
-    with chat_container:
-        for message in session.messages:
-            if message.role == "user":
-                st.markdown(
-                    f"<div class='chat-message user-message'>{message.content}</div>",
-                    unsafe_allow_html=True
-                )
-            elif message.role == "assistant":
-                st.markdown(
-                    f"<div class='chat-message assistant-message'>{message.content}</div>",
-                    unsafe_allow_html=True
-                )
-    
     # Action Plan Form (if triggered)
     if st.session_state.get("show_action_plan_form", False):
         show_action_plan_creation_form(session)
         return
     
-    # Chat input
-    st.markdown("---")
+    # Display conversation using st.chat_message
+    for message in session.messages:
+        if message.role == "user":
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(message.content)
+        elif message.role == "assistant":
+            with st.chat_message("assistant", avatar="🧠"):
+                st.markdown(message.content)
     
-    with st.form(key="chat_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "Your message:",
-            placeholder="Type your message here...",
-            height=100,
-            label_visibility="collapsed"
-        )
+    # Chat input using st.chat_input
+    user_input = st.chat_input("Type your message here...")
+    
+    if user_input and user_input.strip():
+        # Add user message immediately
+        with st.chat_message("user", avatar="👤"):
+            st.markdown(user_input)
         
-        col1, col2 = st.columns([4, 1])
-        
-        with col2:
-            submit_button = st.form_submit_button("Send", use_container_width=True, type="primary")
-        
-        if submit_button and user_input.strip():
-            # Add user message and get response
-            with st.spinner("Coach is thinking..."):
+        # Get coach response
+        with st.chat_message("assistant", avatar="🧠"):
+            with st.spinner("Thinking..."):
                 # Use asyncio to run async function
                 response = asyncio.run(coach.get_response(session, user_input.strip()))
-                
-                # Reload session from database to ensure consistency
-                st.session_state.current_session = db.get_session(
-                    session.id,
-                    st.session_state.user_id
-                )
-            
-            st.rerun()
+                st.markdown(response)
+        
+        # Reload session from database
+        st.session_state.current_session = db.get_session(
+            session.id,
+            st.session_state.user_id
+        )
+        
+        st.rerun()
 
 
 def show_action_plan_creation_form(session: CoachingSession):

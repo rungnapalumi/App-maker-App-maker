@@ -22,9 +22,17 @@ body {
     line-height: 1.6;
 }
 
-/* Hide Streamlit branding */
+/* Hide Streamlit chrome and branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+header {visibility: hidden;}
+.stDeployButton {display: none;}
+[data-testid="stToolbar"] {display: none;}
+[data-testid="stDecoration"] {display: none;}
+[data-testid="stStatusWidget"] {display: none;}
+
+/* Hide default page navigation */
+section[data-testid="stSidebarNav"] {display: none;}
 
 /* Typography */
 h1, h2, h3, h4, h5, h6 {
@@ -61,28 +69,52 @@ h3 {
     box-shadow: var(--shadow-lg);
 }
 
-/* Buttons */
+/* Buttons - Unified styling */
 .stButton > button {
     border-radius: 8px;
     padding: 0.75rem 1.5rem;
     font-weight: 500;
     transition: all 0.2s ease;
     border: none;
-    background: var(--primary-color);
-    color: white;
+    background: var(--primary-color) !important;
+    color: white !important;
 }
 
 .stButton > button:hover {
-    background: var(--primary-hover);
+    background: var(--primary-hover) !important;
     transform: translateY(-1px);
     box-shadow: var(--shadow);
 }
 
-/* Chat messages */
-.chat-message {
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-    border-radius: 12px;
+/* Primary buttons */
+button[kind="primary"], 
+button[type="primary"],
+.stButton > button[kind="primary"] {
+    background: var(--primary-color) !important;
+    color: white !important;
+    border: none !important;
+}
+
+button[kind="primary"]:hover {
+    background: var(--primary-hover) !important;
+}
+
+/* Secondary buttons */
+button[kind="secondary"] {
+    background: var(--surface) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+button[kind="secondary"]:hover {
+    background: var(--border-color) !important;
+}
+
+/* Chat messages - Streamlit native styling */
+[data-testid="stChatMessage"] {
+    padding: 1rem !important;
+    margin-bottom: 0.75rem !important;
+    border-radius: 12px !important;
     animation: fadeIn 0.3s ease;
 }
 
@@ -91,17 +123,23 @@ h3 {
     to { opacity: 1; transform: translateY(0); }
 }
 
-.user-message {
-    background: var(--primary-color);
-    color: white;
-    margin-left: 2rem;
+[data-testid="stChatMessage"][data-testid*="user"] {
+    background: var(--primary-color) !important;
 }
 
-.assistant-message {
-    background: var(--surface);
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
     color: var(--text-primary);
-    margin-right: 2rem;
-    border: 1px solid var(--border-color);
+}
+
+/* Chat input */
+[data-testid="stChatInput"] {
+    border-radius: 12px !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+[data-testid="stChatInput"]:focus-within {
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1) !important;
 }
 
 /* Text inputs */
@@ -184,6 +222,17 @@ h3 {
     border-radius: 4px;
 }
 
+/* Reduce excessive padding and spacing */
+.block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 1200px !important;
+}
+
+div[data-testid="stVerticalBlock"] > div:has(> div.element-container) {
+    gap: 0.5rem !important;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
     h1 {
@@ -198,12 +247,10 @@ h3 {
         padding: 1.5rem;
     }
     
-    .chat-message.user-message {
-        margin-left: 0.5rem;
-    }
-    
-    .chat-message.assistant-message {
-        margin-right: 0.5rem;
+    .block-container {
+        padding-top: 1rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
     }
 }
 

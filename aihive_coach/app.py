@@ -13,7 +13,12 @@ st.set_page_config(
     page_title="AIHiveHQ - Think Clearly. Act Confidently. Grow Daily.",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': "AIHive Coach v0.1 - Think Clearly. Act Confidently. Grow Daily."
+    }
 )
 
 # Load custom CSS
@@ -47,39 +52,51 @@ if "current_category" not in st.session_state:
 
 # Sidebar navigation
 with st.sidebar:
-    st.title("🧠 " + strings.get("site_title", "AIHiveHQ"))
-    st.caption(strings.get("site_tagline", "Think Clearly. Act Confidently. Grow Daily."))
+    st.title("🧠 AIHiveHQ")
+    st.caption("Think Clearly. Act Confidently. Grow Daily.")
     
-    st.markdown("---")
+    st.markdown("")
     
-    # Navigation
-    page = st.radio(
-        "Navigation",
-        ["Home", "AIHive Coach", "Start Coaching", "My Action Plans"],
-        label_visibility="collapsed"
-    )
+    # Navigation - clean buttons
+    st.markdown("### Navigation")
+    
+    if st.button("🏠 Home", use_container_width=True, key="nav_home"):
+        st.session_state.navigation = "Home"
+        st.rerun()
+    
+    if st.button("💡 AIHive Coach", use_container_width=True, key="nav_coach"):
+        st.session_state.navigation = "AIHive Coach"
+        st.rerun()
+    
+    if st.button("💬 Start Coaching", use_container_width=True, key="nav_coaching"):
+        st.session_state.navigation = "Start Coaching"
+        st.rerun()
+    
+    if st.button("📋 My Action Plans", use_container_width=True, key="nav_plans"):
+        st.session_state.navigation = "My Action Plans"
+        st.rerun()
     
     st.markdown("---")
     
     # Mode indicator
     mode_text = config.get_model_info()
     if config.is_demo_mode():
-        st.warning(f"🔧 **{mode_text}**\n\nAdd OPENAI_API_KEY to use real AI coaching.")
+        st.info(f"🔧 **{mode_text}**\n\nAdd `OPENAI_API_KEY` for real AI.")
     else:
-        st.success(f"✅ **AI Mode Active**\n\nModel: {mode_text}")
+        st.success(f"✅ **AI Active**\n\n{mode_text}")
     
     st.markdown("---")
     
     # Footer
     st.caption("© 2026 AIHiveHQ")
-    st.caption("Founded by Rungnapa Mukdasanit")
+    st.caption("by Rungnapa Mukdasanit")
 
 # Main content area
 def show_home_page():
     """AIHiveHQ Company Home Page"""
     
     # Hero section
-    st.markdown("<div style='text-align: center; padding: 3rem 0;'>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; padding: 2rem 0 1rem 0;'>", unsafe_allow_html=True)
     st.title("Welcome to AIHiveHQ")
     st.subheader("AI Software Company. Revenue First. Scale the AI Army Later.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -111,7 +128,7 @@ def show_home_page():
         - Track progress over time
         """)
         
-        if st.button("Try AIHive Coach →", type="primary", use_container_width=True):
+        if st.button("Try AIHive Coach →", key="cta_coach", use_container_width=True):
             st.session_state.navigation = "AIHive Coach"
             st.rerun()
     
@@ -218,7 +235,7 @@ def show_coach_landing_page():
     st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     
     # CTA
-    if st.button("✨ Start Your First Session", type="primary", use_container_width=True):
+    if st.button("✨ Start Your First Session", key="cta_start", use_container_width=True):
         st.session_state.navigation = "Start Coaching"
         st.rerun()
 
@@ -235,9 +252,12 @@ def show_action_plans_page():
     show_action_plans()
 
 
+# Initialize navigation if not set
+if "navigation" not in st.session_state:
+    st.session_state.navigation = "Home"
+
 # Route to correct page
-if "navigation" in st.session_state:
-    page = st.session_state.navigation
+page = st.session_state.navigation
 
 if page == "Home":
     show_home_page()
