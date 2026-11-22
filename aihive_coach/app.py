@@ -98,7 +98,7 @@ def show_home_page():
     # Hero section
     st.markdown("<div style='text-align: center; padding: 2rem 0 1rem 0;'>", unsafe_allow_html=True)
     st.title("Welcome to AIHiveHQ")
-    st.subheader("AI Software Company. Revenue First. Scale the AI Army Later.")
+    st.subheader("Think Clearly. Act Confidently. Grow Daily.")
     st.markdown("</div>", unsafe_allow_html=True)
     
     # Company intro
@@ -241,14 +241,14 @@ def show_coach_landing_page():
 
 
 def show_coaching_page():
-    """Main Coaching Workspace - Import from pages"""
-    from pages.coaching import show_coaching_workspace
+    """Main Coaching Workspace - Import from module"""
+    from coaching_page import show_coaching_workspace
     show_coaching_workspace()
 
 
 def show_action_plans_page():
-    """My Action Plans - Import from pages"""
-    from pages.action_plans import show_action_plans
+    """My Action Plans - Import from module"""
+    from action_plans_page import show_action_plans
     show_action_plans()
 
 
