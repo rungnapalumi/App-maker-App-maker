@@ -76,6 +76,10 @@ with st.sidebar:
         st.session_state.navigation = "My Action Plans"
         st.rerun()
     
+    if st.button("🔒 Privacy & Data", use_container_width=True, key="nav_privacy"):
+        st.session_state.navigation = "Privacy"
+        st.rerun()
+    
     st.markdown("---")
     
     # Mode indicator
@@ -108,6 +112,16 @@ def show_coach_landing_page():
     st.markdown("</div>", unsafe_allow_html=True)
     
     # Intro
+    # Prominent CTA FIRST - above fold on mobile
+    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("🚀 Start Your First Session", use_container_width=True, type="primary", key="start_first_top"):
+            st.session_state.navigation = "Start Coaching"
+            st.rerun()
+    
+    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
+    
     # Intro text changes based on mode
     if config.is_demo_mode():
         intro_text = "A coaching conversation tool that helps you clarify your thinking, challenge your assumptions, and turn insights into action. <strong>(Demo Mode: Scripted responses)</strong>"
@@ -121,15 +135,6 @@ def show_coach_landing_page():
     </p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Prominent CTA above fold
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🚀 Start Your First Session", use_container_width=True, type="primary", key="start_first_top"):
-            st.session_state.navigation = "Start Coaching"
-            st.rerun()
-    
-    st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     
     # Important disclaimer
     st.info("""
@@ -288,5 +293,8 @@ elif page == "Start Coaching":
     show_coaching_page()
 elif page == "My Action Plans":
     show_action_plans_page()
+elif page == "Privacy":
+    from privacy_page import show_privacy_notice
+    show_privacy_notice()
 else:
     show_home_page()

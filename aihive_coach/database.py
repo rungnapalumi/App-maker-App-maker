@@ -39,7 +39,7 @@ class DBActionPlan(Base):
     goal = Column(Text, nullable=False)
     key_insight = Column(Text, nullable=False)
     next_action = Column(Text, nullable=False)
-    target_date = Column(Date, nullable=False)
+    target_date = Column(Date, nullable=True)  # Nullable per Round 6 requirement
     success_indicator = Column(Text, nullable=False)
     
     created_at = Column(DateTime, nullable=False)
@@ -220,6 +220,31 @@ class Database:
             db_plans = db.query(DBActionPlan).filter(
                 DBActionPlan.user_id == user_id
             ).order_by(DBActionPlan.created_at.desc()).limit(limit).all()
+            
+            return [self._db_plan_to_model(plan) for plan in db_plans]
+        except Exception as e:
+            raise e
+    
+    def delete_user_data(self, user_id: str, data_type: str = "all") -> int:
+        """Delete user data - returns count deleted"""
+        db = self._get_session()
+        deleted = 0
+        try:
+            if data_type in ["all", "sessions"]:
+                sessions = db.query(DBSession).filter(DBSession.user_id == user_id).all()
+                deleted += len(sessions)
+                for s in sessions:
+                    db.delete(s)
+            if data_type in ["all", "action_plans"]:
+                plans = db.query(DBActionPlan).filter(DBActionPlan.user_id == user_id).all()
+                deleted += len(plans)
+                for p in plans:
+                    db.delete(p)
+            db.commit()
+            return deleted
+        except Exception as e:
+            db.rollback()
+            raise e
             
             return [self._db_plan_to_model(p) for p in db_plans]
         finally:

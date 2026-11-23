@@ -62,8 +62,8 @@ def test_home_page_loads(streamlit_app, browser_context):
     
     # Check sidebar appears
     expect(page.locator("section[data-testid='stSidebar']")).to_be_visible(timeout=10000)
-    # Check title or content appears
-    expect(page.locator("text=Welcome to AIHiveHQ")).to_be_visible()
+    # Check homepage content (multi-agent platform from Round 5)
+    expect(page.locator("text=AI Agent Suite").first).to_be_visible()
 
 
 def test_navigation_to_coach_landing(streamlit_app, browser_context):
@@ -78,6 +78,13 @@ def test_navigation_to_coach_landing(streamlit_app, browser_context):
     
     # Verify we're on coach landing by checking for unique content
     expect(page.locator("text=How It Works").first).to_be_visible()
+    
+    # Round 6: Check for demo wording (not "AI-powered" in demo mode)
+    page_text = page.content()
+    assert "coaching conversation tool" in page_text or "Demo Mode" in page_text, "Should show neutral demo wording"
+    
+    # Round 6: Check for prominent Start CTA
+    expect(page.locator("button:has-text('Start Your First Session')").first).to_be_visible()
 
 
 def test_start_coaching_session(streamlit_app, browser_context):
@@ -150,6 +157,9 @@ def test_create_action_plan(streamlit_app, browser_context):
     # Verify action plan form appears by checking for unique form text
     expect(page.locator("text=Based on our conversation").first).to_be_visible(timeout=10000)
     
+    # Round 6: Check for target date prompt (no auto-fill)
+    expect(page.locator("text=Please set a target date")).to_be_visible()
+    
     # Save action plan
     page.locator("button:has-text('Save Action Plan')").first.click()
     time.sleep(3)
@@ -173,10 +183,10 @@ def test_view_action_plans(streamlit_app, browser_context):
 
 
 def test_mobile_viewport(streamlit_app, browser_context):
-    """Test mobile responsiveness"""
-    # Set mobile viewport
+    """Test mobile responsiveness (Round 6: 390x844)"""
+    # Set mobile viewport to 390x844 per Round 6 spec
     mobile_context = browser_context.browser.new_context(
-        viewport={"width": 375, "height": 667}
+        viewport={"width": 390, "height": 844}
     )
     
     page = mobile_context.new_page()

@@ -4,10 +4,33 @@ Main chat interface for coaching conversations
 """
 import streamlit as st
 import asyncio
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 from database import db
 from coach_ai import coach
 from models import CoachingSession, ActionPlan
+
+
+def check_rate_limit(session_id: str, max_messages: int = 10, window_seconds: int = 60) -> tuple[bool, int]:
+    """
+    Check if user has exceeded rate limit
+    Returns: (is_allowed, messages_sent_in_window)
+    """
+    if "rate_limit_messages" not in st.session_state:
+        st.session_state.rate_limit_messages = []
+    
+    # Get current time
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() - window_seconds
+    
+    # Filter to messages in window
+    recent = [ts for ts in st.session_state.rate_limit_messages if ts > cutoff]
+    st.session_state.rate_limit_messages = recent
+    
+    # Check limit
+    if len(recent) >= max_messages:
+        return False, len(recent)
+    
+    return True, len(recent)
 
 
 def show_coaching_workspace():
@@ -126,6 +149,23 @@ def show_coaching_workspace():
     user_input = st.chat_input("Type your message here...")
     
     if user_input and user_input.strip():
+        # Rate limiting check
+        allowed, count = check_rate_limit(session.id, max_messages=10, window_seconds=60)
+        
+        if not allowed:
+            st.error(f"""
+            ⏳ **Please slow down!**
+            
+            You've sent {count} messages in the last minute. 
+            Please wait a moment before sending more messages.
+            
+            **Rate limit:** 10 messages per minute
+            """)
+            st.stop()
+        
+        # Record message timestamp
+        st.session_state.rate_limit_messages.append(datetime.now(timezone.utc).timestamp())
+        
         # Add user message immediately
         with st.chat_message("user", avatar="👤"):
             st.markdown(user_input)
