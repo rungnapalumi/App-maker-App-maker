@@ -34,16 +34,16 @@ class WorkforceDB:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            # Get recent coach sessions
+            # Get recent coach sessions (from sessions table used by real app)
             try:
                 cursor.execute("""
                     SELECT 
                         'coach' as agent_type,
                         id,
-                        goal,
+                        category as goal,
                         created_at as timestamp,
-                        status
-                    FROM coaching_sessions
+                        'active' as status
+                    FROM sessions
                     WHERE user_id = ?
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -116,10 +116,10 @@ class WorkforceDB:
                     cursor.execute("""
                         SELECT 
                             id,
-                            goal,
+                            category as goal,
                             created_at as timestamp,
-                            status
-                        FROM coaching_sessions
+                            'active' as status
+                        FROM sessions
                         WHERE user_id = ?
                         ORDER BY created_at DESC
                         LIMIT ?
