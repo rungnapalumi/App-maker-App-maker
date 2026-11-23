@@ -15,7 +15,12 @@ from tutor.models import StudySession
 def show_topic_picker():
     """Show the topic and level selection interface"""
     st.title("📚 AIHive Tutor")
-    st.subheader("Learn step-by-step with an AI study tutor")
+    
+    # Subtitle changes based on mode
+    if config.is_demo_mode():
+        st.subheader("Learn step-by-step with a study tutor (demo)")
+    else:
+        st.subheader("Learn step-by-step with an AI study tutor")
     
     # Mode indicator
     if config.is_demo_mode():
@@ -189,12 +194,16 @@ def show_session_summary(session: StudySession):
     
     st.markdown("## 📝 Session Summary")
     
-    st.markdown(f"""
-    <div style='background: #f0fdf4; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #10b981;'>
-    <h3>What you learned:</h3>
-    <p>{session.summary_text}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Render summary with proper markdown support
+    with st.container():
+        st.markdown(f"""
+        <div style='background: #f0fdf4; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #10b981;'>
+        <h3>What you learned:</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Use st.markdown to properly render markdown in the summary
+        st.markdown(session.summary_text)
     
     st.markdown("<div style='height: 1rem;'></div>", unsafe_allow_html=True)
     

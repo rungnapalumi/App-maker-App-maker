@@ -78,6 +78,11 @@ class TutorAI:
                 "Beginner": "Python is a programming language that lets you give instructions to a computer! 🐍💻\n\nImagine you're teaching a robot to make a sandwich. You can't just say 'make a sandwich' - you need to break it down: 'pick up bread', 'spread peanut butter', 'add jelly', etc. That's what programming is! Python is a popular language because its instructions look almost like English, making it easier to learn.\n\nHere's your first Python code:\n```python\nprint('Hello World!')\n```\nThis tells the computer to display the text 'Hello World!' on the screen.\n\n**Check your understanding:** What do you think this code does?\n```python\nprint('My name is Alex')\n```",
                 "Intermediate": "Python is a high-level, interpreted programming language emphasizing code readability and simplicity.\n\nKey features include dynamic typing, automatic memory management, and extensive standard libraries. Python uses indentation for code blocks rather than braces, making structure visually clear. The language supports multiple programming paradigms: procedural, object-oriented, and functional.\n\nExample of list comprehension:\n```python\nsquares = [x**2 for x in range(10)]\n```\n\n**Check your understanding:** Why is Python called 'interpreted' rather than 'compiled', and how does this affect execution speed?",
                 "Advanced": "Python implements a reference-counted garbage collection system with cycle detection, operating on CPython's bytecode VM architecture. The Global Interpreter Lock (GIL) serializes thread execution, limiting true parallelism but simplifying memory management.\n\nThe descriptor protocol enables powerful metaprogramming:\n```python\nclass LazyProperty:\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return obj.__dict__.setdefault(self.func.__name__, self.func(obj))\n```\n\n**Check your understanding:** How does the descriptor protocol enable Python's @property decorator, and why is __get__ called on attribute access?"
+            },
+            "algebra": {
+                "Beginner": "Algebra is a branch of mathematics where we use letters to represent numbers we don't know yet! 📐\n\nThink of algebra like a detective game. Someone tells you a clue: 'I'm thinking of a number. If you add 5 to it, you get 12. What's my number?' In algebra, we write this as: x + 5 = 12. The 'x' is our mystery number. By solving the puzzle (subtracting 5 from both sides), we find that x = 7!\n\nAlgebra is super useful because it helps us solve real problems. Want to figure out how much money you'll have after saving for 3 months? Algebra can help! Need to calculate how much pizza to order for a party? Algebra again!\n\n**Check your understanding:** If x + 3 = 10, what do you think x equals? How did you figure it out?",
+                "Intermediate": "Algebra is the study of mathematical symbols and rules for manipulating these symbols. It's a powerful tool for modeling and solving real-world problems.\n\nKey concepts include variables (symbols representing unknown or changing values), expressions (combinations of variables and constants), equations (statements that two expressions are equal), and functions (relationships between inputs and outputs).\n\nFor example, the equation of a line y = mx + b uses variables: 'm' is the slope and 'b' is the y-intercept. This single equation can describe infinitely many different lines depending on the values of m and b.\n\n**Check your understanding:** In the equation 2x + 3 = 11, what steps would you take to solve for x?",
+                "Advanced": "Algebra extends beyond elementary equation solving to encompass abstract algebraic structures: groups, rings, fields, vector spaces, and their morphisms. These structures satisfy specific axioms that enable generalized reasoning about mathematical operations.\n\nConsider a group (G, ∗) where ∗ is a binary operation satisfying closure, associativity, identity, and invertibility. The integers under addition form a group, as do non-zero reals under multiplication. This abstraction reveals deep structural similarities across seemingly disparate mathematical domains.\n\n**Check your understanding:** Why is the set of natural numbers under subtraction NOT a group, and which group axiom fails?"
             }
         }
         
@@ -98,7 +103,13 @@ class TutorAI:
         if topic_key:
             return explanations[topic_key][level]
         else:
-            return default[level]
+            # Improved default without placeholders
+            default_no_placeholders = {
+                "Beginner": f"Let's learn about {session.topic}! This is an exciting topic, and I'll help you understand it step by step.\n\nTo start with the basics: {session.topic} is a concept that appears in many areas. It's something you can learn and understand, even if it seems complex at first. The key is to break it down into smaller pieces and tackle them one at a time.\n\nThink about what you already know that might be related to this topic. Building on what you already understand makes learning easier!\n\n**Check your understanding:** What do you already know about {session.topic}, or what have you heard about it before?",
+                "Intermediate": f"Welcome to learning about {session.topic}. At the {level} level, we'll explore the core concepts and their practical applications.\n\nThis topic builds on foundational knowledge and extends it to more complex scenarios. You'll learn not just what {session.topic} is, but also how to apply it effectively. Understanding the underlying principles will help you recognize when and how to use this knowledge.\n\nThe key is to understand both the theory and the practice - knowing the concept AND being able to use it in real situations.\n\n**Check your understanding:** Based on what you know so far, why do you think {session.topic} is important to learn?",
+                "Advanced": f"Advanced study of {session.topic} requires deep analysis and critical thinking. We'll examine theoretical frameworks, explore edge cases, and consider nuanced interpretations.\n\nAt this level, you should be comfortable with the fundamentals and ready to explore the complexities, limitations, and advanced applications. We'll look at how experts in the field approach {session.topic} and what current research reveals.\n\nThe goal is not just to understand {session.topic}, but to develop expertise that allows you to analyze, evaluate, and potentially contribute to the field.\n\n**Check your understanding:** What aspects of {session.topic} do you find most challenging or interesting, and why?"
+            }
+            return default_no_placeholders[level]
     
     def _demo_process_answer(self, session: StudySession, user_answer: str) -> Tuple[bool, str]:
         """Demo mode: simple keyword-based answer evaluation"""
@@ -122,16 +133,32 @@ class TutorAI:
         topic = session.topic.lower()
         
         if not understood:
-            # Simplify
-            return f"Let me explain {session.topic} in a simpler way:\n\nThink of it like this... [Simpler explanation]. Does this make more sense now?\n\n**Let's try again:** Can you explain back to me what you understood?"
+            # Provide real simpler explanations for demo topics
+            if "photosynthesis" in topic:
+                return "Let me explain photosynthesis in a simpler way:\n\nThink of a plant like a kitchen. The leaves are like a stove that uses sunlight as the heat source. The plant brings in water (from the roots) and air (through tiny holes in leaves). When sunlight hits the leaves, it's like turning on the stove - the plant 'cooks' the water and air together to make sugar, which is the plant's food. As a bonus, the plant releases oxygen, which is what we breathe!\n\nDoes this make more sense now?\n\n**Let's try again:** In your own words, what does a plant need to make food?"
+            elif "python" in topic:
+                return "Let me explain Python in a simpler way:\n\nThink of Python like writing a recipe. Instead of telling a person what to do, you're writing instructions for a computer. The computer follows your recipe exactly. For example, if you write 'print(\"Hello\")', you're telling the computer: 'Please display the word Hello on the screen.' The computer does exactly that - nothing more, nothing less.\n\nDoes this make more sense now?\n\n**Let's try again:** What do you think the computer does when it sees print(\"Goodbye\")?"
+            elif "algebra" in topic:
+                return "Let me explain algebra in a simpler way:\n\nThink of algebra like a mystery box. You know something is inside the box (that's the variable, like 'x'), but you don't know what it is yet. The equation gives you clues. For example, 'x + 3 = 7' is like saying: 'Something plus 3 equals 7, what is that something?' You can figure it out: if adding 3 gives you 7, then the mystery number must be 4!\n\nDoes this make more sense now?\n\n**Let's try again:** Can you solve this mystery: x + 5 = 10?"
+            else:
+                # Generic simpler explanation
+                return f"Let me explain {session.topic} in a simpler way:\n\nThink of it step by step. Instead of looking at the whole concept at once, let's break it down into smaller pieces. First, focus on the most basic part - what it is and why it matters. Then we can build up from there.\n\nDoes this make more sense now?\n\n**Let's try again:** Can you tell me what part of {session.topic} makes sense to you so far?"
         
         # Move to next chunk
         if session.chunks_completed >= 2:
             # End lesson
             return "🎉 Excellent work! You've completed this lesson. Let me create a summary for you..."
         
-        # Continue with next chunk
-        return f"Perfect! Now let's explore the next part of {session.topic}...\n\n[Next explanation chunk would go here]\n\n**Check your understanding:** [Next question]"
+        # Continue with next chunk - provide real continuation
+        if "photosynthesis" in topic:
+            return "Perfect! Now let's explore why photosynthesis is important:\n\nWithout photosynthesis, there would be no oxygen in our atmosphere, and plants wouldn't have food to grow. This means no plants, no oxygen, and no food for animals! Photosynthesis is literally what keeps most life on Earth alive.\n\n**Check your understanding:** Why would animals be in trouble if plants couldn't do photosynthesis?"
+        elif "python" in topic:
+            return "Perfect! Now let's explore variables in Python:\n\nVariables are like labeled boxes where you can store information. For example:\n```python\nname = \"Alice\"\nage = 25\n```\nHere, 'name' is a box holding the text \"Alice\", and 'age' is a box holding the number 25. You can use these boxes later in your code!\n\n**Check your understanding:** If you write `city = \"Paris\"`, what is stored in the 'city' variable?"
+        elif "algebra" in topic:
+            return "Perfect! Now let's explore why we use letters in algebra:\n\nLetters (like x, y, a, b) represent unknown numbers or numbers that can change. This is powerful because one equation can work for many situations! For example, 'distance = speed × time' works whether you're walking, driving, or flying - you just plug in different numbers for speed and time.\n\n**Check your understanding:** In the formula 'area = length × width', what do the letters represent?"
+        else:
+            # Generic continuation
+            return f"Perfect! Now let's explore another aspect of {session.topic}:\n\nWe've covered the basics. The next important thing to understand is how this applies in real situations. This concept appears in many areas, and understanding it helps you see patterns and solve problems more easily.\n\n**Check your understanding:** Can you think of a situation where {session.topic} might be useful?"
     
     def _demo_generate_summary(self, session: StudySession) -> Tuple[str, List[str]]:
         """Demo mode: generate summary and practice questions"""

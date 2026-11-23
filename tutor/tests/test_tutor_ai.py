@@ -198,3 +198,37 @@ def test_tutor_handles_various_topics(tutor):
         result = tutor.start_lesson(session)
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+def test_demo_no_placeholder_brackets(tutor):
+    """Test that demo mode responses contain no placeholder brackets"""
+    # Only test in demo mode
+    if not tutor.is_demo:
+        pytest.skip("Not in demo mode")
+    
+    # Test start_lesson
+    topics = ["Photosynthesis", "Python Programming", "Algebra", "Custom Topic"]
+    for topic in topics:
+        session = StudySession(user_id="test_user", topic=topic, level="Beginner")
+        
+        # Test initial lesson
+        result = tutor.start_lesson(session)
+        assert "[" not in result, f"Found placeholder bracket in start_lesson for {topic}"
+        assert "]" not in result or "]" in "[]", f"Found placeholder bracket in start_lesson for {topic}"
+        
+        # Test continue after understanding
+        result = tutor.continue_lesson(session, understood=True)
+        assert "[" not in result, f"Found placeholder bracket in continue (understood) for {topic}"
+        
+        # Test continue after not understanding (simpler explanation)
+        result = tutor.continue_lesson(session, understood=False)
+        assert "[" not in result, f"Found placeholder bracket in simpler explanation for {topic}"
+        
+    # Test summary generation
+    session = StudySession(user_id="test_user", topic="Photosynthesis", level="Beginner")
+    session.chunks_completed = 2
+    summary, questions = tutor.generate_summary(session)
+    
+    assert "[" not in summary, "Found placeholder bracket in summary"
+    for q in questions:
+        assert "[" not in q, f"Found placeholder bracket in practice question: {q}"
