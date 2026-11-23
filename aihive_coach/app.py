@@ -76,6 +76,19 @@ with st.sidebar:
         st.session_state.navigation = "My Action Plans"
         st.rerun()
     
+    st.markdown("---")
+    st.markdown("### Tutor")
+    
+    if st.button("📚 Start Learning", use_container_width=True, key="nav_tutor"):
+        st.session_state.navigation = "Start Learning"
+        st.rerun()
+    
+    if st.button("📖 My Study Sessions", use_container_width=True, key="nav_sessions"):
+        st.session_state.navigation = "My Study Sessions"
+        st.rerun()
+    
+    st.markdown("---")
+    
     if st.button("🔒 Privacy & Data", use_container_width=True, key="nav_privacy"):
         st.session_state.navigation = "Privacy"
         st.rerun()
@@ -293,6 +306,16 @@ elif page == "Start Coaching":
     show_coaching_page()
 elif page == "My Action Plans":
     show_action_plans_page()
+elif page == "Start Learning":
+    # Tutor lesson page
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from tutor.lesson_page import show_tutor_page
+    show_tutor_page()
+elif page == "My Study Sessions":
+    # Tutor sessions page
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from tutor.sessions_page import show_sessions_page
+    show_sessions_page()
 elif page == "Privacy":
     from privacy_page import show_privacy_notice
     show_privacy_notice()

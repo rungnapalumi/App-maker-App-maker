@@ -75,21 +75,27 @@ def show_homepage():
             st.button("Coming Soon", key="coach_disabled", use_container_width=True, disabled=True)
     
     with col2:
-        st.markdown("""
+        # Get API key status for Tutor
+        tutor_status = "Demo"  # Always show Demo for now
+        
+        st.markdown(f"""
         <div style='background: white; border: 2px solid #e2e8f0; border-radius: 12px; padding: 2rem; height: 100%; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>
             <div style='display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;'>
                 <h3 style='margin: 0; color: #1e293b;'>📚 AIHive Tutor</h3>
-                <span style='background: #94a3b8; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600;'>Coming Soon</span>
+                <span style='background: #f59e0b; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600;'>{tutor_status}</span>
             </div>
             <p style='color: #64748b; margin-bottom: 1rem; line-height: 1.6;'>
-                Personalized learning assistant. Adaptive curriculum, concept explanations, and practice exercises.
+                Study tutor that helps you understand topics step by step. Interactive lessons with check-for-understanding questions.
             </p>
             <p style='color: #94a3b8; font-size: 0.875rem; font-style: italic; margin-bottom: 1rem;'>
-                In development. AI-powered tutoring for continuous learning.
+                {"⚠️ Demo Mode: Scripted responses (not AI-powered). Real AI available when OpenAI API key is configured." if tutor_status == "Demo" else "✓ Real AI tutoring powered by GPT-4o-mini."}
             </p>
         </div>
         """, unsafe_allow_html=True)
-        st.button("Coming Soon", key="tutor_disabled", use_container_width=True, disabled=True)
+        
+        if st.button("Launch Tutor →", key="tutor_launch", use_container_width=True):
+            st.session_state.navigation = "Start Learning"
+            st.rerun()
     
     # Product Cards Row 2
     col1, col2 = st.columns(2)

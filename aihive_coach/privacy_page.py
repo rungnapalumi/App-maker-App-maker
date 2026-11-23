@@ -1,6 +1,10 @@
 """Privacy Notice Page"""
 import streamlit as st
-from database import db
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from aihive_coach.database import db
+from tutor.database import tutor_db
 
 
 def show_privacy_notice():
@@ -12,12 +16,20 @@ def show_privacy_notice():
     st.markdown("## What We Store")
     
     st.info("""
-    **AIHive Coach stores the following data locally:**
+    **AIHiveHQ stores the following data locally:**
     
-    - **Coaching Conversations:** Your messages and coach responses
-    - **Action Plans:** Goals, insights, actions, dates, success indicators
-    - **Progress Notes:** Updates you add to your action plans
-    - **User ID:** Anonymous browser-based identifier (no login required)
+    **AIHive Coach:**
+    - Coaching Conversations: Your messages and coach responses
+    - Action Plans: Goals, insights, actions, dates, success indicators
+    - Progress Notes: Updates you add to your action plans
+    
+    **AIHive Tutor:**
+    - Study Sessions: Topics, levels, lesson conversations
+    - Session Summaries: What you learned, practice questions
+    - Progress Stats: Questions answered correctly/incorrectly
+    
+    **Common:**
+    - User ID: Anonymous browser-based identifier (no login required)
     
     **Storage Location:** SQLite database (`aihive_coach.db`) on the server
     """)
@@ -38,10 +50,10 @@ def show_privacy_notice():
     st.markdown("## Delete My Data")
     
     st.markdown("""
-    You can delete all your coaching sessions and action plans from this device's anonymous ID.
+    You can delete all your data (coaching sessions, action plans, and study sessions) from this device's anonymous ID.
     
     **This action:**
-    - ✅ Deletes all your sessions and action plans
+    - ✅ Deletes all your coaching sessions, action plans, and study sessions
     - ✅ Cannot be undone
     - ✅ Only affects data from your current browser session
     - ❌ Does not affect data from other devices/browsers
@@ -56,7 +68,7 @@ def show_privacy_notice():
         st.error("""
         ⚠️ **Confirm Data Deletion**
         
-        This will permanently delete all your coaching sessions and action plans.
+        This will permanently delete all your coaching sessions, action plans, and study sessions.
         This action cannot be undone.
         """)
         
@@ -68,17 +80,23 @@ def show_privacy_notice():
                 user_id = st.session_state.user_id
                 deleted_sessions = db.delete_user_data(user_id, data_type="sessions")
                 deleted_plans = db.delete_user_data(user_id, data_type="action_plans")
+                deleted_study_sessions = tutor_db.delete_user_data(user_id)
                 
                 st.session_state.show_delete_confirm = False
                 st.session_state.current_session = None
+                st.session_state.current_tutor_session_id = None
                 
                 st.success(f"""
                 ✅ **Data Deleted**
                 
+                **Coach:**
                 - {deleted_sessions} coaching sessions removed
                 - {deleted_plans} action plans removed
                 
-                You can start fresh by clicking "Start Coaching" in the sidebar.
+                **Tutor:**
+                - {deleted_study_sessions} study sessions removed
+                
+                You can start fresh by clicking "Start Coaching" or "Start Learning" in the sidebar.
                 """)
                 st.balloons()
         
