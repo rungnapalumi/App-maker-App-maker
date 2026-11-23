@@ -6,6 +6,9 @@ import sqlite3
 import tempfile
 import os
 import sys
+import uuid
+from datetime import datetime
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from workforce.database import WorkforceDB
@@ -22,25 +25,38 @@ def temp_db():
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
     
-    # Create coaching_sessions table
+    # Create sessions table (real app uses SQLAlchemy model)
     cursor.execute("""
-        CREATE TABLE coaching_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
-            goal TEXT,
-            status TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            category TEXT,
+            messages_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            action_plan_id TEXT,
+            is_completed INTEGER DEFAULT 0
         )
     """)
     
-    # Create study_sessions table
+    # Create study_sessions table (real tutor schema)
     cursor.execute("""
         CREATE TABLE study_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
-            topic TEXT,
-            status TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            topic TEXT NOT NULL,
+            level TEXT NOT NULL,
+            messages_json TEXT NOT NULL DEFAULT '[]',
+            current_chunk INTEGER DEFAULT 0,
+            chunks_completed INTEGER DEFAULT 0,
+            questions_answered_correctly INTEGER DEFAULT 0,
+            questions_answered_incorrectly INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            is_completed INTEGER DEFAULT 0,
+            summary_text TEXT,
+            practice_questions_json TEXT NOT NULL DEFAULT '[]'
         )
     """)
     
@@ -58,15 +74,16 @@ def test_activity_isolation_basic(temp_db):
     db = WorkforceDB(db_path=temp_db)
     
     # Create test data for user A
+    now = datetime.now().isoformat()
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_a", "Goal A1", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "Goal A1", "[]", now, now)
         )
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_a", "Goal A2", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "Goal A2", "[]", now, now)
         )
         conn.commit()
     
@@ -74,8 +91,8 @@ def test_activity_isolation_basic(temp_db):
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_b", "Goal B1", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_b", "Goal B1", "[]", now, now)
         )
         conn.commit()
     
@@ -96,15 +113,16 @@ def test_activity_isolation_across_agents(temp_db):
     db = WorkforceDB(db_path=temp_db)
     
     # Create coach and tutor data for user A
+    now = datetime.now().isoformat()
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_a", "Coach Goal A", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "Coach Goal A", "[]", now, now)
         )
         cursor.execute(
-            "INSERT INTO study_sessions (user_id, topic, status) VALUES (?, ?, ?)",
-            ("user_a", "Tutor Topic A", "active")
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "Tutor Topic A", "Beginner", "[]", "[]", now, now)
         )
         conn.commit()
     
@@ -112,12 +130,12 @@ def test_activity_isolation_across_agents(temp_db):
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_b", "Coach Goal B", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_b", "Coach Goal B", "[]", now, now)
         )
         cursor.execute(
-            "INSERT INTO study_sessions (user_id, topic, status) VALUES (?, ?, ?)",
-            ("user_b", "Tutor Topic B", "active")
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_b", "Tutor Topic B", "Beginner", "[]", "[]", now, now)
         )
         conn.commit()
     
@@ -147,25 +165,26 @@ def test_activity_by_agent_type_isolation(temp_db):
     db = WorkforceDB(db_path=temp_db)
     
     # Create data for two users
+    now = datetime.now().isoformat()
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         # User A data
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_a", "User A Coach", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "User A Coach", "[]", now, now)
         )
         cursor.execute(
-            "INSERT INTO study_sessions (user_id, topic, status) VALUES (?, ?, ?)",
-            ("user_a", "User A Tutor", "active")
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "User A Tutor", "Beginner", "[]", "[]", now, now)
         )
         # User B data
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_b", "User B Coach", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_b", "User B Coach", "[]", now, now)
         )
         cursor.execute(
-            "INSERT INTO study_sessions (user_id, topic, status) VALUES (?, ?, ?)",
-            ("user_b", "User B Tutor", "active")
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_b", "User B Tutor", "Beginner", "[]", "[]", now, now)
         )
         conn.commit()
     
@@ -193,11 +212,12 @@ def test_empty_activity_for_new_user(temp_db):
     db = WorkforceDB(db_path=temp_db)
     
     # Create data for user A only
+    now = datetime.now().isoformat()
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-            ("user_a", "User A Goal", "active")
+            "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "user_a", "User A Goal", "[]", now, now)
         )
         conn.commit()
     
@@ -211,12 +231,13 @@ def test_activity_limit_respected(temp_db):
     db = WorkforceDB(db_path=temp_db)
     
     # Create 10 coach sessions for user A
+    now = datetime.now().isoformat()
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         for i in range(10):
             cursor.execute(
-                "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-                ("user_a", f"Goal {i}", "active")
+                "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), "user_a", f"Goal {i}", "[]", now, now)
             )
         conn.commit()
     
@@ -231,17 +252,18 @@ def test_no_cross_user_data_leakage(temp_db):
     
     # Create data for 3 different users
     users = ["user_x", "user_y", "user_z"]
+    now = datetime.now().isoformat()
     
     with sqlite3.connect(temp_db) as conn:
         cursor = conn.cursor()
         for user in users:
             cursor.execute(
-                "INSERT INTO coaching_sessions (user_id, goal, status) VALUES (?, ?, ?)",
-                (user, f"Coach {user}", "active")
+                "INSERT INTO sessions (id, user_id, category, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), user, f"Coach {user}", "[]", now, now)
             )
             cursor.execute(
-                "INSERT INTO study_sessions (user_id, topic, status) VALUES (?, ?, ?)",
-                (user, f"Tutor {user}", "active")
+                "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), user, f"Tutor {user}", "Beginner", "[]", "[]", now, now)
             )
         conn.commit()
     
@@ -263,3 +285,39 @@ def test_no_cross_user_data_leakage(temp_db):
                 for activity in activities:
                     assert other_user not in activity["title"], \
                         f"{user} should not see {other_user}'s data"
+
+
+def test_tutor_activity_appears_for_user(temp_db):
+    """Test that tutor activity appears in the activity panel for the same user"""
+    db = WorkforceDB(db_path=temp_db)
+    
+    # Create tutor sessions for a user
+    now = datetime.now().isoformat()
+    with sqlite3.connect(temp_db) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test_user", "Python Programming", "Beginner", "[]", "[]", now, now)
+        )
+        cursor.execute(
+            "INSERT INTO study_sessions (id, user_id, topic, level, messages_json, practice_questions_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test_user", "Data Structures", "Intermediate", "[]", "[]", now, now)
+        )
+        conn.commit()
+    
+    # Get activity for the user
+    activities = db.get_recent_activity("test_user", limit=10)
+    
+    # Should see both tutor sessions
+    assert len(activities) == 2, f"User should see 2 tutor activities, got {len(activities)}"
+    
+    # Verify they are tutor activities
+    assert all(activity["agent_type"] == "tutor" for activity in activities), \
+        "All activities should be tutor type"
+    assert all(activity["agent_name"] == "AIHive Tutor" for activity in activities), \
+        "All activities should be from AIHive Tutor"
+    
+    # Verify topics are correct
+    topics = [activity["title"] for activity in activities]
+    assert "Python Programming" in topics, "Should see Python Programming topic"
+    assert "Data Structures" in topics, "Should see Data Structures topic"

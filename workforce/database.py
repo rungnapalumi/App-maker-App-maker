@@ -70,7 +70,7 @@ class WorkforceDB:
                         id,
                         topic,
                         created_at as timestamp,
-                        status
+                        CASE WHEN is_completed = 1 THEN 'completed' ELSE 'active' END as status
                     FROM study_sessions
                     WHERE user_id = ?
                     ORDER BY created_at DESC
@@ -142,7 +142,7 @@ class WorkforceDB:
                             id,
                             topic,
                             created_at as timestamp,
-                            status
+                            CASE WHEN is_completed = 1 THEN 'completed' ELSE 'active' END as status
                         FROM study_sessions
                         WHERE user_id = ?
                         ORDER BY created_at DESC

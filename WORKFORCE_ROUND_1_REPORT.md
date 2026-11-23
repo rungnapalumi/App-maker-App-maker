@@ -415,3 +415,79 @@ All screenshots opened with PIL and dimensions verified:
 
 **Round 2.1 completed:** 2026-11-23  
 **Budget:** ~$0.05 (screenshot recapture only)
+
+---
+
+# Round 2.2 Test Suite Fix (November 23, 2026)
+
+## Changes Made
+
+### ✅ Fixed All Failing Activity Isolation Tests
+**Problem:** 5 activity isolation tests were failing because they used old `coaching_sessions` table schema.
+
+**Fix:**
+- Updated all test fixtures to use real `sessions` table (matches SQLAlchemy model)
+- Updated study_sessions schema to match real tutor database
+- Fixed database.py to query `is_completed` field (not non-existent `status` field)
+- All assertions preserved - no weakening of privacy checks
+
+### ✅ Added Tutor Activity Test
+**New test:** `test_tutor_activity_appears_for_user`
+- Verifies tutor sessions appear in activity panel for the same user
+- Creates 2 tutor sessions
+- Asserts both appear with correct agent_type, agent_name, and topics
+
+## Test Results (Final)
+
+**Total Tests:** 80  
+**Passed:** 77 ✅  
+**Skipped:** 3 ⏭️ (AI-dependent Coach tests in demo mode)  
+**Failed:** 0 ❌  
+
+**Activity Isolation Tests (7 total):**
+- ✅ test_activity_isolation_basic
+- ✅ test_activity_isolation_across_agents
+- ✅ test_activity_by_agent_type_isolation
+- ✅ test_empty_activity_for_new_user
+- ✅ test_activity_limit_respected
+- ✅ test_no_cross_user_data_leakage
+- ✅ test_tutor_activity_appears_for_user (NEW)
+
+**All privacy assertions maintained:**
+- User A cannot see User B's coach sessions ✅
+- User A cannot see User B's tutor sessions ✅
+- Cross-agent isolation verified ✅
+- Activity limit enforcement verified ✅
+- No data leakage across 3 users verified ✅
+
+---
+
+## Known Limitations
+
+### Anonymous User ID Resets on Fresh Page Load
+**Current Behavior:**
+- Each fresh page load generates a new anonymous user ID based on `time.time()`
+- Recent activity does not persist across browser sessions or page refreshes
+- Activity panel shows "No activity yet" for new users
+- Sessions created in one browser session appear correctly in that session's activity panel (E2E test proves this)
+
+**Why This Happens:**
+- No authentication system exists yet
+- User ID is generated client-side on initial page load
+- Each new Streamlit session gets a fresh user ID
+- Database sessions are correctly isolated by user_id, but the user_id changes
+
+**Production Solution (Requires Founder Decision):**
+This is a fundamental architectural limitation that requires one of:
+1. **User Authentication** - Login system with persistent user accounts
+2. **Browser LocalStorage** - Store user ID in browser (survives page refresh, not cross-device)
+3. **Session Cookies** - Persistent cookies (survives page refresh, not cross-device)
+4. **Accept Current Behavior** - Demo/preview only, fresh start on each visit
+
+**Recommendation:** Do not attempt to fix this without authentication system. The activity panel works correctly within a session - the E2E test proves it. The limitation is in the anonymous ID architecture, not the activity panel code.
+
+---
+
+**Round 2.2 completed:** 2026-11-23  
+**Test suite:** 77 passed, 3 skipped, 0 failed ✅  
+**Budget:** ~$0.10
