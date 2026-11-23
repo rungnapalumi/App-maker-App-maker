@@ -4,20 +4,21 @@ Main Streamlit Application Entry Point
 """
 import streamlit as st
 import json
+import os
 from pathlib import Path
 from config import config
 from database import db
 
 # Page configuration
 st.set_page_config(
-    page_title="AIHiveHQ - Think Clearly. Act Confidently. Grow Daily.",
-    page_icon="🧠",
+    page_title="AIHive AI Workforce - Your Team of AI Assistants",
+    page_icon="🏢",
     layout="wide",
     initial_sidebar_state="auto",  # Collapsed on mobile, expanded on desktop
     menu_items={
         'Get Help': None,
         'Report a bug': None,
-        'About': "AIHive Coach v0.1 - Think Clearly. Act Confidently. Grow Daily."
+        'About': "AIHive AI Workforce - Your Team of AI Assistants"
     }
 )
 
@@ -52,17 +53,20 @@ if "current_category" not in st.session_state:
 
 # Sidebar navigation
 with st.sidebar:
-    st.title("🧠 AIHiveHQ")
-    st.caption("Think Clearly. Act Confidently. Grow Daily.")
+    st.title("🏢 AIHive")
+    st.caption("Your Team of AI Assistants")
     
     st.markdown("")
     
     # Navigation - clean buttons
     st.markdown("### Navigation")
     
-    if st.button("🏠 Home", use_container_width=True, key="nav_home"):
+    if st.button("🏠 AI Workforce Hub", use_container_width=True, key="nav_home"):
         st.session_state.navigation = "Home"
         st.rerun()
+    
+    st.markdown("---")
+    st.markdown("### Coach")
     
     if st.button("💡 AIHive Coach", use_container_width=True, key="nav_coach"):
         st.session_state.navigation = "AIHive Coach"
@@ -110,7 +114,15 @@ with st.sidebar:
 
 # Main content area
 def show_home_page():
-    """AIHiveHQ Platform Homepage"""
+    """AIHive AI Workforce Hub"""
+    import sys
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from workforce.hub_page import show_workforce_hub
+    show_workforce_hub()
+
+
+def show_legacy_homepage():
+    """Legacy AIHiveHQ Platform Homepage"""
     from homepage import show_homepage
     show_homepage()
 
