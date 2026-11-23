@@ -308,13 +308,25 @@ elif page == "My Action Plans":
     show_action_plans_page()
 elif page == "Start Learning":
     # Tutor lesson page
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from tutor.lesson_page import show_tutor_page
+    try:
+        from tutor.lesson_page import show_tutor_page
+    except ImportError:
+        # Fallback: add parent to path
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        from tutor.lesson_page import show_tutor_page
     show_tutor_page()
 elif page == "My Study Sessions":
     # Tutor sessions page
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from tutor.sessions_page import show_sessions_page
+    try:
+        from tutor.sessions_page import show_sessions_page
+    except ImportError:
+        # Fallback: add parent to path
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        from tutor.sessions_page import show_sessions_page
     show_sessions_page()
 elif page == "Privacy":
     from privacy_page import show_privacy_notice

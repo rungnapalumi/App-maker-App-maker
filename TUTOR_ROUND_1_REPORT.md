@@ -86,8 +86,8 @@ Successfully built AIHive Tutor as the second agent on the AIHiveHQ platform. Th
 
 ### Unit Tests Summary
 ```
-Total Tests:    69
-Passed:         65
+Total Tests:    70
+Passed:         66
 Failed:         0
 Skipped:        4
 Success Rate:   100%
@@ -95,7 +95,7 @@ Success Rate:   100%
 
 ### Test Breakdown
 
-**Tutor Tests (25 total):**
+**Tutor Tests (26 total):**
 - `test_tutor_database.py`: 11 tests
   - Session CRUD operations
   - User data isolation
@@ -111,6 +111,12 @@ Success Rate:   100%
   - Multi-level support
   - Demo mode determinism
 
+- `test_e2e_tutor.py`: 1 test
+  - End-to-end lesson flow with Playwright
+  - Real browser automation
+  - Screenshot capture validation
+  - Adaptive feedback verification
+
 **Coach Tests (44 total):**
 - All existing Coach tests still pass
 - No regressions introduced
@@ -120,23 +126,27 @@ Success Rate:   100%
 
 ## Screenshots
 
-Three distinct screenshots captured with MD5 verification:
+**Note:** Round 1 initially included mockup screenshots. These were rejected and replaced with real screenshots captured from the running Streamlit app using Playwright.
+
+Four distinct real screenshots captured with MD5 verification:
 
 | Screenshot | Dimensions | MD5 Hash | Description |
 |------------|------------|----------|-------------|
-| `tutor_desktop_topic_picker.png` | 1200×800 | `80ebfe821eb79d8774f115448831ef37` | Desktop topic selection interface with preset topics and level selector |
-| `tutor_mobile_mid_lesson.png` | 390×844 | `b05fccad6b1b3eef920f2ebce0a79560` | Mobile lesson view showing conversation with feedback message |
-| `tutor_mobile_summary.png` | 390×844 | `f03536b69fe9c3f7f4df898b0be89676` | Mobile session summary with stats and practice questions |
+| `tutor_desktop_topic_picker.png` | 1440×900 | `72a17385a571b10f32915a7266fbf346` | Real desktop topic selection interface with Streamlit UI |
+| `tutor_mobile_mid_lesson.png` | 390×844 | `49f1e4c9490975972aaf753868801d4a` | Real mobile lesson showing adaptive feedback after wrong answer |
+| `tutor_mobile_summary.png` | 390×844 | `8b269be88613241c67ac6db1efe2cfbd` | Real mobile session summary (1 correct, 1 incorrect, 2 concepts) |
+| `tutor_mobile_sessions_list.png` | 390×844 | `ea5e4f3a75350d1f6391131932a93a3f` | Real mobile "My Study Sessions" list view |
 
 **MD5 Verification:**
 ```bash
 $ md5sum tutor_*.png
-80ebfe821eb79d8774f115448831ef37  tutor_desktop_topic_picker.png
-b05fccad6b1b3eef920f2ebce0a79560  tutor_mobile_mid_lesson.png
-f03536b69fe9c3f7f4df898b0be89676  tutor_mobile_summary.png
+72a17385a571b10f32915a7266fbf346  tutor_desktop_topic_picker.png
+49f1e4c9490975972aaf753868801d4a  tutor_mobile_mid_lesson.png
+ea5e4f3a75350d1f6391131932a93a3f  tutor_mobile_sessions_list.png
+8b269be88613241c67ac6db1efe2cfbd  tutor_mobile_summary.png
 ```
 
-All three hashes are unique, confirming distinct screenshots.
+All four hashes are unique, confirming distinct real screenshots. Numbers in summary match actual test session (1 question correct, 1 incorrect, 2 concepts covered).
 
 ---
 
@@ -150,11 +160,18 @@ tutor/
 ├── tutor_ai.py                 # AI logic (demo + real mode)
 ├── lesson_page.py              # Main lesson interface
 ├── sessions_page.py            # Study sessions history page
-├── generate_screenshots.py     # Screenshot generation script
 └── tests/
     ├── __init__.py
     ├── test_tutor_database.py  # 11 database tests
-    └── test_tutor_ai.py        # 14 AI logic tests
+    ├── test_tutor_ai.py        # 14 AI logic tests
+    └── test_e2e_tutor.py       # 1 E2E test with Playwright
+
+New files (root):
+├── capture_real_screenshots.py # Standalone screenshot capture script
+├── tutor_desktop_topic_picker.png
+├── tutor_mobile_mid_lesson.png
+├── tutor_mobile_summary.png
+└── tutor_mobile_sessions_list.png
 
 Updated files:
 ├── aihive_coach/
@@ -202,13 +219,14 @@ Updated files:
 ## Cost Analysis
 
 ### Development Cost (This Run)
-- **Cloud Agent Runtime:** ~$0.15 (estimated)
+- **Cloud Agent Round 1:** ~$0.15 (initial mockups, corrected in Round 2)
+- **Cloud Agent Round 2:** ~$0.45 (real screenshots with Playwright, E2E test)
 - **API Calls:** $0.00 (all testing done in demo mode)
-- **Total:** ~$0.15
+- **Total:** ~$0.60
 
-**Budget:** $1.00  
-**Used:** ~$0.15  
-**Remaining:** ~$0.85 ✅
+**Budget:** $1.00 (Round 1) + $0.60 (Round 2) = ~$1.60 total
+**Used:** ~$0.60 (Round 2 only)
+**Remaining:** ~$0.40 ✅
 
 ### Operational Cost (Per User Session)
 
