@@ -18,11 +18,11 @@ def show_workforce_hub():
     
     # Hero section
     st.markdown("<div style='text-align: center; padding: 1rem 0;'>", unsafe_allow_html=True)
-    st.title("🏢 AIHive AI Workforce")
+    st.title("🏢 AIHive Workforce")
     
     # Mode-aware subtitle
     if config.is_demo_mode():
-        st.subheader("Your team of AI assistants (Demo Mode)")
+        st.subheader("Your AIHive team (Demo)")
     else:
         st.subheader("Your team of AI-powered assistants")
     
@@ -31,18 +31,18 @@ def show_workforce_hub():
     # Demo mode warning
     if config.is_demo_mode():
         st.warning("""
-        ⚠️ **Demo Mode - Scripted Responses**
+        ⚠️ **Demo Mode**
         
-        Currently running in demo mode (no `OPENAI_API_KEY` detected). 
-        Available agents use scripted responses and are not AI-powered.
-        
-        Add `OPENAI_API_KEY` to your environment for real AI capabilities.
+        This is a demonstration with scripted responses.
         """)
     
     st.markdown("---")
     
     # Agent cards
-    st.markdown("## Your AI Team")
+    if config.is_demo_mode():
+        st.markdown("## Your Team")
+    else:
+        st.markdown("## Your AI Team")
     
     agents = get_all_agents()
     

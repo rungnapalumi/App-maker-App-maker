@@ -11,14 +11,14 @@ from database import db
 
 # Page configuration
 st.set_page_config(
-    page_title="AIHive AI Workforce - Your Team of AI Assistants",
+    page_title="AIHive Workforce - Your Team",
     page_icon="🏢",
     layout="wide",
     initial_sidebar_state="auto",  # Collapsed on mobile, expanded on desktop
     menu_items={
         'Get Help': None,
         'Report a bug': None,
-        'About': "AIHive AI Workforce - Your Team of AI Assistants"
+        'About': "AIHive Workforce - Your Team"
     }
 )
 
@@ -54,14 +54,17 @@ if "current_category" not in st.session_state:
 # Sidebar navigation
 with st.sidebar:
     st.title("🏢 AIHive")
-    st.caption("Your Team of AI Assistants")
+    if config.is_demo_mode():
+        st.caption("Your Team (Demo)")
+    else:
+        st.caption("Your Team of AI Assistants")
     
     st.markdown("")
     
     # Navigation - clean buttons
     st.markdown("### Navigation")
     
-    if st.button("🏠 AI Workforce Hub", use_container_width=True, key="nav_home"):
+    if st.button("🏠 Workforce Hub", use_container_width=True, key="nav_home"):
         st.session_state.navigation = "Home"
         st.rerun()
     
@@ -102,7 +105,7 @@ with st.sidebar:
     # Mode indicator
     mode_text = config.get_model_info()
     if config.is_demo_mode():
-        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)\n\nAdd `OPENAI_API_KEY` for real AI.")
+        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses")
     else:
         st.success(f"✅ **Real AI Active**\n\n{mode_text}")
     

@@ -161,3 +161,33 @@ def test_capture_mobile_screenshot(page: Page, app_url: str):
     assert screenshot_path.exists()
     # Check file is not empty
     assert screenshot_path.stat().st_size > 1000
+
+
+def test_demo_mode_no_api_key_mentions(page: Page, app_url: str):
+    """Test that demo mode page does not mention OPENAI_API_KEY or env vars"""
+    page.goto(app_url, wait_until="networkidle", timeout=60000)
+    wait_for_streamlit(page)
+    
+    body_text = page.locator("body").inner_text()
+    
+    # Should not mention OPENAI_API_KEY
+    assert "OPENAI_API_KEY" not in body_text, "Page should not mention OPENAI_API_KEY to end users"
+    
+    # Should not tell users to add env vars
+    assert "Add `" not in body_text or "API" not in body_text, "Page should not instruct users to add env vars"
+
+
+def test_demo_mode_no_ai_wording_in_titles(page: Page, app_url: str):
+    """Test that demo mode page does not use 'AI assistants' or 'AI Team' wording"""
+    page.goto(app_url, wait_until="networkidle", timeout=60000)
+    wait_for_streamlit(page)
+    
+    body_text = page.locator("body").inner_text()
+    
+    # In demo mode, should not say "AI assistants" or "AI Team"
+    # (Real AI mode can use this wording, but we're testing demo mode here)
+    assert "AI assistants" not in body_text, "Demo mode should not say 'AI assistants'"
+    assert "Your AI Team" not in body_text, "Demo mode should not say 'Your AI Team'"
+    
+    # Should use neutral wording instead
+    assert "Your AIHive team" in body_text or "Your Team" in body_text, "Should use neutral team wording"

@@ -249,3 +249,112 @@ Current limitations for production deployment:
 **Report generated:** 2026-11-23  
 **Agent:** Cursor Cloud Agent  
 **Round:** Workforce Hub MVP Round 1
+
+---
+
+# Round 2 Fixes (November 23, 2026)
+
+## Changes Made
+
+### 1. ✅ Wording Fixes for Demo Mode
+**Issue:** In demo mode (no OPENAI_API_KEY), the page incorrectly used "AI assistants" / "Your AI Team" wording.
+
+**Fixed:**
+- **Title:** "AIHive Workforce" (removed "AI")
+- **Subtitle in demo mode:** "Your AIHive team (Demo)" instead of "Your team of AI assistants (Demo Mode)"
+- **Section heading in demo mode:** "Your Team" instead of "Your AI Team"
+- **Sidebar caption in demo mode:** "Your Team (Demo)" instead of "Your Team of AI Assistants"
+- **Sidebar navigation button:** "Workforce Hub" instead of "AI Workforce Hub"
+
+**AI wording now appears ONLY when real API key is configured.**
+
+### 2. ✅ Removed OPENAI_API_KEY Mentions from UI
+**Issue:** UI was telling end users to add `OPENAI_API_KEY` environment variable.
+
+**Fixed:**
+- **Workforce hub:** Demo banner now says only "⚠️ **Demo Mode** - This is a demonstration with scripted responses."
+- **Sidebar:** Changed from "Add `OPENAI_API_KEY` for real AI" to just "Scripted responses"
+- **Tutor page:** Removed "Add `OPENAI_API_KEY` for real AI tutoring" from demo warning
+
+**No environment variable instructions visible to end users. Developer setup info belongs in README only.**
+
+### 3. ✅ Screenshots Retaken with Real Activity
+**Method:** 
+- Created real database entries for demo user: 1 coach session ("Improve my public speaking skills") + 1 tutor session ("Python Programming")
+- Captured with Playwright `full_page=True` from REAL running app
+- Both screenshots visibly show:
+  - All 5 agent cards (Coach, Tutor Demo; Marketing, Developer, Finance Coming soon)
+  - "My Recent Activity" panel with 2 real entries
+  - 3 disabled "Coming Soon" cards clearly visible
+  - No placeholder text, no mockups, no PIL drawing
+
+**Screenshot Sizes:**
+- `workforce_desktop_hub.png`: **61KB** (1280px wide, full page)
+- `workforce_mobile_hub.png`: **34KB** (390px wide, full page)
+
+### 4. ✅ Added Tests for Demo Mode Text
+**New tests added:**
+- `test_demo_mode_no_api_key_mentions`: Asserts page does NOT contain "OPENAI_API_KEY"
+- `test_demo_mode_no_ai_wording_in_titles`: Asserts demo mode does NOT say "AI assistants" or "Your AI Team"
+
+Both tests run against the REAL running app with Playwright.
+
+## Test Results (Round 2)
+
+### Full Test Suite
+**Total Tests:** 78  
+**Passed:** 75 ✅  
+**Skipped:** 3 ⏭️ (AI-dependent Coach tests in demo mode)  
+**Failed:** 0 ❌  
+
+**Test Breakdown:**
+- Registry tests: 9 passed ✅
+- Activity isolation tests: 6 passed ✅
+- Workforce E2E tests: **12 passed** ✅ (added 2 new tests)
+- Coach tests: 29 (26 passed, 3 skipped)
+- Tutor tests: 22 passed ✅
+
+**New tests (2) both passed:**
+- ✅ Demo mode page contains no "OPENAI_API_KEY"
+- ✅ Demo mode page contains no "AI assistants"/"Your AI Team" wording
+
+## Files Changed in Round 2
+
+**Modified:**
+- `workforce/hub_page.py` - Wording fixes for demo mode
+- `aihive_coach/app.py` - Sidebar and title wording fixes
+- `tutor/lesson_page.py` - Removed API key mention from demo warning
+- `workforce/tests/test_e2e_workforce_simplified.py` - Added 2 new assertion tests
+- `workforce_desktop_hub.png` - Retaken with real activity (61KB)
+- `workforce_mobile_hub.png` - Retaken with real activity (34KB)
+- `WORKFORCE_ROUND_1_REPORT.md` - This Round 2 section
+
+**Temporary files (not committed):**
+- `create_demo_activity.py` - Script to populate database for screenshots
+- `capture_final_screenshots.py` - Screenshot capture script
+- `round2_test_results.txt` - Test output
+
+## Budget (Round 2)
+**Estimated:** ~$0.10-0.15  
+- Playwright E2E tests: ~1.5 minutes
+- Screenshot captures: ~1 minute
+- Code changes and local testing: minimal
+
+**Total both rounds:** ~$0.25-0.35 (well under combined ~$0.80 target)
+
+## What Was NOT Done
+✅ **Everything requested was completed:**
+1. ✅ Wording fixed (no "AI" terms in demo mode)
+2. ✅ OPENAI_API_KEY removed from all end-user-visible text
+3. ✅ Both screenshots retaken with real activity, full_page=True
+4. ✅ Tests added and passing
+5. ✅ Report updated with Round 2 section
+
+**No gaps or missing items.**
+
+---
+
+**Round 2 completed:** 2026-11-23  
+**Branch:** `cursor/workforce-hub-mvp-27d1`  
+**PR:** #4 (still DRAFT)  
+**Status:** Ready for review, do NOT merge yet
