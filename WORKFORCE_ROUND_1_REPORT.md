@@ -358,3 +358,60 @@ Both tests run against the REAL running app with Playwright.
 **Branch:** `cursor/workforce-hub-mvp-27d1`  
 **PR:** #4 (still DRAFT)  
 **Status:** Ready for review, do NOT merge yet
+
+---
+
+# Round 2.1 Screenshot Fix (November 23, 2026)
+
+## Issue
+The initial Round 2 screenshots only captured the viewport (1280x800 and 390x844) and did not show the Coming Soon cards or My Recent Activity panel due to Streamlit's internal scrolling container.
+
+## Fix Applied
+Created **additional screenshots** after scrolling to show the bottom content:
+
+### Desktop Screenshots
+1. **`workforce_desktop_hub.png`**
+   - Dimensions: **1280 x 800 pixels**
+   - File size: 60.9 KB
+   - Content: Top section (hero, title, first 2 agent cards)
+
+2. **`workforce_desktop_coming_soon_activity.png`** ✨ NEW
+   - Dimensions: **1280 x 800 pixels**
+   - File size: 55.4 KB
+   - Content: Bottom section showing:
+     - 3 disabled "Coming Soon" cards (Marketing, Developer, Finance)
+     - "My Recent Activity" panel with 2 real entries
+     - Activity entries: "Improve my public speaking skills" (Coach) + "Python Programming" (Tutor)
+
+### Mobile Screenshots
+1. **`workforce_mobile_hub.png`**
+   - Dimensions: **390 x 844 pixels**
+   - File size: 33.0 KB
+   - Content: Top section (hero, title, first agent cards)
+
+2. **`workforce_mobile_coming_soon_activity.png`** ✨ NEW
+   - Dimensions: **390 x 844 pixels**
+   - File size: 30.0 KB
+   - Content: Bottom section showing:
+     - 3 disabled "Coming Soon" cards
+     - "My Recent Activity" panel with 2 real entries
+
+## Verification Method
+- Used Playwright's `scroll_into_view_if_needed()` on "Coming Soon" and "My Recent Activity" text
+- Captured after scrolling to show bottom content
+- Confirmed via PIL that file sizes differ (indicating different content)
+- Found 6 "Coming Soon" elements and 1 "My Recent Activity" element as expected
+
+## Exact Dimensions Confirmed
+All screenshots opened with PIL and dimensions verified:
+- Desktop top: 1280 x 800 pixels ✓
+- Desktop bottom: 1280 x 800 pixels ✓
+- Mobile top: 390 x 844 pixels ✓
+- Mobile bottom: 390 x 844 pixels ✓
+
+**Total screenshots: 4** (2 desktop + 2 mobile)
+
+---
+
+**Round 2.1 completed:** 2026-11-23  
+**Budget:** ~$0.05 (screenshot recapture only)
