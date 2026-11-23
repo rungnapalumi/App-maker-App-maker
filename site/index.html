@@ -1,0 +1,1278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Discover specialized AI agents to help you learn, create, analyze, and grow. Your AI Workforce on One Platform.">
+    <meta name="keywords" content="AI agents, AI workforce, AIHive Coach, artificial intelligence, productivity, automation">
+    <meta name="author" content="AIHiveHQ">
+    
+    <!-- Open Graph / Social Media -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://aihivehq.onrender.com/">
+    <meta property="og:title" content="AIHiveHQ - Your AI Workforce. One Platform.">
+    <meta property="og:description" content="Discover specialized AI agents to help you learn, create, analyze, and grow.">
+    <meta property="og:image" content="https://aihivehq.onrender.com/assets/img/og-image.png">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://aihivehq.onrender.com/">
+    <meta name="twitter:title" content="AIHiveHQ - Your AI Workforce. One Platform.">
+    <meta name="twitter:description" content="Discover specialized AI agents to help you learn, create, analyze, and grow.">
+    <meta name="twitter:image" content="https://aihivehq.onrender.com/assets/img/og-image.png">
+    
+    <title>AIHiveHQ - Your AI Workforce. One Platform.</title>
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Color Tokens */
+            --navy-950: #0a0e1a;
+            --navy-900: #0f1629;
+            --navy-800: #1a2238;
+            --navy-700: #252f47;
+            --charcoal-900: #0d1117;
+            --charcoal-800: #161b22;
+            --charcoal-700: #1f2937;
+            
+            --blue-500: #3b82f6;
+            --blue-600: #2563eb;
+            --violet-500: #8b5cf6;
+            --violet-600: #7c3aed;
+            
+            --slate-50: #f8fafc;
+            --slate-100: #f1f5f9;
+            --slate-200: #e2e8f0;
+            --slate-300: #cbd5e1;
+            --slate-400: #94a3b8;
+            --slate-500: #64748b;
+            --slate-600: #475569;
+            --slate-700: #334155;
+            
+            /* Gradients */
+            --gradient-primary: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            --gradient-surface: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(124, 58, 237, 0.08) 100%);
+            --gradient-hover: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+            
+            /* Spacing Scale */
+            --space-1: 0.25rem;
+            --space-2: 0.5rem;
+            --space-3: 0.75rem;
+            --space-4: 1rem;
+            --space-5: 1.25rem;
+            --space-6: 1.5rem;
+            --space-8: 2rem;
+            --space-10: 2.5rem;
+            --space-12: 3rem;
+            --space-16: 4rem;
+            --space-20: 5rem;
+            --space-24: 6rem;
+            
+            /* Type Scale */
+            --text-xs: 0.75rem;
+            --text-sm: 0.875rem;
+            --text-base: 1rem;
+            --text-lg: 1.125rem;
+            --text-xl: 1.25rem;
+            --text-2xl: 1.5rem;
+            --text-3xl: 1.875rem;
+            --text-4xl: 2.25rem;
+            --text-5xl: 3rem;
+            --text-6xl: 3.75rem;
+            
+            /* Radii */
+            --radius-sm: 0.375rem;
+            --radius-md: 0.5rem;
+            --radius-lg: 0.75rem;
+            --radius-xl: 1rem;
+            --radius-2xl: 1.5rem;
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            --shadow-glow: 0 0 20px rgba(37, 99, 235, 0.3);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--navy-950);
+            color: var(--slate-200);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: rgba(10, 14, 26, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .nav-container {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: var(--space-4) var(--space-6);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .nav-logo {
+            font-size: var(--text-xl);
+            font-weight: 700;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-decoration: none;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: var(--space-8);
+            align-items: center;
+        }
+        
+        .nav-links a {
+            color: var(--slate-300);
+            text-decoration: none;
+            font-size: var(--text-sm);
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav-links a:hover {
+            color: var(--slate-50);
+        }
+        
+        .nav-cta {
+            padding: var(--space-2) var(--space-4);
+            background: rgba(37, 99, 235, 0.1);
+            border: 1px solid rgba(37, 99, 235, 0.3);
+            border-radius: var(--radius-md);
+            color: var(--blue-500);
+            transition: all 0.2s;
+        }
+        
+        .nav-cta:hover {
+            background: rgba(37, 99, 235, 0.2);
+            border-color: rgba(37, 99, 235, 0.5);
+            color: var(--blue-500);
+        }
+        
+        .nav-hamburger {
+            display: none;
+            flex-direction: column;
+            gap: var(--space-1);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: var(--space-2);
+        }
+        
+        .nav-hamburger span {
+            width: 24px;
+            height: 2px;
+            background: var(--slate-300);
+            border-radius: 2px;
+            transition: all 0.3s;
+        }
+        
+        .nav-mobile {
+            display: none;
+            flex-direction: column;
+            gap: var(--space-4);
+            padding: var(--space-6);
+            background: var(--navy-900);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .nav-mobile.active {
+            display: flex;
+        }
+        
+        .nav-mobile a {
+            color: var(--slate-300);
+            text-decoration: none;
+            font-size: var(--text-base);
+            font-weight: 500;
+            padding: var(--space-3) 0;
+            transition: color 0.2s;
+        }
+        
+        .nav-mobile a:hover {
+            color: var(--slate-50);
+        }
+        
+        /* Container */
+        .container {
+            max-width: 1440px;
+            margin: 0 auto;
+            padding: 0 var(--space-6);
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding-top: 120px;
+            padding-bottom: var(--space-16);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 1400px;
+            height: 800px;
+            background: radial-gradient(ellipse at center, rgba(37, 99, 235, 0.15) 0%, rgba(124, 58, 237, 0.12) 30%, rgba(6, 182, 212, 0.08) 50%, rgba(168, 85, 247, 0.06) 70%, transparent 100%);
+            pointer-events: none;
+            filter: blur(40px);
+        }
+        
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-12);
+            align-items: center;
+            max-width: 1280px;
+            margin: 0 auto;
+        }
+        
+        .hero-text {
+            max-width: 560px;
+        }
+        
+        .hero-title {
+            font-size: var(--text-6xl);
+            font-weight: 700;
+            line-height: 1.05;
+            margin-bottom: var(--space-6);
+            background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #06b6d4 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero-title-line {
+            display: block;
+        }
+        
+        .hero-subtitle {
+            font-size: var(--text-xl);
+            color: var(--slate-300);
+            margin-bottom: var(--space-8);
+            line-height: 1.6;
+        }
+        
+        .hero-cta {
+            display: flex;
+            gap: var(--space-4);
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: var(--space-4) var(--space-8);
+            border-radius: var(--radius-lg);
+            font-size: var(--text-base);
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .btn-primary:hover {
+            background: var(--gradient-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-xl), var(--shadow-glow);
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--slate-200);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Hero Visual */
+        .hero-visual-container {
+            position: relative;
+            height: 500px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .hero-visual-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.25) 0%, rgba(139, 92, 246, 0.2) 40%, rgba(6, 182, 212, 0.15) 60%, transparent 80%);
+            filter: blur(60px);
+            pointer-events: none;
+        }
+        
+        .hexagon-network {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            max-width: 550px;
+        }
+        
+        .agent-preview-card {
+            position: absolute;
+            bottom: -20px;
+            right: -40px;
+            width: 240px;
+            background: rgba(15, 22, 41, 0.95);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: var(--radius-lg);
+            padding: var(--space-4);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 30px rgba(59, 130, 246, 0.2);
+            backdrop-filter: blur(12px);
+        }
+        
+        .agent-preview-header {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            margin-bottom: var(--space-3);
+        }
+        
+        .agent-preview-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-md);
+            background: var(--gradient-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        
+        .agent-preview-name {
+            font-size: var(--text-sm);
+            font-weight: 600;
+            color: var(--slate-100);
+        }
+        
+        .agent-preview-message {
+            font-size: var(--text-xs);
+            color: var(--slate-400);
+            line-height: 1.5;
+            margin-bottom: var(--space-2);
+        }
+        
+        .agent-preview-status {
+            display: flex;
+            align-items: center;
+            gap: var(--space-1);
+            font-size: var(--text-xs);
+            color: var(--blue-500);
+        }
+        
+        .agent-preview-pulse {
+            width: 6px;
+            height: 6px;
+            background: var(--blue-500);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Agent Cards Section */
+        .section {
+            padding: var(--space-16) 0;
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: var(--space-12);
+        }
+        
+        .section-title {
+            font-size: var(--text-4xl);
+            font-weight: 700;
+            color: var(--slate-50);
+            margin-bottom: var(--space-4);
+        }
+        
+        .section-description {
+            font-size: var(--text-lg);
+            color: var(--slate-400);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: var(--space-6);
+            margin-bottom: var(--space-12);
+        }
+        
+        @media (max-width: 1024px) and (min-width: 769px) {
+            .agent-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        .agent-card {
+            background: var(--gradient-surface);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: var(--radius-xl);
+            padding: var(--space-8);
+            transition: all 0.3s;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        
+        .agent-card:hover {
+            border-color: rgba(37, 99, 235, 0.3);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-xl);
+        }
+        
+        .agent-card-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: var(--space-4);
+        }
+        
+        .agent-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-lg);
+            background: var(--gradient-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: var(--space-3);
+        }
+        
+        .agent-title {
+            font-size: var(--text-xl);
+            font-weight: 600;
+            color: var(--slate-50);
+            margin-bottom: var(--space-3);
+            white-space: nowrap;
+        }
+        
+        .agent-description {
+            font-size: var(--text-base);
+            color: var(--slate-400);
+            line-height: 1.6;
+            margin-bottom: var(--space-6);
+            flex-grow: 1;
+        }
+        
+        .badge {
+            padding: var(--space-1) var(--space-3);
+            border-radius: var(--radius-sm);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        
+        .badge-demo {
+            background: rgba(16, 185, 129, 0.15);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        
+        .badge-soon {
+            background: rgba(139, 92, 246, 0.15);
+            color: #8b5cf6;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+        
+        .badge-future {
+            background: rgba(100, 116, 139, 0.15);
+            color: var(--slate-400);
+            border: 1px solid rgba(100, 116, 139, 0.3);
+        }
+        
+        .agent-action {
+            margin-top: var(--space-4);
+        }
+        
+        .btn-agent {
+            width: 100%;
+            justify-content: center;
+        }
+        
+        .btn-agent:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-agent:disabled:hover {
+            transform: none;
+        }
+        
+        /* How It Works */
+        .how-it-works {
+            background: var(--navy-900);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .steps-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: var(--space-8);
+        }
+        
+        .step {
+            text-align: center;
+        }
+        
+        .step-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto var(--space-4);
+            background: var(--gradient-primary);
+            border-radius: var(--radius-xl);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .step-title {
+            font-size: var(--text-xl);
+            font-weight: 600;
+            color: var(--slate-50);
+            margin-bottom: var(--space-3);
+        }
+        
+        .step-description {
+            font-size: var(--text-base);
+            color: var(--slate-400);
+            line-height: 1.6;
+        }
+        
+        /* Why AIHiveHQ */
+        .why-section {
+            text-align: center;
+        }
+        
+        .why-content {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .why-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: var(--space-6);
+            margin-top: var(--space-10);
+        }
+        
+        .why-item {
+            padding: var(--space-6);
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: var(--radius-lg);
+        }
+        
+        .why-item-title {
+            font-size: var(--text-lg);
+            font-weight: 600;
+            color: var(--slate-50);
+            margin-bottom: var(--space-2);
+        }
+        
+        .why-item-description {
+            font-size: var(--text-sm);
+            color: var(--slate-400);
+        }
+        
+        /* Founder Section */
+        .founder-section {
+            background: var(--navy-900);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .founder-content {
+            max-width: 700px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        .founder-name {
+            font-size: var(--text-2xl);
+            font-weight: 600;
+            color: var(--slate-50);
+            margin-bottom: var(--space-2);
+        }
+        
+        .founder-title {
+            font-size: var(--text-lg);
+            color: var(--slate-400);
+            margin-bottom: var(--space-6);
+        }
+        
+        .founder-bio {
+            font-size: var(--text-base);
+            color: var(--slate-400);
+            line-height: 1.8;
+        }
+        
+        /* Footer */
+        footer {
+            background: var(--navy-900);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding: var(--space-12) 0 var(--space-6);
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--space-8);
+            margin-bottom: var(--space-8);
+        }
+        
+        .footer-section h4 {
+            font-size: var(--text-sm);
+            font-weight: 600;
+            color: var(--slate-50);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: var(--space-4);
+        }
+        
+        .footer-links {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+        }
+        
+        .footer-links a {
+            color: var(--slate-400);
+            text-decoration: none;
+            font-size: var(--text-sm);
+            transition: color 0.2s;
+        }
+        
+        .footer-links a:hover {
+            color: var(--slate-200);
+        }
+        
+        .footer-bottom {
+            text-align: center;
+            padding-top: var(--space-8);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            color: var(--slate-500);
+            font-size: var(--text-sm);
+        }
+        
+        /* Icon styles */
+        .icon {
+            width: 24px;
+            height: 24px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .nav-hamburger {
+                display: flex;
+            }
+            
+            .hero {
+                padding-top: 100px;
+                padding-bottom: var(--space-12);
+            }
+            
+            .hero-content {
+                grid-template-columns: 1fr;
+                gap: var(--space-4);
+            }
+            
+            .hero-text {
+                max-width: 100%;
+            }
+            
+            .hero-title {
+                font-size: var(--text-4xl);
+            }
+            
+            .hero-subtitle {
+                font-size: var(--text-lg);
+                margin-bottom: var(--space-6);
+            }
+            
+            .hero-cta {
+                flex-direction: column;
+            }
+            
+            .hero-cta .btn {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .hero-visual-container {
+                height: 350px;
+            }
+            
+            .hexagon-network {
+                max-width: 100%;
+            }
+            
+            .agent-preview-card {
+                display: none;
+            }
+            
+            .section {
+                padding: var(--space-12) 0;
+            }
+            
+            .section-header {
+                margin-bottom: var(--space-8);
+            }
+            
+            .section-title {
+                font-size: var(--text-3xl);
+            }
+            
+            .agent-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .steps-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .footer-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Focus styles for accessibility */
+        a:focus, button:focus {
+            outline: 2px solid var(--blue-500);
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav>
+        <div class="nav-container">
+            <a href="#" class="nav-logo" aria-label="AIHiveHQ Home">AIHiveHQ</a>
+            
+            <div class="nav-links">
+                <a href="#agents">Explore Agents</a>
+                <a href="#how-it-works">How It Works</a>
+                <a href="#about">About</a>
+                <a href="#" class="nav-cta" title="Coming soon" onclick="return false;">Sign In</a>
+            </div>
+            
+            <button class="nav-hamburger" aria-label="Toggle navigation menu" onclick="toggleMobileNav()">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+        
+        <div class="nav-mobile" id="mobileNav">
+            <a href="#agents">Explore Agents</a>
+            <a href="#how-it-works">How It Works</a>
+            <a href="#about">About</a>
+            <a href="#" class="nav-cta" style="text-align: center;" title="Coming soon" onclick="return false;">Sign In</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-content">
+                <!-- Hero Text (Left) -->
+                <div class="hero-text">
+                    <h1 class="hero-title">
+                        <span class="hero-title-line">Your AI Workforce.</span>
+                        <span class="hero-title-line">One Platform.</span>
+                    </h1>
+                    <p class="hero-subtitle">Discover specialized AI agents to help you learn, create, analyze, and grow.</p>
+                    
+                    <div class="hero-cta">
+                        <a href="#agents" class="btn btn-primary">
+                            Explore AI Agents
+                            <svg class="icon" viewBox="0 0 24 24">
+                                <line x1="5" y1="12" x2="19" y2="12"></line>
+                                <polyline points="12 5 19 12 12 19"></polyline>
+                            </svg>
+                        </a>
+                        <a href="https://aihive-coach.onrender.com" class="btn btn-secondary">
+                            Try AIHive Coach
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Hero Visual (Right) -->
+                <div class="hero-visual-container">
+                    <div class="hero-visual-glow"></div>
+                    <svg class="hexagon-network" viewBox="0 0 550 500" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Central hexagon (larger) -->
+                        <g id="center-hex" transform="translate(275, 250)">
+                            <path d="M 0,-50 L 43.3,-25 L 43.3,25 L 0,50 L -43.3,25 L -43.3,-25 Z" 
+                                  fill="rgba(37, 99, 235, 0.25)" 
+                                  stroke="#2563eb" 
+                                  stroke-width="2.5"/>
+                            <circle cx="0" cy="0" r="10" fill="#2563eb">
+                                <animate attributeName="r" values="10;14;10" dur="2s" repeatCount="indefinite"/>
+                            </circle>
+                        </g>
+                        
+                        <!-- Surrounding hexagons with connections -->
+                        <!-- Top -->
+                        <g id="hex-top" transform="translate(275, 130)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(124, 58, 237, 0.2)" 
+                                  stroke="#7c3aed" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#7c3aed"/>
+                        </g>
+                        <line x1="275" y1="200" x2="275" y2="165" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="1s" repeatCount="indefinite"/>
+                        </line>
+                        
+                        <!-- Top Right -->
+                        <g id="hex-tr" transform="translate(390, 190)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(6, 182, 212, 0.2)" 
+                                  stroke="#06b6d4" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#06b6d4"/>
+                        </g>
+                        <line x1="318" y1="225" x2="360" y2="207" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="1.2s" repeatCount="indefinite"/>
+                        </line>
+                        
+                        <!-- Bottom Right -->
+                        <g id="hex-br" transform="translate(390, 310)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(139, 92, 246, 0.2)" 
+                                  stroke="#8b5cf6" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#8b5cf6"/>
+                        </g>
+                        <line x1="318" y1="275" x2="360" y2="293" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="1.4s" repeatCount="indefinite"/>
+                        </line>
+                        
+                        <!-- Bottom -->
+                        <g id="hex-bottom" transform="translate(275, 370)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(124, 58, 237, 0.2)" 
+                                  stroke="#7c3aed" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#7c3aed"/>
+                        </g>
+                        <line x1="275" y1="300" x2="275" y2="335" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="1.6s" repeatCount="indefinite"/>
+                        </line>
+                        
+                        <!-- Bottom Left -->
+                        <g id="hex-bl" transform="translate(160, 310)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(168, 85, 247, 0.2)" 
+                                  stroke="#a855f7" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#a855f7"/>
+                        </g>
+                        <line x1="232" y1="275" x2="190" y2="293" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="1.8s" repeatCount="indefinite"/>
+                        </line>
+                        
+                        <!-- Top Left -->
+                        <g id="hex-tl" transform="translate(160, 190)">
+                            <path d="M 0,-35 L 30.31,-17.5 L 30.31,17.5 L 0,35 L -30.31,17.5 L -30.31,-17.5 Z" 
+                                  fill="rgba(59, 130, 246, 0.2)" 
+                                  stroke="#3b82f6" 
+                                  stroke-width="2"/>
+                            <circle cx="0" cy="0" r="7" fill="#3b82f6"/>
+                        </g>
+                        <line x1="232" y1="225" x2="190" y2="207" stroke="rgba(37, 99, 235, 0.4)" stroke-width="2" stroke-dasharray="4,4">
+                            <animate attributeName="stroke-dashoffset" values="0;8" dur="2s" repeatCount="indefinite"/>
+                        </line>
+                    </svg>
+                    
+                    <!-- Decorative Agent Preview Card -->
+                    <div class="agent-preview-card">
+                        <div class="agent-preview-header">
+                            <div class="agent-preview-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white" stroke-width="2">
+                                    <circle cx="12" cy="8" r="3"></circle>
+                                    <path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"></path>
+                                </svg>
+                            </div>
+                            <span class="agent-preview-name">AIHive Coach</span>
+                        </div>
+                        <p class="agent-preview-message">Let's explore what's on your mind today. What would you like to work on?</p>
+                        <div class="agent-preview-status">
+                            <span class="agent-preview-pulse"></span>
+                            <span>Demo</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Agent Cards Section -->
+    <section class="section" id="agents">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">AI Agent Marketplace</h2>
+                <p class="section-description">Specialized AI agents designed to augment your capabilities across different domains</p>
+            </div>
+            
+            <div class="agent-grid">
+                <!-- AIHive Coach -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">AIHive Coach</h3>
+                        </div>
+                        <span class="badge badge-demo">Demo</span>
+                    </div>
+                    <p class="agent-description">Personal development coach that helps you think clearly, challenge assumptions, and turn insights into actionable plans.</p>
+                    <div class="agent-action">
+                        <a href="https://aihive-coach.onrender.com" class="btn btn-primary btn-agent">Try Demo</a>
+                    </div>
+                </div>
+                
+                <!-- AIHive Tutor -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+                                    <circle cx="12" cy="12" r="2"/>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">AIHive Tutor</h3>
+                        </div>
+                        <span class="badge badge-soon">Coming Soon</span>
+                    </div>
+                    <p class="agent-description">Personalized learning companion that adapts to your pace, explains complex concepts, and reinforces understanding through practice.</p>
+                    <div class="agent-action">
+                        <button class="btn btn-secondary btn-agent" disabled>Coming Soon</button>
+                    </div>
+                </div>
+                
+                <!-- Finance Agent -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <line x1="12" y1="1" x2="12" y2="23"></line>
+                                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">Finance Agent</h3>
+                        </div>
+                        <span class="badge badge-soon">Coming Soon</span>
+                    </div>
+                    <p class="agent-description">Organizes budgets and spending insights so you can plan with clarity.</p>
+                    <div class="agent-action">
+                        <button class="btn btn-secondary btn-agent" disabled>Coming Soon</button>
+                    </div>
+                </div>
+                
+                <!-- Developer Agent -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">Developer Agent</h3>
+                        </div>
+                        <span class="badge badge-soon">Coming Soon</span>
+                    </div>
+                    <p class="agent-description">Code assistant that provides architecture guidance, reviews code quality, and helps debug complex technical challenges.</p>
+                    <div class="agent-action">
+                        <button class="btn btn-secondary btn-agent" disabled>Coming Soon</button>
+                    </div>
+                </div>
+                
+                <!-- Marketing Agent -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <polygon points="10 8 16 12 10 16 10 8"></polygon>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">Marketing Agent</h3>
+                        </div>
+                        <span class="badge badge-soon">Coming Soon</span>
+                    </div>
+                    <p class="agent-description">Marketing strategist that analyzes campaigns, optimizes content, and provides data-driven insights for growth.</p>
+                    <div class="agent-action">
+                        <button class="btn btn-secondary btn-agent" disabled>Coming Soon</button>
+                    </div>
+                </div>
+                
+                <!-- AI Workforce -->
+                <div class="agent-card">
+                    <div class="agent-card-header">
+                        <div>
+                            <div class="agent-icon">
+                                <svg class="icon" viewBox="0 0 24 24" stroke="white">
+                                    <circle cx="12" cy="8" r="3"></circle>
+                                    <circle cx="6" cy="16" r="2"></circle>
+                                    <circle cx="18" cy="16" r="2"></circle>
+                                    <line x1="12" y1="11" x2="12" y2="13"></line>
+                                    <line x1="12" y1="13" x2="6" y2="14"></line>
+                                    <line x1="12" y1="13" x2="18" y2="14"></line>
+                                </svg>
+                            </div>
+                            <h3 class="agent-title">AI Workforce</h3>
+                        </div>
+                        <span class="badge badge-future">Future Vision</span>
+                    </div>
+                    <p class="agent-description">Coordinated multi-agent system where specialized AI agents collaborate to handle complex business workflows end-to-end.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="section how-it-works" id="how-it-works">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">How It Works</h2>
+                <p class="section-description">Three simple steps to augment your capabilities with AI</p>
+            </div>
+            
+            <div class="steps-grid">
+                <div class="step">
+                    <div class="step-icon">
+                        <svg class="icon" viewBox="0 0 24 24" stroke="white" stroke-width="2.5">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                    </div>
+                    <h3 class="step-title">Discover</h3>
+                    <p class="step-description">Browse our marketplace of specialized AI agents, each designed to excel in specific domains and tasks.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-icon">
+                        <svg class="icon" viewBox="0 0 24 24" stroke="white" stroke-width="2.5">
+                            <polyline points="9 11 12 14 22 4"></polyline>
+                            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                        </svg>
+                    </div>
+                    <h3 class="step-title">Delegate</h3>
+                    <p class="step-description">Choose the right agent for your needs and delegate tasks that benefit from AI-powered assistance and analysis.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-icon">
+                        <svg class="icon" viewBox="0 0 24 24" stroke="white" stroke-width="2.5">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                    </div>
+                    <h3 class="step-title">Achieve</h3>
+                    <p class="step-description">Focus on high-value work while your AI agents handle research, analysis, planning, and execution support.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why AIHiveHQ -->
+    <section class="section why-section">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">Why AIHiveHQ</h2>
+                <p class="section-description">Practical AI for real-world tasks</p>
+            </div>
+            
+            <div class="why-list">
+                <div class="why-item">
+                    <h3 class="why-item-title">Specialized Expertise</h3>
+                    <p class="why-item-description">Each agent is purpose-built for specific domains, delivering expert-level assistance where you need it most.</p>
+                </div>
+                
+                <div class="why-item">
+                    <h3 class="why-item-title">One Platform</h3>
+                    <p class="why-item-description">Access your entire AI workforce from a single unified platform, with seamless integration across all agents.</p>
+                </div>
+                
+                <div class="why-item">
+                    <h3 class="why-item-title">Practical Focus</h3>
+                    <p class="why-item-description">Built for real tasks, not demos. Our agents solve actual problems and deliver tangible value from day one.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Founder Section -->
+    <section class="section founder-section" id="about">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">About AIHiveHQ</h2>
+            </div>
+            
+            <div class="founder-content">
+                <h3 class="founder-name">Rungnapa Mukdasanit</h3>
+                <p class="founder-title">Founder</p>
+                <p class="founder-bio">
+                    AIHiveHQ is building practical AI tools for personal and professional growth. 
+                    Our mission is to help people think clearly, act confidently, and grow daily through 
+                    specialized AI agents that augment human capabilities rather than replace them.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>Product</h4>
+                    <div class="footer-links">
+                        <a href="#agents">Explore Agents</a>
+                        <a href="https://aihive-coach.onrender.com">AIHive Coach</a>
+                        <a href="#how-it-works">How It Works</a>
+                    </div>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Company</h4>
+                    <div class="footer-links">
+                        <a href="#about">About</a>
+                        <a href="#about">Founder</a>
+                    </div>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Legal</h4>
+                    <div class="footer-links">
+                        <a href="#">Privacy Policy</a>
+                        <a href="#">Terms of Service</a>
+                    </div>
+                </div>
+                
+                <div class="footer-section">
+                    <h4>Connect</h4>
+                    <div class="footer-links">
+                        <a href="#">Contact</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p>&copy; 2026 AIHiveHQ. All rights reserved.</p>
+                <p style="margin-top: 0.5rem;">Founded by Rungnapa Mukdasanit</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Mobile navigation toggle
+        function toggleMobileNav() {
+            const mobileNav = document.getElementById('mobileNav');
+            mobileNav.classList.toggle('active');
+        }
+        
+        // Close mobile nav when clicking a link
+        document.querySelectorAll('.nav-mobile a').forEach(link => {
+            link.addEventListener('click', () => {
+                document.getElementById('mobileNav').classList.remove('active');
+            });
+        });
+        
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -428,9 +428,15 @@
         
         .agent-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: var(--space-6);
             margin-bottom: var(--space-12);
+        }
+        
+        @media (max-width: 1024px) and (min-width: 769px) {
+            .agent-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
         
         .agent-card {
@@ -473,6 +479,7 @@
             font-weight: 600;
             color: var(--slate-50);
             margin-bottom: var(--space-3);
+            white-space: nowrap;
         }
         
         .agent-description {
@@ -715,7 +722,7 @@
             
             .hero-content {
                 grid-template-columns: 1fr;
-                gap: var(--space-8);
+                gap: var(--space-4);
             }
             
             .hero-text {
@@ -749,9 +756,7 @@
             }
             
             .agent-preview-card {
-                right: -20px;
-                width: 200px;
-                padding: var(--space-3);
+                display: none;
             }
             
             .section {
@@ -796,7 +801,7 @@
                 <a href="#agents">Explore Agents</a>
                 <a href="#how-it-works">How It Works</a>
                 <a href="#about">About</a>
-                <a href="#" class="nav-cta">Sign In</a>
+                <a href="#" class="nav-cta" title="Coming soon" onclick="return false;">Sign In</a>
             </div>
             
             <button class="nav-hamburger" aria-label="Toggle navigation menu" onclick="toggleMobileNav()">
@@ -810,7 +815,7 @@
             <a href="#agents">Explore Agents</a>
             <a href="#how-it-works">How It Works</a>
             <a href="#about">About</a>
-            <a href="#" class="nav-cta" style="text-align: center;">Sign In</a>
+            <a href="#" class="nav-cta" style="text-align: center;" title="Coming soon" onclick="return false;">Sign In</a>
         </div>
     </nav>
 
@@ -943,7 +948,7 @@
                         <p class="agent-preview-message">Let's explore what's on your mind today. What would you like to work on?</p>
                         <div class="agent-preview-status">
                             <span class="agent-preview-pulse"></span>
-                            <span>Active</span>
+                            <span>Demo</span>
                         </div>
                     </div>
                 </div>
