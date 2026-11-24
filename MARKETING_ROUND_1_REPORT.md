@@ -261,13 +261,112 @@ streamlit run app.py
 
 ---
 
+## Round 1.1: Screenshot Verification & E2E Test
+
+**Date:** November 24, 2026  
+**Issue:** Original screenshots didn't show claimed content (Streamlit scrolling issue)  
+**Budget:** ~$0.15 USD additional
+
+### Problem Identified
+
+Reviewer found that 3 of 4 screenshots were incorrect:
+- `marketing_desktop_result.png` showed only form, not generated results
+- `marketing_mobile_result.png` showed wrong page (Workforce hub)  
+- `marketing_workforce_hub.png` didn't show Marketing card with Demo badge
+
+**Root cause:** Playwright full-page screenshots only captured viewport, not Streamlit's scrollable container content.
+
+### Solution
+
+1. **Used tall viewports** (2400px height) to capture full content without scrolling
+2. **Fixed navigation** for mobile (clicked workforce hub card instead of struggling with sidebar)
+3. **Added E2E test** (`test_e2e_marketing.py`) that verifies campaign generation produces results with correct content
+4. **Re-captured all screenshots** with proper content verification
+
+### New Screenshots (Verified)
+
+#### 1. Desktop Brief Form
+**File:** `marketing_desktop_brief_form.png`  
+**Size:** 1280×800 pixels (71.1 KB)  
+**Shows:** Campaign brief input form with Product/Service, Target Audience, Campaign Goal dropdown, Primary Channel dropdown, and Draft Copy textarea. All fields empty and ready for input.
+
+#### 2. Desktop Result
+**File:** `marketing_desktop_result.png`  
+**Size:** 1280×2400 pixels (228.5 KB)  
+**Shows:** Complete generated campaign analysis including:
+- **Campaign Outline** with Objective, Target Audience, Primary Channel, Key Message Strategy, Channel-Specific Plan, and Call to Action
+- **Content Checklist** with computed metrics: Word Count (25), Characters (215), Hashtags (3), Emojis (1), Has CTA (⚠️ No), Has Link (✅ Yes), length assessment, detected hashtags (#CareerGrowth #AICoaching #PersonalDevelopment)
+- **Caption Variants** with 3 template examples
+- **Metrics to Track** with goal-specific recommendations (Impressions, Engagement Rate, Brand Mentions, etc.)
+
+#### 3. Mobile Result
+**File:** `marketing_mobile_result.png`  
+**Size:** 390×2400 pixels (125.0 KB)  
+**Shows:** Mobile-responsive view of Marketing Agent page with generated campaign analysis, showing all same sections as desktop in narrower layout. Form fields and result sections are properly formatted for mobile viewport.
+
+#### 4. Workforce Hub
+**File:** `marketing_workforce_hub.png`  
+**Size:** 1280×2400 pixels (140.5 KB)  
+**Shows:** AIHive Workforce hub with 5 agent cards displayed. Marketing Agent card is visible with:
+- "📢 Marketing Agent" title
+- Role description: "Marketing strategist that analyzes campaigns..."
+- **"✅ Demo" badge** clearly visible (green background)
+- "🚀 Open Marketing Agent" button (primary blue style)
+
+All cards show correct status badges (3 Demo agents, 2 Coming Soon).
+
+### Test Results (Round 1.1)
+
+**Non-E2E Tests:** 99 passed, 4 skipped  
+**E2E Tests Available:** 24 total (including new marketing E2E test)
+
+**Marketing Tests Breakdown:**
+- `test_marketing_ai.py`: 10 tests (unit tests for AI logic)
+- `test_marketing_database.py`: 7 tests (database isolation & privacy)
+- `test_e2e_marketing.py`: **1 NEW E2E test** (campaign generation verification)
+
+**Total Marketing Tests:** 18 (17 unit + 1 E2E)
+
+### E2E Test Verification
+
+The new `test_e2e_marketing.py` test:
+- Loads the Marketing Agent page
+- Fills campaign brief form (Product: "AIHive Coach", Audience: "Professionals seeking personal growth", Goal: "Awareness", Channel: "LinkedIn", with draft copy)
+- Clicks "Generate Campaign Analysis"
+- **Asserts all result sections appear:**
+  - 📊 Campaign Analysis
+  - 🎯 Campaign Outline  
+  - ✅ Content Checklist
+  - 💬 Caption Variants
+  - 📈 Metrics to Track
+- **Verifies actual content** (not just headings):
+  - "Objective:" in outline
+  - "Word Count" in checklist
+  - "Variant" in caption section
+  - User's product name in results
+  - User's audience description in results
+
+**Result:** ✅ Test passes - campaign generation produces correct, complete results
+
+### Files Modified
+
+1. `marketing/tests/test_e2e_marketing.py` - New E2E test  
+2. `marketing/tests/test_e2e_marketing_capture.py` - Screenshot capture script (not run in test suite)
+3. `marketing_desktop_brief_form.png` - Re-captured (71.1 KB)
+4. `marketing_desktop_result.png` - **Re-captured with full content** (228.5 KB)
+5. `marketing_mobile_result.png` - **Re-captured correctly** (125.0 KB)
+6. `marketing_workforce_hub.png` - **Re-captured with Marketing card visible** (140.5 KB)
+
+---
+
 ## Conclusion
 
 The Marketing Agent MVP is **complete and ready for review**. It demonstrates:
 - A working demo agent integrated into the AIHiveHQ workforce platform
 - Ethical, template-based content generation (no fabricated data)
 - Proper user isolation and privacy controls
-- Comprehensive test coverage
+- Comprehensive test coverage (99 passed non-E2E + 1 E2E test)
+- **Verified screenshots** showing actual functionality (Round 1.1)
 - Clear "Demo" labeling (not misleading users)
 
 **No merge, no deploy, no production changes** per standing instructions.
@@ -275,5 +374,5 @@ The Marketing Agent MVP is **complete and ready for review**. It demonstrates:
 ---
 
 **Report Author:** Cloud Agent (Claude Sonnet 4.5)  
-**Review Status:** Ready for PR  
+**Review Status:** Ready for PR (Round 1.1 completed)  
 **Deployment Status:** Not deployed (draft PR only)
