@@ -21,10 +21,11 @@ def streamlit_app():
     env["DATABASE_PATH"] = "test_e2e.db"
     
     # Start Streamlit in background
-    # Run from the aihive_coach directory
+    # Use absolute path to aihive_coach/app.py
     app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app_path = os.path.join(app_dir, "app.py")
     process = subprocess.Popen(
-        ["streamlit", "run", "app.py", "--server.port", str(STREAMLIT_PORT), 
+        ["streamlit", "run", app_path, "--server.port", str(STREAMLIT_PORT), 
          "--server.headless", "true"],
         cwd=app_dir,
         env=env,
