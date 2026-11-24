@@ -90,8 +90,9 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         page.goto(BASE_URL, timeout=30000)
         time.sleep(3)
         
-        # On mobile, navigate via homepage button
-        page.get_by_role("button", name="Launch Tutor →").click()
+        # On mobile, navigate via sidebar button
+        # Open sidebar on mobile if collapsed
+        page.get_by_role("button", name="📚 Start Learning").click()
         time.sleep(3)
         
         # Select Photosynthesis topic
