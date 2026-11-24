@@ -1,8 +1,10 @@
 {
   "arm_mapping": {
-    "Arm_A_AIHive": "X",
-    "Arm_B_Generic": "Y"
+    "Arm_A1_Skill": "X",
+    "Arm_A2_Full": "Y",
+    "Arm_B_Generic": "Z"
   },
   "random_seed": 42,
-  "created_at": "2026-11-24T06:23:14.397218"
+  "repeats": 1,
+  "created_at": "2026-11-24T06:31:24.421615"
 }

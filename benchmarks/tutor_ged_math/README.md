@@ -199,11 +199,29 @@ Actual learning requires:
 ## Pricing Information
 
 Prices verified from official OpenAI pricing page on 2026-11-24:
-- **gpt-4o-mini:** $0.150 per 1M input tokens, $0.600 per 1M output tokens
-- **Source:** https://openai.com/api/pricing/
+- **gpt-4o-mini:** $0.15 per 1M input tokens, $0.60 per 1M output tokens  
+- **Source:** https://platform.openai.com/docs/pricing
+- **Verified by:** Founder's assistant (Asia/Bangkok timezone)
 
-Estimated cost for full benchmark (20 lessons × 2 arms):
-- ~$0.10 - $0.20 total (assuming ~400 tokens avg per turn)
+## Cost Estimate (Worst-Case Upper Bound)
+
+For **A1 + A2 + B** (3 arms, 20 lessons each):
+
+**Repeats = 1 (60 lessons total):**
+- Input: 26,050 tokens (measured with full history)
+- Output: 108,000 tokens (sum of all max_tokens)
+- **Cost: $0.07**
+
+**Repeats = 3 (180 lessons total):**
+- Input: 78,150 tokens
+- Output: 324,000 tokens
+- **Cost: $0.21**
+
+**Method:**
+- Output = sum of max_tokens for all calls (worst case)
+- Input = measured prompt tokens including system prompts and history
+- History sized as if every previous reply used full max_tokens
+- Uses verified gpt-4o-mini prices ($0.15/$0.60 per 1M)
 
 ## License
 

@@ -1,41 +1,61 @@
 arm,question_id,input_tokens,output_tokens,latency_ms,cost_usd,price_source,price_verified
-Arm_A_AIHive,GED-Q001,89,347,0,0.00022155,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q002,93,347,0,0.00022214999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q003,101,347,0,0.00022334999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q004,94,347,0,0.00022229999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q005,94,347,0,0.00022229999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q006,97,347,0,0.00022275,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q007,96,365,0,0.0002334,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q008,94,347,0,0.00022229999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q009,89,347,0,0.00022155,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q010,101,347,0,0.00022334999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q011,88,347,0,0.0002214,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q012,89,347,0,0.00022155,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q013,88,347,0,0.0002214,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q014,105,347,0,0.00022395,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q015,93,347,0,0.00022214999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q016,101,347,0,0.00022334999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q017,86,347,0,0.0002211,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q018,92,347,0,0.000222,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q019,101,347,0,0.00022334999999999998,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_A_AIHive,GED-Q020,90,347,0,0.0002217,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q001,475,400,0,0.00031125,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q002,568,650,0,0.0004752,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q003,561,900,0,0.00062415,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q004,456,1130,0,0.0007463999999999999,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q005,600,1330,0,0.000888,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q006,507,1440,0,0.00094005,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q007,658,1540,0,0.0010227,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q008,515,1640,0,0.00106125,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q009,520,1740,0,0.001122,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q010,593,1800,0,0.00116895,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q011,501,1800,0,0.0011551500000000002,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q012,469,1800,0,0.0011503499999999999,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q013,496,1800,0,0.0011544,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q014,576,1800,0,0.0011664000000000002,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q015,607,1800,0,0.0011710499999999999,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q016,709,1800,0,0.0011863499999999999,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q017,484,1800,0,0.0011526,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q018,551,1800,0,0.00116265,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q019,488,1800,0,0.0011532,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
-Arm_B_Generic,GED-Q020,480,1800,0,0.001152,https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY),False
+Arm_A1_Skill,GED-Q001,445,400,0,0.00030675,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q002,460,650,0,0.000459,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q003,492,900,0,0.0006138,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q004,465,1130,0,0.00074775,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q005,465,1330,0,0.00086775,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q006,476,1440,0,0.0009354,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q007,470,1540,0,0.0009945,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q008,465,1640,0,0.00105375,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q009,445,1740,0,0.00111075,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q010,492,1800,0,0.0011538,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q011,440,1800,0,0.001146,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q012,445,1800,0,0.00114675,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q013,440,1800,0,0.001146,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q014,505,1800,0,0.00115575,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q015,460,1800,0,0.001149,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q016,492,1800,0,0.0011538,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q017,433,1800,0,0.00114495,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q018,455,1800,0,0.00114825,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q019,492,1800,0,0.0011538,https://platform.openai.com/docs/pricing,True
+Arm_A1_Skill,GED-Q020,449,1800,0,0.0011473499999999999,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q001,510,1800,0,0.0011565,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q002,603,1800,0,0.00117045,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q003,595,1800,0,0.00116925,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q004,491,1800,0,0.00115365,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q005,635,1800,0,0.00117525,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q006,541,1800,0,0.0011611500000000001,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q007,693,1800,0,0.00118395,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q008,550,1800,0,0.0011625,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q009,555,1800,0,0.00116325,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q010,628,1800,0,0.0011742,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q011,538,1800,0,0.0011607,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q012,504,1800,0,0.0011556,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q013,531,1800,0,0.0011596500000000001,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q014,610,1800,0,0.0011715,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q015,643,1800,0,0.0011764500000000001,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q016,745,1800,0,0.00119175,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q017,518,1800,0,0.0011577,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q018,585,1800,0,0.00116775,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q019,525,1800,0,0.00115875,https://platform.openai.com/docs/pricing,True
+Arm_A2_Full,GED-Q020,514,1800,0,0.0011570999999999999,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q001,225,1800,0,0.00111375,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q002,279,1800,0,0.00112185,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q003,272,1800,0,0.0011208,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q004,212,1800,0,0.0011118,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q005,298,1800,0,0.0011247,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q006,241,1800,0,0.00111615,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q007,332,1800,0,0.0011298,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q008,247,1800,0,0.0011170499999999999,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q009,252,1800,0,0.0011178,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q010,291,1800,0,0.0011236500000000001,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q011,241,1800,0,0.00111615,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q012,221,1800,0,0.00111315,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q013,238,1800,0,0.0011157,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q014,280,1800,0,0.001122,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q015,303,1800,0,0.00112545,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q016,361,1800,0,0.00113415,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q017,232,1800,0,0.0011148,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q018,269,1800,0,0.00112035,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q019,228,1800,0,0.0011142,https://platform.openai.com/docs/pricing,True
+Arm_B_Generic,GED-Q020,228,1800,0,0.0011142,https://platform.openai.com/docs/pricing,True

@@ -218,6 +218,32 @@ This ensures scores cannot be adjusted after seeing results.
 
 ---
 
+## 8. Cost Estimate (Worst-Case Upper Bound)
+
+Based on mock run with A1 + A2 + B (3 arms, 20 lessons each):
+
+### Repeats = 1 (60 lessons total)
+- Input tokens: 26,050 (measured with full history)
+- Output tokens: 108,000 (sum of all max_tokens)
+- **Cost: $0.07**
+
+### Repeats = 3 (180 lessons total)
+- Input tokens: 78,150
+- Output tokens: 324,000
+- **Cost: $0.21**
+
+**Method:**
+- Output = sum of max_tokens for all calls (worst case)
+  - A arms: 500+200+500+300+300 = 1800 per lesson
+  - B arm: 500+700+600 = 1800 per lesson
+- Input = measured prompt tokens including system prompts and conversation history
+- History sized as if every previous reply used full max_tokens
+- Verified prices: $0.15/$0.60 per 1M tokens (gpt-4o-mini)
+
+**Budget check:** Runner pre-flight check uses this upper bound.
+
+---
+
 ## Conclusion
 
 **All software tests pass.** The benchmark harness is ready for use:
