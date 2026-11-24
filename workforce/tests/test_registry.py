@@ -100,10 +100,11 @@ def test_coming_soon_agents():
         "All 'Coming soon' agents should be disabled"
     
     # Check specific coming soon agents
-    marketing = get_agent_by_id("marketing")
-    assert marketing is not None, "Marketing agent should exist"
-    assert marketing.status == "Coming soon"
-    assert marketing.enabled is False
+    # Note: Marketing is now Demo (enabled)
+    # marketing = get_agent_by_id("marketing")
+    # assert marketing is not None, "Marketing agent should exist"
+    # assert marketing.status == "Coming soon"
+    # assert marketing.enabled is False
     
     developer = get_agent_by_id("developer")
     assert developer is not None, "Developer agent should exist"

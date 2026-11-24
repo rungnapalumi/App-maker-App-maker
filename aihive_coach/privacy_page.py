@@ -5,6 +5,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from aihive_coach.database import db
 from tutor.database import tutor_db
+from marketing.database import marketing_db
 
 
 def show_privacy_notice():
@@ -27,6 +28,11 @@ def show_privacy_notice():
     - Study Sessions: Topics, levels, lesson conversations
     - Session Summaries: What you learned, practice questions
     - Progress Stats: Questions answered correctly/incorrectly
+    
+    **AIHive Marketing Agent:**
+    - Campaigns: Campaign briefs, generated analyses
+    - Draft Content: Your draft copy (when provided)
+    - Campaign Output: Outlines, checklists, caption variants, metrics
     
     **Common:**
     - User ID: Anonymous browser-based identifier (no login required)
@@ -53,7 +59,7 @@ def show_privacy_notice():
     You can delete all your data (coaching sessions, action plans, and study sessions) from this device's anonymous ID.
     
     **This action:**
-    - ✅ Deletes all your coaching sessions, action plans, and study sessions
+    - ✅ Deletes all your coaching sessions, action plans, study sessions, and marketing campaigns
     - ✅ Cannot be undone
     - ✅ Only affects data from your current browser session
     - ❌ Does not affect data from other devices/browsers
@@ -68,7 +74,7 @@ def show_privacy_notice():
         st.error("""
         ⚠️ **Confirm Data Deletion**
         
-        This will permanently delete all your coaching sessions, action plans, and study sessions.
+        This will permanently delete all your coaching sessions, action plans, study sessions, and marketing campaigns.
         This action cannot be undone.
         """)
         
@@ -81,10 +87,12 @@ def show_privacy_notice():
                 deleted_sessions = db.delete_user_data(user_id, data_type="sessions")
                 deleted_plans = db.delete_user_data(user_id, data_type="action_plans")
                 deleted_study_sessions = tutor_db.delete_user_data(user_id)
+                deleted_campaigns = marketing_db.delete_user_data(user_id)
                 
                 st.session_state.show_delete_confirm = False
                 st.session_state.current_session = None
                 st.session_state.current_tutor_session_id = None
+                st.session_state.show_campaign_result = None
                 
                 st.success(f"""
                 ✅ **Data Deleted**
@@ -96,7 +104,10 @@ def show_privacy_notice():
                 **Tutor:**
                 - {deleted_study_sessions} study sessions removed
                 
-                You can start fresh by clicking "Start Coaching" or "Start Learning" in the sidebar.
+                **Marketing:**
+                - {deleted_campaigns} campaigns removed
+                
+                You can start fresh from the Workforce Hub.
                 """)
                 st.balloons()
         

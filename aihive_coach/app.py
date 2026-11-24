@@ -95,6 +95,17 @@ with st.sidebar:
         st.rerun()
     
     st.markdown("---")
+    st.markdown("### Marketing")
+    
+    if st.button("📢 Marketing Agent", use_container_width=True, key="nav_marketing"):
+        st.session_state.navigation = "Marketing Agent"
+        st.rerun()
+    
+    if st.button("📋 My Campaigns", use_container_width=True, key="nav_campaigns"):
+        st.session_state.navigation = "My Campaigns"
+        st.rerun()
+    
+    st.markdown("---")
     
     if st.button("🔒 Privacy & Data", use_container_width=True, key="nav_privacy"):
         st.session_state.navigation = "Privacy"
@@ -343,6 +354,28 @@ elif page == "My Study Sessions":
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
         from tutor.sessions_page import show_sessions_page
     show_sessions_page()
+elif page == "Marketing Agent":
+    # Marketing campaign page
+    try:
+        from marketing.campaign_page import show_campaign_page
+    except ImportError:
+        # Fallback: add parent to path
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        from marketing.campaign_page import show_campaign_page
+    show_campaign_page()
+elif page == "My Campaigns":
+    # Marketing campaigns list page
+    try:
+        from marketing.campaigns_list_page import show_campaigns_list_page
+    except ImportError:
+        # Fallback: add parent to path
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        from marketing.campaigns_list_page import show_campaigns_list_page
+    show_campaigns_list_page()
 elif page == "Privacy":
     from privacy_page import show_privacy_notice
     show_privacy_notice()
