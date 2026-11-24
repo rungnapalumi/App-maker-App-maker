@@ -136,8 +136,8 @@ def test_capture_desktop_screenshot(page: Page, app_url: str):
     page.set_viewport_size({"width": 1280, "height": 800})
     time.sleep(2)
     
-    # Capture screenshot
-    screenshot_path = Path(__file__).parent.parent.parent / "workforce_desktop_hub.png"
+    # Capture screenshot to temp directory (not git repo)
+    screenshot_path = Path("/tmp") / "workforce_desktop_hub.png"
     page.screenshot(path=str(screenshot_path), full_page=True)
     
     assert screenshot_path.exists()
@@ -154,8 +154,8 @@ def test_capture_mobile_screenshot(page: Page, app_url: str):
     page.set_viewport_size({"width": 390, "height": 844})
     time.sleep(2)
     
-    # Capture screenshot
-    screenshot_path = Path(__file__).parent.parent.parent / "workforce_mobile_hub.png"
+    # Capture screenshot to temp directory (not git repo)
+    screenshot_path = Path("/tmp") / "workforce_mobile_hub.png"
     page.screenshot(path=str(screenshot_path), full_page=True)
     
     assert screenshot_path.exists()
