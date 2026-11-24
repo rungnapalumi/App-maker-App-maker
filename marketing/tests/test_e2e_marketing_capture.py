@@ -62,8 +62,8 @@ def capture_screenshots():
         time.sleep(1)
         
         # Use role-based selectors to avoid help buttons
-        page.get_by_role("textbox", name="Product / Service").fill("AIHive Coach")
-        page.get_by_role("textbox", name="Target Audience").fill("Professionals seeking personal growth")
+        page.get_by_role("textbox", name="Product / Service").fill("EcoBottle")
+        page.get_by_role("textbox", name="Target Audience").fill("Environmentally conscious consumers")
         
         # Select goal - click to open dropdown and select option
         page.get_by_role("combobox", name="Campaign Goal").click()
@@ -71,13 +71,13 @@ def capture_screenshots():
         
         # Select channel
         page.get_by_role("combobox", name="Primary Channel").click()
-        page.get_by_text("LinkedIn", exact=True).click()
+        page.get_by_text("Instagram", exact=True).click()
         
         # Fill draft copy
         page.get_by_role("textbox", name="Draft Post / Ad Copy (Optional)").fill(
-            "Transform your career with AI-powered coaching! 🚀 Get personalized guidance, "
-            "actionable insights, and track your growth. Start your free trial today: "
-            "https://aihive.com #CareerGrowth #AICoaching #PersonalDevelopment"
+            "Stay hydrated sustainably! 🌱 Our reusable EcoBottle keeps drinks cold for 24 hours. "
+            "Join the zero-waste movement today. Shop now: https://ecobottle.example #EcoFriendly "
+            "#Sustainable #ZeroWaste"
         )
         
         # Submit the form - find the button with the generate text
@@ -124,18 +124,18 @@ def capture_screenshots():
         
         # Fill and submit form on mobile
         time.sleep(1)
-        page.get_by_role("textbox", name="Product / Service").fill("AIHive Coach")
-        page.get_by_role("textbox", name="Target Audience").fill("Professionals")
+        page.get_by_role("textbox", name="Product / Service").fill("EcoBottle")
+        page.get_by_role("textbox", name="Target Audience").fill("Eco-conscious shoppers")
         
         # Select goal and channel on mobile
         page.get_by_role("combobox", name="Campaign Goal").click()
-        page.get_by_text("Sign-ups", exact=True).click()
+        page.get_by_text("Sales", exact=True).click()
         
         page.get_by_role("combobox", name="Primary Channel").click()
-        page.get_by_text("Instagram", exact=True).click()
+        page.get_by_text("Facebook", exact=True).click()
         
         page.get_by_role("textbox", name="Draft Post / Ad Copy (Optional)").fill(
-            "Start your growth journey today! 🌱 #PersonalGrowth"
+            "Reduce plastic waste with EcoBottle! 🌍 Durable, stylish, sustainable. Order yours: https://ecobottle.example #ZeroWaste"
         )
         
         # Generate

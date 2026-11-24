@@ -83,21 +83,21 @@ def test_marketing_campaign_generation(streamlit_app):
         
         # Fill in the campaign brief form
         time.sleep(1)
-        page.get_by_role("textbox", name="Product / Service").fill("AIHive Coach")
-        page.get_by_role("textbox", name="Target Audience").fill("Professionals seeking personal growth")
+        page.get_by_role("textbox", name="Product / Service").fill("EcoBottle")
+        page.get_by_role("textbox", name="Target Audience").fill("Environmentally conscious consumers")
         
         # Select goal and channel
         page.get_by_role("combobox", name="Campaign Goal").click()
         page.get_by_text("Awareness", exact=True).click()
         
         page.get_by_role("combobox", name="Primary Channel").click()
-        page.get_by_text("LinkedIn", exact=True).click()
+        page.get_by_text("Instagram", exact=True).click()
         
         # Fill draft copy
         page.get_by_role("textbox", name="Draft Post / Ad Copy (Optional)").fill(
-            "Transform your career with AI-powered coaching! 🚀 Get personalized guidance, "
-            "actionable insights, and track your growth. Start your free trial today: "
-            "https://aihive.com #CareerGrowth #AICoaching #PersonalDevelopment"
+            "Stay hydrated sustainably! 🌱 Our reusable EcoBottle keeps drinks cold for 24 hours. "
+            "Join the zero-waste movement today. Shop now: https://ecobottle.example #EcoFriendly "
+            "#Sustainable #ZeroWaste"
         )
         
         # Submit the form
@@ -117,8 +117,8 @@ def test_marketing_campaign_generation(streamlit_app):
         assert "Objective:" in page_content, "Campaign outline should contain 'Objective:'"
         assert "Word Count" in page_content, "Content checklist should contain 'Word Count'"
         assert "Variant" in page_content, "Should show caption variants"
-        assert "AIHive Coach" in page_content, "Should include product name in results"
-        assert "Professionals seeking personal growth" in page_content, "Should include audience in results"
+        assert "EcoBottle" in page_content, "Should include product name in results"
+        assert "Environmentally conscious consumers" in page_content, "Should include audience in results"
         
         print("   ✓ Campaign generation verified - all sections present with correct content")
         

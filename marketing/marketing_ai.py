@@ -101,11 +101,12 @@ class MarketingAI:
     def _generate_cta(self, campaign: Campaign) -> str:
         """Generate appropriate call-to-action"""
         goal = campaign.goal.lower()
+        product = campaign.product_service
         
         cta_templates = {
             "awareness": [
                 "Learn More",
-                "Discover [Product]",
+                f"Discover {product}",
                 "Find Out How"
             ],
             "sign-ups": [

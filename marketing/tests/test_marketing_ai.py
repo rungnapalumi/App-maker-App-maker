@@ -268,5 +268,37 @@ def test_demo_mode_label_in_output():
     assert "Demo" in outline or "template" in outline.lower() or "rule-based" in outline.lower()
 
 
+def test_no_placeholder_leaks():
+    """
+    Ensure no placeholder patterns like [Product], [link], etc. appear in campaign outlines.
+    Test all goal x channel combinations (caption variants are intentionally templates).
+    Similar to tutor test for placeholder prevention.
+    """
+    goals = ["Awareness", "Sign-ups", "Sales"]
+    channels = ["Facebook", "Instagram", "LINE OA", "Email", "Twitter", "LinkedIn"]
+    
+    for goal in goals:
+        for channel in channels:
+            campaign = Campaign(
+                user_id="test_user",
+                product_service="EcoBottle",
+                target_audience="Environmentally conscious consumers",
+                goal=goal,
+                channel=channel,
+                draft_copy="Sample text with #hashtag and emoji 🌱 and link https://example.com"
+            )
+            
+            outline, checklist, variants, metrics = marketing_ai.generate_campaign_analysis(campaign)
+            
+            # Campaign outline should NOT contain square bracket placeholders
+            # (variants are templates so they're allowed to have them)
+            assert "[" not in outline or "]" not in outline, \
+                f"Campaign outline for {goal}/{channel} contains placeholder brackets: {outline}"
+            
+            # Specifically check the product name is properly substituted
+            assert "EcoBottle" in outline, \
+                f"Campaign outline for {goal}/{channel} should include product name 'EcoBottle'"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
