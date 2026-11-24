@@ -31,7 +31,8 @@ class BenchmarkRunner:
         output_dir: str,
         use_mock: bool = True,
         random_seed: int = 42,
-        rubric_commit_hash: str = "UNKNOWN"
+        rubric_commit_hash: str = "UNKNOWN",
+        repeats: int = 1
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -39,6 +40,7 @@ class BenchmarkRunner:
         self.use_mock = use_mock
         self.random_seed = random_seed
         self.rubric_commit_hash = rubric_commit_hash
+        self.repeats = repeats
         
         random.seed(random_seed)
     
@@ -46,20 +48,24 @@ class BenchmarkRunner:
         """
         Pre-estimate cost for the full benchmark.
         
-        Assumes:
-        - 20 questions × 3 turns per question
-        - ~200 tokens input per turn (question + context)
-        - ~400 tokens output per turn (explanation/response)
-        - 2 arms (Arm A and Arm B)
+        NOTE: Turn counts updated to reflect real implementation:
+        - Turn 1: 1 API call
+        - Turn 2: 2 API calls (process_answer + continue_lesson)
+        - Turn 3: 2 API calls (summary + practice questions)
+        Total: 5 API calls per question
+        
+        Accounts for --repeats: each lesson run N times.
         """
         questions_per_arm = 20
-        turns_per_question = 3
-        avg_input_tokens_per_turn = 200
-        avg_output_tokens_per_turn = 400
+        api_calls_per_question = 5  # Updated: 1 + 2 + 2
         
-        total_calls = questions_per_arm * turns_per_question
-        total_input_tokens = total_calls * avg_input_tokens_per_turn
-        total_output_tokens = total_calls * avg_output_tokens_per_turn
+        # Rough token estimates (will be updated after first mock run)
+        avg_input_tokens_per_call = 150  # Includes system prompts and history
+        avg_output_tokens_per_call = 200
+        
+        total_calls = questions_per_arm * api_calls_per_question * self.repeats
+        total_input_tokens = total_calls * avg_input_tokens_per_call
+        total_output_tokens = total_calls * avg_output_tokens_per_call
         
         cost_per_arm, source, verified = calculate_cost(
             model, total_input_tokens, total_output_tokens
@@ -68,14 +74,16 @@ class BenchmarkRunner:
         return {
             "model": model,
             "questions_per_arm": questions_per_arm,
-            "turns_per_question": turns_per_question,
+            "repeats": self.repeats,
+            "api_calls_per_question": api_calls_per_question,
             "total_api_calls_per_arm": total_calls,
             "estimated_input_tokens_per_arm": total_input_tokens,
             "estimated_output_tokens_per_arm": total_output_tokens,
             "estimated_cost_per_arm_usd": cost_per_arm,
             "estimated_cost_both_arms_usd": cost_per_arm * 2,
             "price_source": source,
-            "price_verified": verified
+            "price_verified": verified,
+            "note": "Estimates are rough; actual costs tracked from API response.usage"
         }
     
     def run_arm(
@@ -353,6 +361,13 @@ COST SAFETY:
         help="Git commit hash of rubric (for auditability)"
     )
     
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="Number of times to repeat each lesson (default 1). With temperature 0.7, one run is noisy."
+    )
+    
     args = parser.parse_args()
     
     # Safety check
@@ -404,8 +419,12 @@ COST SAFETY:
         output_dir=args.output_dir,
         use_mock=use_mock,
         random_seed=args.random_seed,
-        rubric_commit_hash=args.rubric_commit
+        rubric_commit_hash=args.rubric_commit,
+        repeats=args.repeats
     )
+    
+    if args.repeats > 1:
+        print(f"\nNote: Running {args.repeats} repeats per lesson (temperature 0.7 is noisy)\n")
     
     runner.run(include_arm_c=args.include_arm_c)
     

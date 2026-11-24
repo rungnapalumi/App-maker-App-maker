@@ -2,6 +2,10 @@
 Verification Tests for Answer Keys
 Independently compute answers and verify they match the keys.
 Verify misconceptions produce wrong answers that differ from correct answers.
+
+NOTE: Each test loads the question from the bank (Q1, Q2, etc.) and compares
+the independent computation against q.correct_answer and q.misconceptions[i].wrong_answer
+to catch any typos in the stored values.
 """
 
 import pytest
@@ -10,7 +14,10 @@ from decimal import Decimal
 import math
 from typing import List
 
-from benchmarks.tutor_ged_math.items.questions import ALL_QUESTIONS, MathQuestion
+from benchmarks.tutor_ged_math.items.questions import (
+    ALL_QUESTIONS, MathQuestion, Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10,
+    Q11, Q12, Q13, Q14, Q15, Q16, Q17, Q18, Q19, Q20
+)
 
 
 def parse_numeric_answer(answer_str: str) -> float:
@@ -45,13 +52,21 @@ def parse_numeric_answer(answer_str: str) -> float:
 
 def test_q001_decimal_multiplication():
     """Q001: Verify 3 × $2.45 = $7.35"""
+    # Load question from bank
+    from benchmarks.tutor_ged_math.items.questions import Q1
+    q = Q1
+    
+    # Independent computation
     expected = Decimal("3") * Decimal("2.45")
-    actual = Decimal("7.35")
-    assert expected == actual
+    
+    # Compare to stored answer
+    stored_answer = parse_numeric_answer(q.correct_answer)
+    assert expected == Decimal(str(stored_answer)), f"Computed {expected} != stored {stored_answer}"
     
     # Verify misconceptions are wrong
-    assert Decimal("4.90") != actual  # M1
-    assert Decimal("73.5") != actual  # M2
+    for m in q.misconceptions:
+        m_answer = parse_numeric_answer(m.wrong_answer)
+        assert Decimal(str(m_answer)) != expected, f"Misconception {m.id} answer equals correct answer!"
 
 
 def test_q002_percentage_discount():
@@ -428,3 +443,68 @@ def test_format_distribution():
     assert fill > 0, "No fill-in questions"
     
     print(f"\nFormat distribution: {mc} multiple choice, {fill} fill-in")
+
+
+def test_all_questions_load_from_bank():
+    """
+    Comprehensive test: Verify all questions can be loaded from the bank
+    and their stored answers match the question objects.
+    """
+    question_map = {
+        "GED-Q001": Q1, "GED-Q002": Q2, "GED-Q003": Q3, "GED-Q004": Q4,
+        "GED-Q005": Q5, "GED-Q006": Q6, "GED-Q007": Q7, "GED-Q008": Q8,
+        "GED-Q009": Q9, "GED-Q010": Q10, "GED-Q011": Q11, "GED-Q012": Q12,
+        "GED-Q013": Q13, "GED-Q014": Q14, "GED-Q015": Q15, "GED-Q016": Q16,
+        "GED-Q017": Q17, "GED-Q018": Q18, "GED-Q019": Q19, "GED-Q020": Q20
+    }
+    
+    for q_id, q_obj in question_map.items():
+        # Verify it's in ALL_QUESTIONS
+        found = any(q.id == q_id for q in ALL_QUESTIONS)
+        assert found, f"{q_id} not in ALL_QUESTIONS"
+        
+        # Verify the object matches
+        bank_q = next(q for q in ALL_QUESTIONS if q.id == q_id)
+        assert bank_q.correct_answer == q_obj.correct_answer, \
+            f"{q_id}: Bank answer != imported object answer"
+        assert len(bank_q.misconceptions) == len(q_obj.misconceptions), \
+            f"{q_id}: Misconception count mismatch"
+    
+    print(f"\n✓ All 20 questions successfully loaded from bank")
+
+
+def test_stored_answers_are_parseable():
+    """
+    Verify all stored correct_answer values can be parsed or are valid algebraic expressions.
+    """
+    for q in ALL_QUESTIONS:
+        # Try numeric parsing
+        try:
+            parsed = parse_numeric_answer(q.correct_answer)
+            assert isinstance(parsed, (int, float)), \
+                f"{q.id}: Parsed answer is not numeric"
+        except (ValueError, AssertionError):
+            # For algebraic questions, just check it's a string
+            assert isinstance(q.correct_answer, str) and len(q.correct_answer) > 0, \
+                f"{q.id}: Answer is not numeric and not a valid string"
+    
+    print(f"\n✓ All 20 correct answers are parseable (numeric or algebraic)")
+
+
+def test_stored_misconception_answers_are_parseable():
+    """
+    Verify all misconception wrong_answer values can be parsed or are valid algebraic expressions.
+    """
+    for q in ALL_QUESTIONS:
+        for m in q.misconceptions:
+            # Try numeric parsing
+            try:
+                parsed = parse_numeric_answer(m.wrong_answer)
+                assert isinstance(parsed, (int, float)), \
+                    f"{q.id} {m.id}: Parsed answer is not numeric"
+            except (ValueError, AssertionError):
+                # For algebraic misconceptions, just check it's a string
+                assert isinstance(m.wrong_answer, str) and len(m.wrong_answer) > 0, \
+                    f"{q.id} {m.id}: Answer is not numeric and not a valid string"
+    
+    print(f"\n✓ All misconception answers are parseable")

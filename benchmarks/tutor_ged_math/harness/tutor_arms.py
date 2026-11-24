@@ -3,6 +3,11 @@ Tutor Arms for Benchmark
 Arm A: AIHive Tutor (real implementation)
 Arm B: Generic Assistant (same model, generic prompt)
 Arm C: Scripted Demo (baseline, not AI)
+
+IMPORTANT LIMITATION:
+Arm A follows the real app flow where the Tutor never sees the specific
+question text. The app only sends topic + level to the AI. This is a
+fundamental design limitation documented in the reports.
 """
 
 import sys
@@ -19,12 +24,14 @@ from aihive_coach.config import config
 
 from benchmarks.tutor_ged_math.items.questions import MathQuestion, Misconception
 from benchmarks.tutor_ged_math.harness.lesson_protocol import format_question_for_tutor
+from benchmarks.tutor_ged_math.harness.token_counter import TokenCountingWrapper
 
 
 class MockOpenAIClient:
     """
     Mock OpenAI client for testing.
     Returns scripted responses without making API calls.
+    Mimics real API response structure including usage tracking.
     """
     
     def __init__(self):
@@ -35,32 +42,43 @@ class MockOpenAIClient:
             self.parent = parent
             
         def create(self, model, messages, temperature, max_tokens, **kwargs):
-            """Mock completion"""
+            """Mock completion with realistic token counts"""
             self.parent.call_count += 1
             
-            # Extract last user message
-            user_msg = ""
-            for msg in reversed(messages):
-                if msg["role"] == "user":
-                    user_msg = msg["content"]
-                    break
+            # Calculate realistic token estimates
+            # Count tokens in messages (rough: 1 token ≈ 0.75 words)
+            total_text = ""
+            for msg in messages:
+                total_text += msg.get("content", "")
+            
+            word_count = len(total_text.split())
+            prompt_tokens = int(word_count * 1.3)  # ~1.3 tokens per word
+            
+            # Mock response length based on max_tokens
+            completion_tokens = min(50 + self.parent.call_count * 10, max_tokens or 500)
             
             # Mock response
-            mock_response = f"[MOCK RESPONSE {self.parent.call_count}] This is a scripted response for testing. User asked: {user_msg[:50]}..."
+            mock_response = f"[MOCK RESPONSE {self.parent.call_count}] This is a scripted response for testing. Temperature={temperature}, max_tokens={max_tokens}."
+            
+            class MockUsage:
+                def __init__(self, prompt_tokens, completion_tokens):
+                    self.prompt_tokens = prompt_tokens
+                    self.completion_tokens = completion_tokens
+            
+            class MockMessage:
+                def __init__(self, content):
+                    self.content = content
             
             class MockChoice:
-                class MockMessage:
-                    content = mock_response
-                message = MockMessage()
+                def __init__(self, content):
+                    self.message = MockMessage(content)
             
             class MockResponse:
-                class MockUsage:
-                    prompt_tokens = 100
-                    completion_tokens = 50
-                usage = MockUsage()
-                choices = [MockChoice()]
+                def __init__(self, content, usage):
+                    self.choices = [MockChoice(content)]
+                    self.usage = usage
             
-            return MockResponse()
+            return MockResponse(mock_response, MockUsage(prompt_tokens, completion_tokens))
     
     @property
     def chat(self):
@@ -72,7 +90,10 @@ class MockOpenAIClient:
 class ArmA_AIHiveTutor:
     """
     Arm A: AIHive Tutor using real implementation.
-    Calls the actual Tutor functions from the app.
+    Follows the actual app flow from tutor/lesson_page.py.
+    
+    LIMITATION: The Tutor never sees the question text. It only receives
+    session.topic and session.level. This is how the real app works.
     """
     
     def __init__(self, openai_client=None):
@@ -82,46 +103,57 @@ class ArmA_AIHiveTutor:
                           creates real client. If mock client provided, uses it.
         """
         self.session: Optional[StudySession] = None
-        self.client = openai_client
         
-        # Create tutor with injected client for testing
+        # Create tutor with token-counting wrapper
         self.tutor = TutorAI()
         if openai_client and not self.tutor.is_demo:
-            self.tutor.client = openai_client
+            # Wrap client for token tracking
+            self.wrapped_client = TokenCountingWrapper(openai_client)
+            self.tutor.client = self.wrapped_client
+        else:
+            self.wrapped_client = None
     
     def start_new_lesson(self, question: MathQuestion) -> None:
-        """Start fresh session for question"""
+        """
+        Start fresh session for question.
+        
+        NOTE: Following real app behavior, we set topic to the skill name,
+        NOT the full question. The Tutor never sees the question text.
+        """
         self.session = StudySession(
             user_id="benchmark_user",
             topic=f"GED Math - {question.skill}",
             level="Intermediate"  # GED is roughly intermediate
         )
+        
+        # Reset token tracking for this lesson
+        if self.wrapped_client:
+            self.wrapped_client.reset_tracking()
     
     def turn_1_solve_and_explain(self, question: MathQuestion) -> Tuple[str, int, int, int]:
-        """Turn 1: Get tutor explanation"""
-        start_time = time.time()
+        """
+        Turn 1: Get tutor explanation.
         
-        # Add question to session
-        formatted_q = format_question_for_tutor(question)
-        self.session.add_message("user", formatted_q)
-        
-        # Get tutor response
+        LIMITATION: Following real app (lesson_page.py:80-85), we just call
+        start_lesson(session). The question text is NOT sent to the AI.
+        The Tutor only sees topic="GED Math - {skill}" and level="Intermediate".
+        """
+        # Follow real app flow: lesson_page.py line 83
         response = self.tutor.start_lesson(self.session)
         
-        latency_ms = int((time.time() - start_time) * 1000)
+        # Record response in session (line 84)
+        self.session.add_message("assistant", response, is_question=True)
         
-        # Record response
-        self.session.add_message("assistant", response)
-        
-        # Token counts (approximate for demo mode, real for API mode)
-        if self.tutor.is_demo:
-            input_tokens = len(formatted_q.split()) * 1.3  # rough estimate
-            output_tokens = len(response.split()) * 1.3
+        # Get token counts from wrapper
+        if self.wrapped_client:
+            input_tokens = self.wrapped_client.total_input_tokens
+            output_tokens = self.wrapped_client.total_output_tokens
+            latency_ms = self.wrapped_client.total_latency_ms
         else:
-            # In real mode, we'd track from API response
-            # For now, estimate (real harness would capture from API)
-            input_tokens = len(formatted_q.split()) * 1.3
+            # Demo mode - estimate
+            input_tokens = len(f"GED Math - {question.skill}".split()) * 1.3
             output_tokens = len(response.split()) * 1.3
+            latency_ms = 0
         
         return response, int(input_tokens), int(output_tokens), latency_ms
     
@@ -130,44 +162,69 @@ class ArmA_AIHiveTutor:
         question: MathQuestion,
         misconception: Misconception
     ) -> Tuple[str, int, int, int]:
-        """Turn 2: Diagnose student error"""
-        start_time = time.time()
+        """
+        Turn 2: Diagnose student error.
+        
+        Following real app flow (lesson_page.py:160-170):
+        1. Call process_answer (line 160)
+        2. Call continue_lesson based on correctness (line 170)
+        """
+        # Reset token tracking for this turn
+        if self.wrapped_client:
+            self.wrapped_client.reset_tracking()
         
         # Student submits wrong answer
         student_msg = f"I got {misconception.wrong_answer}. {misconception.student_attempt}. What did I do wrong?"
         self.session.add_message("user", student_msg, is_question=True)
         
-        # Get tutor response
-        # Tutor doesn't have a specific "diagnose error" method, so we use continue_lesson
-        response = self.tutor.continue_lesson(self.session, understood=False)
+        # Follow real app: lesson_page.py line 160
+        is_correct, feedback = self.tutor.process_answer(self.session, student_msg)
         
-        latency_ms = int((time.time() - start_time) * 1000)
+        # Record correctness (lines 162-165)
+        if is_correct:
+            self.session.questions_answered_correctly += 1
+        else:
+            self.session.questions_answered_incorrectly += 1
         
-        # Record response
-        self.session.add_message("assistant", response)
+        # Give feedback (line 168)
+        self.session.add_message("assistant", feedback)
         
-        # Token counts
-        if self.tutor.is_demo:
-            input_tokens = len(student_msg.split()) * 1.3
-            output_tokens = len(response.split()) * 1.3
+        # Continue lesson (line 170)
+        next_chunk = self.tutor.continue_lesson(self.session, is_correct)
+        self.session.add_message("assistant", next_chunk, is_question=True)
+        self.session.chunks_completed += 1
+        
+        # Combine feedback + next_chunk as the full Turn 2 response
+        full_response = feedback + "\n\n" + next_chunk
+        
+        # Get token counts (includes BOTH API calls: process_answer + continue_lesson)
+        if self.wrapped_client:
+            input_tokens = self.wrapped_client.total_input_tokens
+            output_tokens = self.wrapped_client.total_output_tokens
+            latency_ms = self.wrapped_client.total_latency_ms
         else:
             input_tokens = len(student_msg.split()) * 1.3
-            output_tokens = len(response.split()) * 1.3
+            output_tokens = len(full_response.split()) * 1.3
+            latency_ms = 0
         
-        return response, int(input_tokens), int(output_tokens), latency_ms
+        return full_response, int(input_tokens), int(output_tokens), latency_ms
     
     def turn_3_practice_questions(self, question: MathQuestion) -> Tuple[str, int, int, int]:
-        """Turn 3: Get practice questions"""
-        start_time = time.time()
+        """
+        Turn 3: Get practice questions.
         
-        # Request practice questions
-        request = "Can you give me 2 practice questions to help me understand this better?"
-        self.session.add_message("user", request)
+        Following real app flow (lesson_page.py:122-125):
+        Calls generate_summary which makes TWO API calls internally.
+        """
+        # Reset token tracking for this turn
+        if self.wrapped_client:
+            self.wrapped_client.reset_tracking()
         
+        # Request practice (simulating user clicking "End Lesson")
         # Mark session ready for summary
         self.session.chunks_completed = 2
         
-        # Get practice questions from tutor
+        # Follow real app: lesson_page.py line 123
         summary, practice_questions = self.tutor.generate_summary(self.session)
         
         # Format response
@@ -175,41 +232,45 @@ class ArmA_AIHiveTutor:
         for i, q in enumerate(practice_questions[:2], 1):  # Only first 2
             response += f"\n{i}. {q}"
         
-        latency_ms = int((time.time() - start_time) * 1000)
-        
-        # Record response
-        self.session.add_message("assistant", response)
-        
-        # Token counts
-        if self.tutor.is_demo:
-            input_tokens = len(request.split()) * 1.3
-            output_tokens = len(response.split()) * 1.3
+        # Get token counts (includes BOTH API calls: summary + practice questions)
+        if self.wrapped_client:
+            input_tokens = self.wrapped_client.total_input_tokens
+            output_tokens = self.wrapped_client.total_output_tokens
+            latency_ms = self.wrapped_client.total_latency_ms
         else:
-            input_tokens = len(request.split()) * 1.3
+            input_tokens = 50 * 1.3
             output_tokens = len(response.split()) * 1.3
+            latency_ms = 0
         
         return response, int(input_tokens), int(output_tokens), latency_ms
 
 
 class ArmB_GenericAssistant:
     """
-    Arm B: Generic AI assistant.
-    Same model, same temperature, but generic "helpful assistant" prompt.
+    Arm B: Generic AI assistant with equivalent conditions.
+    
+    SETTINGS MATCHED TO TUTOR:
+    - Turn 1: temp=0.7, max_tokens=500 (matches Tutor's start_lesson)
+    - Turn 2: First temp=0.6 max_tokens=200, then temp=0.7 max_tokens=500
+              (matches Tutor's process_answer + continue_lesson)
+    - Turn 3: First temp=0.6 max_tokens=300, then temp=0.7 max_tokens=300
+              (matches Tutor's summary + practice questions generation)
+    
+    PROMPT: Same learner-facing text for both arms.
     """
     
-    def __init__(self, openai_client=None, model: str = "gpt-4o-mini", temperature: float = 0.7):
+    def __init__(self, openai_client=None, model: str = "gpt-4o-mini"):
         """
         Args:
             openai_client: OpenAI client (required, can be mock)
             model: Model to use (default matches Tutor)
-            temperature: Temperature (default matches Tutor)
         """
         if openai_client is None:
             raise ValueError("OpenAI client required for GenericAssistant")
         
-        self.client = openai_client
+        # Wrap client for token tracking
+        self.wrapped_client = TokenCountingWrapper(openai_client)
         self.model = model
-        self.temperature = temperature
         self.messages = []
     
     def start_new_lesson(self, question: MathQuestion) -> None:
@@ -217,53 +278,131 @@ class ArmB_GenericAssistant:
         self.messages = [
             {"role": "system", "content": "You are a helpful assistant."}
         ]
+        self.wrapped_client.reset_tracking()
     
-    def _make_api_call(self, user_message: str, max_tokens: int = 500) -> Tuple[str, int, int, int]:
-        """Make API call and track metrics"""
-        start_time = time.time()
+    def turn_1_solve_and_explain(self, question: MathQuestion) -> Tuple[str, int, int, int]:
+        """
+        Turn 1: Solve and explain.
+        Settings: temp=0.7, max_tokens=500 (matches Tutor)
+        """
+        formatted_q = format_question_for_tutor(question)
+        # Same learner-facing text as would appear in app
+        prompt = f"I want to learn about this problem:\n\n{formatted_q}\n\nCan you help me understand how to solve it?"
         
-        self.messages.append({"role": "user", "content": user_message})
+        self.messages.append({"role": "user", "content": prompt})
         
-        response = self.client.chat.completions.create(
+        response = self.wrapped_client.chat.completions.create(
             model=self.model,
             messages=self.messages,
-            temperature=self.temperature,
-            max_tokens=max_tokens
+            temperature=0.7,
+            max_tokens=500
         )
-        
-        latency_ms = int((time.time() - start_time) * 1000)
         
         assistant_message = response.choices[0].message.content.strip()
         self.messages.append({"role": "assistant", "content": assistant_message})
         
-        # Get token counts from response
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-        
-        return assistant_message, input_tokens, output_tokens, latency_ms
-    
-    def turn_1_solve_and_explain(self, question: MathQuestion) -> Tuple[str, int, int, int]:
-        """Turn 1: Solve and explain"""
-        formatted_q = format_question_for_tutor(question)
-        prompt = f"Please solve this problem and explain your solution:\n\n{formatted_q}"
-        
-        return self._make_api_call(prompt, max_tokens=500)
+        return (
+            assistant_message,
+            self.wrapped_client.total_input_tokens,
+            self.wrapped_client.total_output_tokens,
+            self.wrapped_client.total_latency_ms
+        )
     
     def turn_2_diagnose_error(
         self,
         question: MathQuestion,
         misconception: Misconception
     ) -> Tuple[str, int, int, int]:
-        """Turn 2: Diagnose error"""
-        prompt = f"I got {misconception.wrong_answer}. {misconception.student_attempt}. What did I do wrong?"
+        """
+        Turn 2: Diagnose error.
+        Makes TWO API calls to match Tutor's process_answer + continue_lesson:
+        1. First call: temp=0.6, max_tokens=200 (evaluation)
+        2. Second call: temp=0.7, max_tokens=500 (continuation)
+        """
+        self.wrapped_client.reset_tracking()
         
-        return self._make_api_call(prompt, max_tokens=300)
+        # Same learner-facing text
+        prompt = f"I got {misconception.wrong_answer}. {misconception.student_attempt}. What did I do wrong?"
+        self.messages.append({"role": "user", "content": prompt})
+        
+        # First call: Evaluation (matches Tutor's process_answer)
+        eval_response = self.wrapped_client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=0.6,
+            max_tokens=200
+        )
+        
+        feedback = eval_response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": feedback})
+        
+        # Second call: Continue explanation (matches Tutor's continue_lesson)
+        self.messages.append({"role": "user", "content": "Can you explain this more clearly?"})
+        
+        continue_response = self.wrapped_client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        continuation = continue_response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": continuation})
+        
+        # Combine both responses
+        full_response = feedback + "\n\n" + continuation
+        
+        return (
+            full_response,
+            self.wrapped_client.total_input_tokens,
+            self.wrapped_client.total_output_tokens,
+            self.wrapped_client.total_latency_ms
+        )
     
     def turn_3_practice_questions(self, question: MathQuestion) -> Tuple[str, int, int, int]:
-        """Turn 3: Generate practice"""
-        prompt = "Can you give me 2 practice questions to help me understand this better?"
+        """
+        Turn 3: Generate practice.
+        Makes TWO API calls to match Tutor's generate_summary:
+        1. First call: temp=0.6, max_tokens=300 (summary)
+        2. Second call: temp=0.7, max_tokens=300 (practice questions)
+        """
+        self.wrapped_client.reset_tracking()
         
-        return self._make_api_call(prompt, max_tokens=400)
+        # First call: Summary (matches Tutor's summary generation)
+        self.messages.append({"role": "user", "content": "Can you summarize what we covered?"})
+        
+        summary_response = self.wrapped_client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=0.6,
+            max_tokens=300
+        )
+        
+        summary = summary_response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": summary})
+        
+        # Second call: Practice questions (matches Tutor's practice generation)
+        self.messages.append({"role": "user", "content": "Can you give me 2 practice questions?"})
+        
+        practice_response = self.wrapped_client.chat.completions.create(
+            model=self.model,
+            messages=self.messages,
+            temperature=0.7,
+            max_tokens=300
+        )
+        
+        practice = practice_response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": practice})
+        
+        # Combine both responses
+        full_response = summary + "\n\n" + practice
+        
+        return (
+            full_response,
+            self.wrapped_client.total_input_tokens,
+            self.wrapped_client.total_output_tokens,
+            self.wrapped_client.total_latency_ms
+        )
 
 
 class ArmC_ScriptedDemo:

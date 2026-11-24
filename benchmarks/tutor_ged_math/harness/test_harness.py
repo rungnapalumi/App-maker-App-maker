@@ -106,9 +106,9 @@ def test_cost_estimation():
         
         assert estimate["model"] == "gpt-4o-mini"
         assert estimate["questions_per_arm"] == 20
-        assert estimate["turns_per_question"] == 3
+        assert estimate["api_calls_per_question"] == 5  # Updated: 1 + 2 + 2
         assert estimate["estimated_cost_both_arms_usd"] > 0
-        assert estimate["price_verified"] is True
+        assert estimate["price_verified"] is False  # Updated: prices are unverified
 
 
 def test_turns_capture_metrics():
