@@ -231,7 +231,8 @@ class BenchmarkRunner:
         
         # Initialize arms
         print("Initializing arms...")
-        arm_a = ArmA_AIHiveTutor(openai_client=openai_client)
+        # Force AI mode in mock runs so token counting works
+        arm_a = ArmA_AIHiveTutor(openai_client=openai_client, force_ai_mode=self.use_mock)
         arm_b = ArmB_GenericAssistant(openai_client=openai_client)
         
         arms = [

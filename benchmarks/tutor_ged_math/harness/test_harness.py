@@ -35,7 +35,7 @@ def test_mock_client_works():
 def test_arm_a_executes_lesson():
     """Test Arm A can execute a lesson"""
     mock_client = MockOpenAIClient()
-    arm = ArmA_AIHiveTutor(openai_client=mock_client)
+    arm = ArmA_AIHiveTutor(openai_client=mock_client, force_ai_mode=True)
     
     question = Q1
     misconception = question.misconceptions[0]
@@ -106,9 +106,10 @@ def test_cost_estimation():
         
         assert estimate["model"] == "gpt-4o-mini"
         assert estimate["questions_per_arm"] == 20
-        assert estimate["api_calls_per_question"] == 5  # Updated: 1 + 2 + 2
+        # Note: api_calls varies by arm (A: 5, B: 3), so check repeats instead
+        assert estimate["repeats"] == 1
         assert estimate["estimated_cost_both_arms_usd"] > 0
-        assert estimate["price_verified"] is False  # Updated: prices are unverified
+        assert estimate["price_verified"] is True  # Updated: prices are now verified
 
 
 def test_turns_capture_metrics():

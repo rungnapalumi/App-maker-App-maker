@@ -92,24 +92,36 @@ class ArmA_AIHiveTutor:
     Arm A: AIHive Tutor using real implementation.
     Follows the actual app flow from tutor/lesson_page.py.
     
-    LIMITATION: The Tutor never sees the question text. It only receives
-    session.topic and session.level. This is how the real app works.
+    Two variants:
+    - A1 (topic_mode="skill"): topic = "GED Math - {skill}" (generic topic)
+    - A2 (topic_mode="full"): topic = full question text (specific problem)
+    
+    Both are real app paths - the topic field accepts any text.
     """
     
-    def __init__(self, openai_client=None):
+    def __init__(self, openai_client=None, force_ai_mode=False, topic_mode="skill"):
         """
         Args:
             openai_client: Optional OpenAI client. If None and OPENAI_API_KEY set,
                           creates real client. If mock client provided, uses it.
+            force_ai_mode: If True, force tutor into AI mode even without real key
+            topic_mode: "skill" for A1 (generic) or "full" for A2 (full question)
         """
         self.session: Optional[StudySession] = None
+        self.topic_mode = topic_mode
         
-        # Create tutor with token-counting wrapper
+        # Create tutor
         self.tutor = TutorAI()
-        if openai_client and not self.tutor.is_demo:
+        
+        # Set up client
+        if openai_client:
             # Wrap client for token tracking
             self.wrapped_client = TokenCountingWrapper(openai_client)
             self.tutor.client = self.wrapped_client
+            
+            # Force AI mode if requested (for testing)
+            if force_ai_mode:
+                self.tutor.is_demo = False
         else:
             self.wrapped_client = None
     
@@ -117,12 +129,19 @@ class ArmA_AIHiveTutor:
         """
         Start fresh session for question.
         
-        NOTE: Following real app behavior, we set topic to the skill name,
-        NOT the full question. The Tutor never sees the question text.
+        A1 (topic_mode="skill"): topic = "GED Math - {skill}"
+        A2 (topic_mode="full"): topic = full question text
         """
+        if self.topic_mode == "full":
+            # A2: Full question text in topic (real app path: learner types problem)
+            topic = format_question_for_tutor(question)
+        else:
+            # A1: Generic skill topic (real app path: learner types subject)
+            topic = f"GED Math - {question.skill}"
+        
         self.session = StudySession(
             user_id="benchmark_user",
-            topic=f"GED Math - {question.skill}",
+            topic=topic,
             level="Intermediate"  # GED is roughly intermediate
         )
         
@@ -247,14 +266,15 @@ class ArmA_AIHiveTutor:
 
 class ArmB_GenericAssistant:
     """
-    Arm B: Generic AI assistant with equivalent conditions.
+    Arm B: Generic AI assistant.
     
-    SETTINGS MATCHED TO TUTOR:
-    - Turn 1: temp=0.7, max_tokens=500 (matches Tutor's start_lesson)
-    - Turn 2: First temp=0.6 max_tokens=200, then temp=0.7 max_tokens=500
-              (matches Tutor's process_answer + continue_lesson)
-    - Turn 3: First temp=0.6 max_tokens=300, then temp=0.7 max_tokens=300
-              (matches Tutor's summary + practice questions generation)
+    One call per learner turn (natural for a general-purpose assistant).
+    Max tokens per turn set to Tutor's total for that turn:
+    - Turn 1: 500 tokens (matches Tutor's single call)
+    - Turn 2: 700 tokens (Tutor's 200+500 combined)
+    - Turn 3: 600 tokens (Tutor's 300+300 combined)
+    
+    Temperature averaged: 0.7 for all turns (Tutor averages 0.65 per turn)
     
     PROMPT: Same learner-facing text for both arms.
     """
@@ -283,10 +303,10 @@ class ArmB_GenericAssistant:
     def turn_1_solve_and_explain(self, question: MathQuestion) -> Tuple[str, int, int, int]:
         """
         Turn 1: Solve and explain.
-        Settings: temp=0.7, max_tokens=500 (matches Tutor)
+        One call: temp=0.7, max_tokens=500
         """
         formatted_q = format_question_for_tutor(question)
-        # Same learner-facing text as would appear in app
+        # Same learner-facing text
         prompt = f"I want to learn about this problem:\n\n{formatted_q}\n\nCan you help me understand how to solve it?"
         
         self.messages.append({"role": "user", "content": prompt})
@@ -315,9 +335,7 @@ class ArmB_GenericAssistant:
     ) -> Tuple[str, int, int, int]:
         """
         Turn 2: Diagnose error.
-        Makes TWO API calls to match Tutor's process_answer + continue_lesson:
-        1. First call: temp=0.6, max_tokens=200 (evaluation)
-        2. Second call: temp=0.7, max_tokens=500 (continuation)
+        One call: temp=0.7, max_tokens=700 (sum of Tutor's 200+500)
         """
         self.wrapped_client.reset_tracking()
         
@@ -325,35 +343,18 @@ class ArmB_GenericAssistant:
         prompt = f"I got {misconception.wrong_answer}. {misconception.student_attempt}. What did I do wrong?"
         self.messages.append({"role": "user", "content": prompt})
         
-        # First call: Evaluation (matches Tutor's process_answer)
-        eval_response = self.wrapped_client.chat.completions.create(
-            model=self.model,
-            messages=self.messages,
-            temperature=0.6,
-            max_tokens=200
-        )
-        
-        feedback = eval_response.choices[0].message.content.strip()
-        self.messages.append({"role": "assistant", "content": feedback})
-        
-        # Second call: Continue explanation (matches Tutor's continue_lesson)
-        self.messages.append({"role": "user", "content": "Can you explain this more clearly?"})
-        
-        continue_response = self.wrapped_client.chat.completions.create(
+        response = self.wrapped_client.chat.completions.create(
             model=self.model,
             messages=self.messages,
             temperature=0.7,
-            max_tokens=500
+            max_tokens=700
         )
         
-        continuation = continue_response.choices[0].message.content.strip()
-        self.messages.append({"role": "assistant", "content": continuation})
-        
-        # Combine both responses
-        full_response = feedback + "\n\n" + continuation
+        assistant_message = response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": assistant_message})
         
         return (
-            full_response,
+            assistant_message,
             self.wrapped_client.total_input_tokens,
             self.wrapped_client.total_output_tokens,
             self.wrapped_client.total_latency_ms
@@ -361,44 +362,26 @@ class ArmB_GenericAssistant:
     
     def turn_3_practice_questions(self, question: MathQuestion) -> Tuple[str, int, int, int]:
         """
-        Turn 3: Generate practice.
-        Makes TWO API calls to match Tutor's generate_summary:
-        1. First call: temp=0.6, max_tokens=300 (summary)
-        2. Second call: temp=0.7, max_tokens=300 (practice questions)
+        Turn 3: Summary and practice questions.
+        One call: temp=0.7, max_tokens=600 (sum of Tutor's 300+300)
         """
         self.wrapped_client.reset_tracking()
         
-        # First call: Summary (matches Tutor's summary generation)
-        self.messages.append({"role": "user", "content": "Can you summarize what we covered?"})
+        prompt = "Can you summarize what we covered and give me 2 practice questions?"
+        self.messages.append({"role": "user", "content": prompt})
         
-        summary_response = self.wrapped_client.chat.completions.create(
-            model=self.model,
-            messages=self.messages,
-            temperature=0.6,
-            max_tokens=300
-        )
-        
-        summary = summary_response.choices[0].message.content.strip()
-        self.messages.append({"role": "assistant", "content": summary})
-        
-        # Second call: Practice questions (matches Tutor's practice generation)
-        self.messages.append({"role": "user", "content": "Can you give me 2 practice questions?"})
-        
-        practice_response = self.wrapped_client.chat.completions.create(
+        response = self.wrapped_client.chat.completions.create(
             model=self.model,
             messages=self.messages,
             temperature=0.7,
-            max_tokens=300
+            max_tokens=600
         )
         
-        practice = practice_response.choices[0].message.content.strip()
-        self.messages.append({"role": "assistant", "content": practice})
-        
-        # Combine both responses
-        full_response = summary + "\n\n" + practice
+        assistant_message = response.choices[0].message.content.strip()
+        self.messages.append({"role": "assistant", "content": assistant_message})
         
         return (
-            full_response,
+            assistant_message,
             self.wrapped_client.total_input_tokens,
             self.wrapped_client.total_output_tokens,
             self.wrapped_client.total_latency_ms

@@ -99,21 +99,22 @@ DIMENSIONS: List[RubricDimension] = [
 ]
 
 
-# Official pricing (must be verified from provider documentation)
-# NOTE: These prices were NOT fetched from the official page during development.
-# They are estimates based on common knowledge and must be verified before use.
+# Official pricing verified from provider documentation
 MODEL_PRICING = {
     "gpt-4o-mini": {
-        "input_price_per_1m": 0.150,  # $0.150 per 1M input tokens (UNVERIFIED)
-        "output_price_per_1m": 0.600,  # $0.600 per 1M output tokens (UNVERIFIED)
-        "source": "https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY)",
-        "last_verified": None,
-        "verified": False
+        "input_price_per_1m": 0.15,  # $0.15 per 1M input tokens
+        "output_price_per_1m": 0.60,  # $0.60 per 1M output tokens
+        "cached_input_price_per_1m": 0.075,  # $0.075 per 1M cached input tokens
+        "source": "https://platform.openai.com/docs/pricing",
+        "last_verified": "2026-11-24",
+        "verified_by": "founder's assistant",
+        "timezone": "Asia/Bangkok",
+        "verified": True
     },
     "gpt-4o": {
-        "input_price_per_1m": 2.50,  # $2.50 per 1M input tokens (UNVERIFIED)
-        "output_price_per_1m": 10.00,  # $10.00 per 1M output tokens (UNVERIFIED)
-        "source": "https://openai.com/api/pricing/ (NOT FETCHED - VERIFY MANUALLY)",
+        "input_price_per_1m": 2.50,  # $2.50 per 1M input tokens (not verified)
+        "output_price_per_1m": 10.00,  # $10.00 per 1M output tokens (not verified)
+        "source": "https://platform.openai.com/docs/pricing (not verified for gpt-4o)",
         "last_verified": None,
         "verified": False
     },
