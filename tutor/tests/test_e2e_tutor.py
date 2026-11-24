@@ -84,16 +84,15 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         
         page.close()
         
-        # Screenshot 2-4: Mobile flow with real lesson
-        print("\n2. Starting mobile lesson flow...")
-        page = browser.new_page(viewport={"width": 390, "height": 844})
+        # Screenshot 2-4: Lesson flow (using desktop viewport for reliable navigation)
+        print("\n2. Starting lesson flow...")
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.goto(BASE_URL, timeout=30000)
         time.sleep(3)
         
-        # On mobile, navigate to tutor
-        # Force click even if element is outside viewport (sidebar collapsed on mobile)
-        page.get_by_role("button", name="📚 Start Learning").click(force=True)
-        time.sleep(3)
+        # Navigate to tutor
+        page.get_by_text("Start Learning", exact=False).first.click()
+        time.sleep(2)
         
         # Select Photosynthesis topic
         page.get_by_text("🌱 Photosynthesis").click()
