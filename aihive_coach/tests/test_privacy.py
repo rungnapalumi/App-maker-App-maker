@@ -274,3 +274,191 @@ def test_rate_limiting_window_expiry():
     
     # Cleanup
     st.session_state.rate_limit_messages = []
+
+
+def test_export_user_data_json_isolation():
+    """Test that JSON export only includes the specified user's data"""
+    user1_id = "user_export_json_1"
+    user2_id = "user_export_json_2"
+    
+    # Create data for user 1
+    session1 = db.create_session(user1_id, category="Career")
+    session1.add_message("user", "User 1 message")
+    db.save_session(session1)
+    
+    plan1 = ActionPlan(
+        user_id=user1_id,
+        session_id=session1.id,
+        goal="User 1 Goal",
+        key_insight="User 1 Insight",
+        next_action="User 1 Action",
+        target_date=None,
+        success_indicator="User 1 Indicator"
+    )
+    db.create_action_plan(plan1)
+    
+    # Create data for user 2
+    session2 = db.create_session(user2_id, category="Personal Growth")
+    session2.add_message("user", "User 2 message")
+    db.save_session(session2)
+    
+    plan2 = ActionPlan(
+        user_id=user2_id,
+        session_id=session2.id,
+        goal="User 2 Goal",
+        key_insight="User 2 Insight",
+        next_action="User 2 Action",
+        target_date=None,
+        success_indicator="User 2 Indicator"
+    )
+    db.create_action_plan(plan2)
+    
+    # Export user 1's data
+    export_data = db.export_user_data_json(user1_id)
+    
+    # Verify structure
+    assert "user_id" in export_data
+    assert "export_date" in export_data
+    assert "sessions" in export_data
+    assert "action_plans" in export_data
+    
+    # Verify only user 1's data is included
+    assert export_data["user_id"] == user1_id
+    assert len(export_data["sessions"]) == 1
+    assert len(export_data["action_plans"]) == 1
+    
+    # Verify content matches user 1
+    assert export_data["sessions"][0]["category"] == "Career"
+    assert export_data["action_plans"][0]["goal"] == "User 1 Goal"
+    
+    # Verify user 2's data is NOT included
+    for session in export_data["sessions"]:
+        assert session["category"] != "Personal Growth", "User 2's session should not be in user 1's export"
+    for plan in export_data["action_plans"]:
+        assert plan["goal"] != "User 2 Goal", "User 2's plan should not be in user 1's export"
+    
+    # Cleanup
+    db.delete_user_data(user1_id)
+    db.delete_user_data(user2_id)
+
+
+def test_export_user_data_json_empty():
+    """Test that exporting data for a user with no data returns empty arrays"""
+    user_id = "user_export_empty"
+    
+    # Export without creating any data
+    export_data = db.export_user_data_json(user_id)
+    
+    # Verify structure exists
+    assert "user_id" in export_data
+    assert "export_date" in export_data
+    assert "sessions" in export_data
+    assert "action_plans" in export_data
+    
+    # Verify empty arrays
+    assert export_data["user_id"] == user_id
+    assert len(export_data["sessions"]) == 0, "Empty user should have no sessions"
+    assert len(export_data["action_plans"]) == 0, "Empty user should have no action plans"
+    assert isinstance(export_data["sessions"], list), "Sessions should be a list"
+    assert isinstance(export_data["action_plans"], list), "Action plans should be a list"
+
+
+def test_export_user_data_csv_isolation():
+    """Test that CSV export only includes the specified user's action plans"""
+    user1_id = "user_export_csv_1"
+    user2_id = "user_export_csv_2"
+    
+    # Create data for user 1
+    session1 = db.create_session(user1_id, category="Test")
+    plan1 = ActionPlan(
+        user_id=user1_id,
+        session_id=session1.id,
+        goal="User 1 Goal",
+        key_insight="User 1 Insight",
+        next_action="User 1 Action",
+        target_date=None,
+        success_indicator="User 1 Indicator"
+    )
+    db.create_action_plan(plan1)
+    
+    # Create data for user 2
+    session2 = db.create_session(user2_id, category="Test")
+    plan2 = ActionPlan(
+        user_id=user2_id,
+        session_id=session2.id,
+        goal="User 2 Goal",
+        key_insight="User 2 Insight",
+        next_action="User 2 Action",
+        target_date=None,
+        success_indicator="User 2 Indicator"
+    )
+    db.create_action_plan(plan2)
+    
+    # Export user 1's data
+    csv_data = db.export_user_data_csv(user1_id)
+    
+    # Verify structure
+    assert "action_plans" in csv_data
+    assert len(csv_data["action_plans"]) == 1
+    
+    # Verify only user 1's data
+    assert csv_data["action_plans"][0]["Goal"] == "User 1 Goal"
+    
+    # Verify user 2's data is NOT included
+    for plan in csv_data["action_plans"]:
+        assert plan["Goal"] != "User 2 Goal", "User 2's plan should not be in user 1's export"
+    
+    # Cleanup
+    db.delete_user_data(user1_id)
+    db.delete_user_data(user2_id)
+
+
+def test_export_user_data_csv_empty():
+    """Test that exporting CSV for a user with no action plans returns empty array"""
+    user_id = "user_export_csv_empty"
+    
+    # Export without creating any data
+    csv_data = db.export_user_data_csv(user_id)
+    
+    # Verify structure
+    assert "action_plans" in csv_data
+    assert len(csv_data["action_plans"]) == 0, "Empty user should have no action plans"
+    assert isinstance(csv_data["action_plans"], list), "Action plans should be a list"
+
+
+def test_export_user_data_csv_format():
+    """Test that CSV export has the correct field names"""
+    from datetime import date
+    user_id = "user_export_csv_format"
+    
+    # Create a plan
+    session = db.create_session(user_id, category="Test")
+    plan = ActionPlan(
+        user_id=user_id,
+        session_id=session.id,
+        goal="Test Goal",
+        key_insight="Test Insight",
+        next_action="Test Action",
+        target_date=date.today(),
+        success_indicator="Test Indicator"
+    )
+    db.create_action_plan(plan)
+    
+    # Export
+    csv_data = db.export_user_data_csv(user_id)
+    
+    # Verify field names
+    expected_fields = ["Goal", "Key Insight", "Next Action", "Target Date", 
+                      "Success Indicator", "Status", "Created", "Updated"]
+    
+    assert len(csv_data["action_plans"]) == 1
+    plan_data = csv_data["action_plans"][0]
+    
+    for field in expected_fields:
+        assert field in plan_data, f"CSV should include '{field}' field"
+    
+    # Verify status field
+    assert plan_data["Status"] in ["In Progress", "Completed"], "Status should be 'In Progress' or 'Completed'"
+    
+    # Cleanup
+    db.delete_user_data(user_id)

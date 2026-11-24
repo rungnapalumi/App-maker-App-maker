@@ -245,8 +245,78 @@ class Database:
         except Exception as e:
             db.rollback()
             raise e
+        finally:
+            db.close()
+    
+    def export_user_data_json(self, user_id: str) -> dict:
+        """Export all user data as JSON (only for the specified user)"""
+        from datetime import timezone
+        db = self._get_session()
+        try:
+            sessions = db.query(DBSession).filter(DBSession.user_id == user_id).all()
+            plans = db.query(DBActionPlan).filter(DBActionPlan.user_id == user_id).all()
             
-            return [self._db_plan_to_model(p) for p in db_plans]
+            export_data = {
+                "user_id": user_id,
+                "export_date": datetime.now(timezone.utc).isoformat(),
+                "sessions": [],
+                "action_plans": []
+            }
+            
+            for s in sessions:
+                export_data["sessions"].append({
+                    "id": s.id,
+                    "category": s.category,
+                    "messages": json.loads(s.messages_json),
+                    "created_at": s.created_at.isoformat(),
+                    "updated_at": s.updated_at.isoformat(),
+                    "action_plan_id": s.action_plan_id,
+                    "is_completed": s.is_completed
+                })
+            
+            for p in plans:
+                export_data["action_plans"].append({
+                    "id": p.id,
+                    "session_id": p.session_id,
+                    "goal": p.goal,
+                    "key_insight": p.key_insight,
+                    "next_action": p.next_action,
+                    "target_date": p.target_date.isoformat() if p.target_date else None,
+                    "success_indicator": p.success_indicator,
+                    "created_at": p.created_at.isoformat(),
+                    "updated_at": p.updated_at.isoformat(),
+                    "is_completed": p.is_completed,
+                    "progress_notes": json.loads(p.progress_notes_json),
+                    "last_reviewed_at": p.last_reviewed_at.isoformat() if p.last_reviewed_at else None
+                })
+            
+            return export_data
+        finally:
+            db.close()
+    
+    def export_user_data_csv(self, user_id: str) -> dict:
+        """Export user data as CSV-ready data (simplified format)"""
+        db = self._get_session()
+        try:
+            plans = db.query(DBActionPlan).filter(DBActionPlan.user_id == user_id).all()
+            
+            csv_data = {
+                "action_plans": []
+            }
+            
+            for p in plans:
+                csv_data["action_plans"].append({
+                    "Goal": p.goal,
+                    "Key Insight": p.key_insight,
+                    "Next Action": p.next_action,
+                    "Target Date": p.target_date.isoformat() if p.target_date else "",
+                    "Success Indicator": p.success_indicator,
+                    "Status": "Completed" if p.is_completed else "In Progress",
+                    "Created": p.created_at.strftime("%Y-%m-%d"),
+                    "Updated": p.updated_at.strftime("%Y-%m-%d")
+                })
+            
+            return csv_data
         finally:
             db.close()
     

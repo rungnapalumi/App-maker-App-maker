@@ -2,6 +2,10 @@
 import streamlit as st
 import sys
 import os
+import json
+import csv
+import io
+from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from aihive_coach.database import db
 from tutor.database import tutor_db
@@ -51,6 +55,70 @@ def show_privacy_notice():
     
     **Recommendation:** Do not enter sensitive personal information until production deployment with persistent database.
     """)
+    
+    # Data Export
+    st.markdown("## Download My Data")
+    
+    st.markdown("""
+    Export all your coaching data for backup or personal records.
+    
+    **What's included:**
+    - All coaching sessions and conversations
+    - All action plans and progress notes
+    - Only YOUR data (filtered by your anonymous user ID)
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📥 Download JSON", type="primary", use_container_width=True):
+            user_id = st.session_state.user_id
+            export_data = db.export_user_data_json(user_id)
+            
+            json_str = json.dumps(export_data, indent=2)
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            filename = f"aihive_coach_data_{timestamp}.json"
+            
+            st.download_button(
+                label="💾 Save JSON File",
+                data=json_str,
+                file_name=filename,
+                mime="application/json",
+                use_container_width=True
+            )
+            
+            st.success(f"✅ JSON export ready! Click 'Save JSON File' to download.")
+            st.info(f"📊 **Export Summary:**\n- {len(export_data['sessions'])} coaching sessions\n- {len(export_data['action_plans'])} action plans")
+    
+    with col2:
+        if st.button("📥 Download CSV", type="secondary", use_container_width=True):
+            user_id = st.session_state.user_id
+            csv_data = db.export_user_data_csv(user_id)
+            
+            if csv_data["action_plans"]:
+                output = io.StringIO()
+                writer = csv.DictWriter(output, fieldnames=csv_data["action_plans"][0].keys())
+                writer.writeheader()
+                writer.writerows(csv_data["action_plans"])
+                csv_str = output.getvalue()
+                
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                filename = f"aihive_coach_action_plans_{timestamp}.csv"
+                
+                st.download_button(
+                    label="💾 Save CSV File",
+                    data=csv_str,
+                    file_name=filename,
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                
+                st.success(f"✅ CSV export ready! Click 'Save CSV File' to download.")
+                st.info(f"📊 **CSV contains {len(csv_data['action_plans'])} action plans**")
+            else:
+                st.info("No action plans to export yet. Start a coaching session to create your first plan!")
+    
+    st.markdown("---")
     
     # Data Deletion
     st.markdown("## Delete My Data")
