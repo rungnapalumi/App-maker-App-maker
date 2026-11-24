@@ -135,7 +135,7 @@ def test_blinding_shuffles_order():
         
         # Create mock results
         results = [
-            {"arm": "Arm_A", "question_id": f"Q{i:03d}", "misconception_id": f"M{i}",
+            {"arm": "Arm_A", "question_id": f"Q{i:03d}", "repeat_index": 0, "misconception_id": f"M{i}",
              "turn_1_response": "R1", "turn_2_response": "R2", "turn_3_response": "R3"}
             for i in range(10)
         ]

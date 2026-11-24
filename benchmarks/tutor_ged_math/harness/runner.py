@@ -92,50 +92,55 @@ class BenchmarkRunner:
         tutor_arm,
         questions: List[Any]
     ) -> List[Dict[str, Any]]:
-        """Run all lessons for one arm"""
+        """Run all lessons for one arm, with repeats"""
         results = []
         
         for question in questions:
             # Pick first misconception for each question
             misconception = question.misconceptions[0]
             
-            print(f"  Running {arm_name}: {question.id} ({question.skill})...")
-            
-            # Execute lesson
-            execution = execute_lesson(tutor_arm, question, misconception)
-            
-            # Calculate cost
-            cost_usd, price_source, price_verified = calculate_cost(
-                "gpt-4o-mini",  # TODO: get from tutor
-                execution.total_input_tokens,
-                execution.total_output_tokens
-            )
-            
-            result = {
-                "arm": arm_name,
-                "question_id": question.id,
-                "misconception_id": misconception.id,
-                "turn_1_response": execution.turn_1.assistant_response,
-                "turn_2_response": execution.turn_2.assistant_response,
-                "turn_3_response": execution.turn_3.assistant_response,
-                "total_input_tokens": execution.total_input_tokens,
-                "total_output_tokens": execution.total_output_tokens,
-                "total_latency_ms": execution.total_latency_ms,
-                "cost_usd": cost_usd,
-                "price_source": price_source,
-                "price_verified": price_verified
-            }
-            
-            results.append(result)
+            # Run N repeats of this lesson
+            for repeat_idx in range(self.repeats):
+                repeat_suffix = f" (repeat {repeat_idx+1}/{self.repeats})" if self.repeats > 1 else ""
+                print(f"  Running {arm_name}: {question.id} ({question.skill}){repeat_suffix}...")
+                
+                # Execute lesson
+                execution = execute_lesson(tutor_arm, question, misconception)
+                
+                # Calculate cost
+                cost_usd, price_source, price_verified = calculate_cost(
+                    "gpt-4o-mini",
+                    execution.total_input_tokens,
+                    execution.total_output_tokens
+                )
+                
+                result = {
+                    "arm": arm_name,
+                    "question_id": question.id,
+                    "repeat_index": repeat_idx,
+                    "misconception_id": misconception.id,
+                    "turn_1_response": execution.turn_1.assistant_response,
+                    "turn_2_response": execution.turn_2.assistant_response,
+                    "turn_3_response": execution.turn_3.assistant_response,
+                    "total_input_tokens": execution.total_input_tokens,
+                    "total_output_tokens": execution.total_output_tokens,
+                    "total_latency_ms": execution.total_latency_ms,
+                    "cost_usd": cost_usd,
+                    "price_source": price_source,
+                    "price_verified": price_verified
+                }
+                
+                results.append(result)
         
         return results
     
     def export_blinded_grading_sheet(self, all_results: List[Dict[str, Any]]) -> str:
         """
         Export results to CSV with blinding:
-        - Random arm labels (A, B, C -> X, Y, Z etc.)
+        - Random arm labels (A1, A2, B -> X, Y, Z)
         - Shuffled order
         - Arm mapping saved separately
+        - Includes repeat_index
         """
         # Create arm mapping
         unique_arms = sorted(set(r["arm"] for r in all_results))
@@ -148,6 +153,7 @@ class BenchmarkRunner:
             json.dump({
                 "arm_mapping": arm_mapping,
                 "random_seed": self.random_seed,
+                "repeats": self.repeats,
                 "created_at": datetime.now().isoformat()
             }, f, indent=2)
         
@@ -156,6 +162,7 @@ class BenchmarkRunner:
         for r in all_results:
             blinded.append({
                 "lesson_id": r["question_id"],
+                "repeat_index": r["repeat_index"],
                 "arm_label": arm_mapping[r["arm"]],
                 "misconception_id": r["misconception_id"],
                 "turn_1_response": r["turn_1_response"],
@@ -170,7 +177,7 @@ class BenchmarkRunner:
         grading_file = self.output_dir / "grading_sheet.csv"
         with open(grading_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=[
-                "lesson_id", "arm_label", "misconception_id",
+                "lesson_id", "repeat_index", "arm_label", "misconception_id",
                 "turn_1_response", "turn_2_response", "turn_3_response"
             ])
             writer.writeheader()
@@ -232,11 +239,13 @@ class BenchmarkRunner:
         # Initialize arms
         print("Initializing arms...")
         # Force AI mode in mock runs so token counting works
-        arm_a = ArmA_AIHiveTutor(openai_client=openai_client, force_ai_mode=self.use_mock)
+        arm_a1 = ArmA_AIHiveTutor(openai_client=openai_client, force_ai_mode=self.use_mock, topic_mode="skill")
+        arm_a2 = ArmA_AIHiveTutor(openai_client=openai_client, force_ai_mode=self.use_mock, topic_mode="full")
         arm_b = ArmB_GenericAssistant(openai_client=openai_client)
         
         arms = [
-            ("Arm_A_AIHive", arm_a),
+            ("Arm_A1_Skill", arm_a1),
+            ("Arm_A2_Full", arm_a2),
             ("Arm_B_Generic", arm_b)
         ]
         
