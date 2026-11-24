@@ -24,7 +24,7 @@ def show_topic_picker():
     
     # Mode indicator
     if config.is_demo_mode():
-        st.warning("⚠️ **Demo Mode** - Scripted responses")
+        st.warning("⚠️ **Demo Mode** - Scripted responses (not AI-powered)")
     else:
         st.success("✅ **Real AI Active** - Powered by GPT-4o-mini")
     
