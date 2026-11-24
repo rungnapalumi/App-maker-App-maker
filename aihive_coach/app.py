@@ -98,7 +98,7 @@ with st.sidebar:
     # Mode indicator
     mode_text = config.get_model_info()
     if config.is_demo_mode():
-        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)\n\nAdd `OPENAI_API_KEY` for real AI.")
+        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)")
     else:
         st.success(f"✅ **Real AI Active**\n\n{mode_text}")
     
@@ -118,15 +118,43 @@ def show_home_page():
 def show_coach_landing_page():
     """AIHive Coach Product Landing Page"""
     
-    # Hero
-    st.markdown("<div style='text-align: center; padding: 2rem 0;'>", unsafe_allow_html=True)
+    # Mobile-specific CSS to reduce hero padding and ensure CTA is above the fold
+    st.markdown("""
+    <style>
+    @media (max-width: 768px) {
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+        }
+        h1 {
+            font-size: 1.75rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+        .stSubheader {
+            font-size: 1rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Hero - reduced padding on mobile
+    st.markdown("""
+    <div style='text-align: center; padding: 1rem 0 0.5rem 0;'>
+    <style>
+    @media (max-width: 768px) {
+        .mobile-hero { padding: 0.5rem 0 0.25rem 0 !important; }
+    }
+    </style>
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.title("🧠 AIHive Coach")
     st.subheader("Think Clearly. Act Confidently. Grow Daily.")
-    st.markdown("</div>", unsafe_allow_html=True)
     
     # Intro
     # Prominent CTA FIRST - above fold on mobile
-    st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 0.25rem;'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         if st.button("🚀 Start Your First Session", use_container_width=True, type="primary", key="start_first_top"):
