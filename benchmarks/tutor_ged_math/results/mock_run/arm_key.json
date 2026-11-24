@@ -1,0 +1,8 @@
+{
+  "arm_mapping": {
+    "Arm_A_AIHive": "X",
+    "Arm_B_Generic": "Y"
+  },
+  "random_seed": 42,
+  "created_at": "2026-11-24T06:14:07.154528"
+}
