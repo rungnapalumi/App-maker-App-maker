@@ -208,20 +208,22 @@ Prices verified from official OpenAI pricing page on 2026-11-24:
 For **A1 + A2 + B** (3 arms, 20 lessons each):
 
 **Repeats = 1 (60 lessons total):**
-- Input: 26,050 tokens (measured with full history)
-- Output: 108,000 tokens (sum of all max_tokens)
-- **Cost: $0.07**
+- Input: ~141,000 tokens (measured with full history including all prior turns at max_tokens)
+- Output: ~108,000 tokens (sum of all max_tokens)
+- **Cost: $0.09**
+- Calculation: (141,000 × $0.15 + 108,000 × $0.60) / 1M = $0.086
 
 **Repeats = 3 (180 lessons total):**
-- Input: 78,150 tokens
-- Output: 324,000 tokens
-- **Cost: $0.21**
+- Input: ~423,000 tokens (3 × 141,000)
+- Output: ~324,000 tokens (3 × 108,000)
+- **Cost: $0.26**
+- Calculation: (423,000 × $0.15 + 324,000 × $0.60) / 1M = $0.258
 
 **Method:**
 - Output = sum of max_tokens for all calls (worst case)
-- Input = measured prompt tokens including system prompts and history
-- History sized as if every previous reply used full max_tokens
-- Uses verified gpt-4o-mini prices ($0.15/$0.60 per 1M)
+- Input = measured prompt tokens including system prompts and full conversation history
+- History sized as if every previous reply used full max_tokens (accumulates across turns)
+- Uses verified gpt-4o-mini prices ($0.15/1M input, $0.60/1M output)
 
 ## License
 
