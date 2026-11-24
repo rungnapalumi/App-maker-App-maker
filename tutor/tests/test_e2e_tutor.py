@@ -90,9 +90,19 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         page.goto(BASE_URL, timeout=30000)
         time.sleep(3)
         
-        # On mobile, navigate to tutor
-        # Sidebar navigation works the same as desktop - Streamlit handles mobile responsiveness
-        page.get_by_text("Start Learning", exact=False).first.click()
+        # On mobile, expand sidebar first then navigate
+        # Find and click the hamburger/menu button to expand sidebar
+        try:
+            # Try to find sidebar toggle button
+            menu_button = page.locator("[data-testid='stSidebarCollapsedControl']")
+            if menu_button.count() > 0:
+                menu_button.click()
+                time.sleep(1)
+        except:
+            pass
+        
+        # Now click the navigation button
+        page.get_by_role("button", name="📚 Start Learning").click()
         time.sleep(3)
         
         # Select Photosynthesis topic
