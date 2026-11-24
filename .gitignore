@@ -38,3 +38,6 @@ temp-*.m4a
 *.avi
 *.mpeg4
 *.zip
+
+# SQLite databases
+*.db

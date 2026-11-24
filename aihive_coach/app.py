@@ -85,7 +85,7 @@ with st.sidebar:
     # Mode indicator
     mode_text = config.get_model_info()
     if config.is_demo_mode():
-        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)\n\nAdd `OPENAI_API_KEY` for real AI.")
+        st.warning(f"⚠️ **Demo Mode**\n\nScripted responses (not AI-powered)")
     else:
         st.success(f"✅ **Real AI Active**\n\n{mode_text}")
     

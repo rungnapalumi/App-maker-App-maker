@@ -85,7 +85,7 @@ def show_homepage():
                 Personalized learning assistant. Adaptive curriculum, concept explanations, and practice exercises.
             </p>
             <p style='color: #94a3b8; font-size: 0.875rem; font-style: italic; margin-bottom: 1rem;'>
-                In development. AI-powered tutoring for continuous learning.
+                In development. Personalized tutoring for continuous learning.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -105,7 +105,7 @@ def show_homepage():
                 Financial planning and analysis assistant. Budget tracking, investment guidance, and financial goal setting.
             </p>
             <p style='color: #94a3b8; font-size: 0.875rem; font-style: italic; margin-bottom: 1rem;'>
-                Planned. AI-powered financial planning tools.
+                Planned. Financial planning tools.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -122,7 +122,7 @@ def show_homepage():
                 Code assistance and development support. Code review, debugging help, and architecture guidance.
             </p>
             <p style='color: #94a3b8; font-size: 0.875rem; font-style: italic; margin-bottom: 1rem;'>
-                Planned. AI-powered development assistant.
+                Planned. Development assistance.
             </p>
         </div>
         """, unsafe_allow_html=True)
