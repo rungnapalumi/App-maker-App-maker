@@ -217,4 +217,4 @@ Before publishing results externally, obtain expert review.
 
 This rubric was committed before any harness run. The commit hash is recorded in all result files to ensure scores were not adjusted after seeing results.
 
-**Commit hash:** (to be recorded after commit)
+**Commit hash:** `a744eb14633ad566d70cba0de0386f64ddb4df00`

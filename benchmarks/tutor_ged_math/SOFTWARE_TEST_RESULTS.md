@@ -208,7 +208,7 @@ Your teaching style:
 
 The scoring rubric was committed **before** running any results:
 
-**Commit:** _(To be filled after committing this work)_
+**Commit:** `a744eb14633ad566d70cba0de0386f64ddb4df00`
 
 **Files committed:**
 - `benchmarks/tutor_ged_math/rubric/scoring_rubric.md`
