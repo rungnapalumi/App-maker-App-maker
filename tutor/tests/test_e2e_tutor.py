@@ -90,8 +90,11 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         page.goto(BASE_URL, timeout=30000)
         time.sleep(3)
         
-        # On mobile, navigate via sidebar button
-        page.get_by_role("button", name="📚 Start Learning").click()
+        # On mobile, open sidebar and navigate
+        # Click hamburger menu to open sidebar on mobile
+        page.get_by_label("Collapse sidebar").click() if page.get_by_label("Collapse sidebar").count() > 0 else page.locator("button[kind='headerNoPadding']").first.click()
+        time.sleep(1)
+        page.get_by_text("Start Learning", exact=False).first.click()
         time.sleep(3)
         
         # Select Photosynthesis topic
