@@ -359,6 +359,102 @@ The new `test_e2e_marketing.py` test:
 
 ---
 
+## Round 1.2: Placeholder Fix & Neutral Product
+
+**Date:** November 24, 2026  
+**Issues:** 
+1. Placeholder leak: "[Product]" in CTA recommendations
+2. Screenshot sample claimed non-existent features (AI-powered, free trial)
+
+**Budget:** ~$0.10 USD additional
+
+### Problems Fixed
+
+#### 1. Placeholder Leak
+**Issue:** Campaign outline showed "Discover [Product]" instead of actual product name  
+**Location:** `marketing_ai.py` line 108 in `_generate_cta()` method  
+**Fix:** Changed from `"Discover [Product]"` to `f"Discover {product}"` to properly substitute the user's product name
+
+**New Test Added:** `test_no_placeholder_leaks()`
+- Tests all 18 goal × channel combinations (3 goals × 6 channels)
+- Verifies no `[` or `]` placeholder patterns appear in campaign outlines
+- Ensures product name is properly substituted
+- Similar to Tutor's placeholder prevention test
+
+#### 2. Misleading Sample Data
+**Issue:** E2E test and screenshots used "AIHive Coach" claiming it's "AI-powered" with a "free trial" - neither true currently  
+**Fix:** Changed to neutral fictional product "EcoBottle" (reusable water bottle)
+
+**New Sample Data:**
+- **Product:** EcoBottle
+- **Audience:** Environmentally conscious consumers / Eco-conscious shoppers
+- **Draft Copy Examples:**
+  - Desktop/Instagram: "Stay hydrated sustainably! 🌱 Our reusable EcoBottle keeps drinks cold for 24 hours. Join the zero-waste movement today. Shop now: https://ecobottle.example #EcoFriendly #Sustainable #ZeroWaste"
+  - Mobile/Facebook: "Reduce plastic waste with EcoBottle! 🌍 Durable, stylish, sustainable. Order yours: https://ecobottle.example #ZeroWaste"
+
+### Retaken Screenshots
+
+Only the 2 affected screenshots were retaken:
+
+#### 1. Desktop Result (Retaken)
+**File:** `marketing_desktop_result.png`  
+**Size:** 1280×2400 pixels (215.0 KB)  
+**Shows:** Complete EcoBottle campaign analysis for Instagram/Awareness:
+- **Campaign Outline:** Objective shows "Build brand awareness and reach for EcoBottle", Target Audience is "Environmentally conscious consumers", Primary Channel is Instagram, includes channel-specific tips for Instagram visuals and hashtags
+- **Call to Action:** Shows "Recommended CTAs: Learn More, **Discover EcoBottle**, Find Out How" - **correctly substitutes "EcoBottle"** (no [Product] placeholder)
+- **Content Checklist:** Word Count (27), Characters (233), Hashtags (3: #EcoFriendly #Sustainable #ZeroWaste), Emojis (1), Has CTA (⚠️ No), Has Link (✅ Yes)
+- **Caption Variants:** 3 EcoBottle-specific examples with product name properly inserted
+- **Metrics to Track:** Awareness-specific metrics including Impressions, Engagement Rate, Brand Mentions, Video Views, Post Shares
+
+#### 2. Mobile Result (Retaken)
+**File:** `marketing_mobile_result.png`  
+**Size:** 390×2400 pixels (128.3 KB)  
+**Shows:** Mobile-responsive EcoBottle campaign analysis for Facebook/Sales:
+- Full campaign outline with EcoBottle substituted correctly
+- Content checklist showing shorter draft copy metrics (Word Count: 19)
+- Sales-focused CTAs and metrics (Shop Now, Buy Today, Get Yours, Order Now)
+- Facebook-specific channel tips
+- All sections properly formatted for 390px mobile viewport
+
+**Unchanged screenshots:**
+- `marketing_desktop_brief_form.png` - Still valid (empty form)
+- `marketing_workforce_hub.png` - Still valid (shows Marketing card)
+
+### Test Results (Round 1.2)
+
+**Non-E2E Tests:** 100 passed, 4 skipped ⬆️ (was 99)  
+**Marketing Unit Tests:** 18 ⬆️ (was 17)
+  - `test_marketing_ai.py`: **11 tests** ⬆️ (was 10)
+    - Added: `test_no_placeholder_leaks` (tests 18 goal×channel combinations)
+  - `test_marketing_database.py`: 7 tests (unchanged)
+
+**Marketing E2E:** 1 test (updated to use EcoBottle)
+
+**Total Marketing Tests:** 19 (18 unit + 1 E2E)
+
+### Files Modified
+
+**Code:**
+1. `marketing/marketing_ai.py` - Fixed `_generate_cta()` to substitute product name
+2. `marketing/tests/test_marketing_ai.py` - Added `test_no_placeholder_leaks()`
+
+**Tests:**
+3. `marketing/tests/test_e2e_marketing.py` - Updated to use EcoBottle sample
+4. `marketing/tests/test_e2e_marketing_capture.py` - Updated to use EcoBottle sample
+
+**Screenshots (retaken):**
+5. `marketing_desktop_result.png` - EcoBottle campaign with correct CTA substitution
+6. `marketing_mobile_result.png` - EcoBottle campaign on mobile
+
+### Verification
+
+✅ **Placeholder fix verified:** CTAs now show "Discover EcoBottle" instead of "Discover [Product]"  
+✅ **Test coverage:** New test prevents future placeholder leaks across all combinations  
+✅ **Neutral product:** No false claims about AIHive's current capabilities  
+✅ **Screenshots accurate:** Show actual generated content with correct substitutions
+
+---
+
 ## Conclusion
 
 The Marketing Agent MVP is **complete and ready for review**. It demonstrates:
