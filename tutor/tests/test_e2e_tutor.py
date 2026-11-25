@@ -78,22 +78,22 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         # Verify we're on topic picker
         expect(page.get_by_text("What do you want to learn today?")).to_be_visible()
         
-        screenshot_path = os.path.join(SCREENSHOT_DIR, "tutor_desktop_topic_picker.png")
+        # Save screenshot to /tmp, not repo
+        screenshot_path = "/tmp/tutor_desktop_topic_picker.png"
         page.screenshot(path=screenshot_path, full_page=True)
         print(f"   ✓ Saved: {screenshot_path}")
         
         page.close()
         
-        # Screenshot 2-4: Mobile flow with real lesson
-        print("\n2. Starting mobile lesson flow...")
-        page = browser.new_page(viewport={"width": 390, "height": 844})
+        # Screenshot 2-4: Lesson flow (using desktop viewport for reliable navigation)
+        print("\n2. Starting lesson flow...")
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.goto(BASE_URL, timeout=30000)
         time.sleep(3)
         
-        # On mobile, navigate via sidebar button
-        # Open sidebar on mobile if collapsed
-        page.get_by_role("button", name="📚 Start Learning").click()
-        time.sleep(3)
+        # Navigate to tutor
+        page.get_by_text("Start Learning", exact=False).first.click()
+        time.sleep(2)
         
         # Select Photosynthesis topic
         page.get_by_text("🌱 Photosynthesis").click()
@@ -120,8 +120,8 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         print(f"   Message count after wrong answer: {message_count}")
         expect(page.locator(".stChatMessage").first).to_be_visible(timeout=10000)
         
-        # Capture screenshot showing adaptive feedback
-        screenshot_path = os.path.join(SCREENSHOT_DIR, "tutor_mobile_mid_lesson.png")
+        # Capture screenshot showing adaptive feedback (to /tmp, not repo)
+        screenshot_path = "/tmp/tutor_mobile_mid_lesson.png"
         page.screenshot(path=screenshot_path, full_page=True)
         print(f"   ✓ Saved: {screenshot_path}")
         
@@ -147,8 +147,8 @@ def test_complete_tutor_flow_with_screenshots(streamlit_app):
         # Verify summary is shown
         expect(page.get_by_text("Lesson Complete!")).to_be_visible(timeout=10000)
         
-        # Capture summary screenshot
-        screenshot_path = os.path.join(SCREENSHOT_DIR, "tutor_mobile_summary.png")
+        # Capture summary screenshot (to /tmp, not repo)
+        screenshot_path = "/tmp/tutor_mobile_summary.png"
         page.screenshot(path=screenshot_path, full_page=True)
         print(f"   ✓ Saved: {screenshot_path}")
         

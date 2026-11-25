@@ -21,10 +21,13 @@ def streamlit_app():
     env["DATABASE_PATH"] = "test_e2e.db"
     
     # Start Streamlit in background
+    # Use absolute path to aihive_coach/app.py
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app_path = os.path.join(app_dir, "app.py")
     process = subprocess.Popen(
-        ["streamlit", "run", "app.py", "--server.port", str(STREAMLIT_PORT), 
+        ["streamlit", "run", app_path, "--server.port", str(STREAMLIT_PORT), 
          "--server.headless", "true"],
-        cwd=".",
+        cwd=app_dir,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
@@ -62,8 +65,10 @@ def test_home_page_loads(streamlit_app, browser_context):
     
     # Check sidebar appears
     expect(page.locator("section[data-testid='stSidebar']")).to_be_visible(timeout=10000)
-    # Check homepage content (multi-agent platform from Round 5)
-    expect(page.locator("text=AI Agent Suite").first).to_be_visible()
+    # Check homepage content (Workforce Hub with Your Team section)
+    expect(page.locator("text=Your Team").first).to_be_visible()
+    # Verify at least one agent card is visible
+    expect(page.locator("text=AIHive Coach").first).to_be_visible()
 
 
 def test_navigation_to_coach_landing(streamlit_app, browser_context):
