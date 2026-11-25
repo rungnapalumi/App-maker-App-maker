@@ -65,8 +65,10 @@ def test_home_page_loads(streamlit_app, browser_context):
     
     # Check sidebar appears
     expect(page.locator("section[data-testid='stSidebar']")).to_be_visible(timeout=10000)
-    # Check homepage content (multi-agent platform from Round 5)
-    expect(page.locator("text=AI Agent Suite").first).to_be_visible()
+    # Check homepage content (Workforce Hub with Your Team section)
+    expect(page.locator("text=Your Team").first).to_be_visible()
+    # Verify at least one agent card is visible
+    expect(page.locator("text=AIHive Coach").first).to_be_visible()
 
 
 def test_navigation_to_coach_landing(streamlit_app, browser_context):
