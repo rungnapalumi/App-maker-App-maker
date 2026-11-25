@@ -41,3 +41,10 @@ temp-*.m4a
 
 # SQLite databases
 *.db
+
+# Screenshot artifacts (test output should go to /tmp or gitignored paths)
+/*_desktop_*.png
+/*_mobile_*.png
+tutor_*.png
+workforce_*.png
+marketing_*.png
